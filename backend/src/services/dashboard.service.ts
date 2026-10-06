@@ -1,6 +1,6 @@
 import { db } from "../db/index.js";
 import { payslips, payslipConcepts, profiles } from "../db/schema.js";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { round } from "../utils/math.js";
 
 /* ───────── Types ────────────────────────────────────────────── */
@@ -25,11 +25,12 @@ export async function fetchDashboardData(filters: DashboardFilters) {
     ? filters.requestedProfileIds.filter((n) => userProfileIds.includes(n))
     : userProfileIds;
 
-  const conditions = [eq(payslips.parsingStatus, "parsed")];
+  // Sin perfiles válidos no hay nada que mostrar. Importante devolver aquí:
+  // sin condición de perfil la consulta traería las nóminas de TODOS los
+  // usuarios (p. ej. con ?profileId=<id ajeno> tras filtrar por propiedad).
+  if (profileIds.length === 0) return { filtered: [], allConcepts: [], profileIds };
 
-  if (profileIds.length === 1) {
-    conditions.push(eq(payslips.profileId, profileIds[0]));
-  }
+  const conditions = [eq(payslips.parsingStatus, "parsed"), inArray(payslips.profileId, profileIds)];
 
   if (from) {
     const [y, m] = from.split("-").map(Number);
@@ -50,10 +51,7 @@ export async function fetchDashboardData(filters: DashboardFilters) {
     .where(and(...conditions))
     .orderBy(payslips.periodYear, payslips.periodMonth);
 
-  const filtered =
-    profileIds.length > 1
-      ? allPayslips.filter((p) => profileIds.includes(p.profileId))
-      : allPayslips;
+  const filtered = allPayslips;
 
   const payslipIds = filtered.map((p) => p.id);
   let allConcepts: Concept[] = [];
