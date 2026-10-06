@@ -1,6 +1,7 @@
 import { db } from "../db/index.js";
 import { accounts, transactions, categories, categoryGroups } from "../db/schema.js";
 import { eq, and, sql, gte, lte, asc } from "drizzle-orm";
+import { effectiveTransaction } from "./transaction-filters.js";
 
 type FinanceFlowType = "income" | "expense";
 
@@ -223,7 +224,7 @@ function finalizeBreakdownByType<T extends { type: FinanceFlowType; total: numbe
 async function listFilteredFinanceRows(filters: FinanceFilters): Promise<FinanceAnalyticsSourceRow[]> {
   const conditions = [
     eq(transactions.userId, filters.userId),
-    eq(transactions.cleared, true),
+    effectiveTransaction(),
     sql`${transactions.type} != 'transfer'`,
   ];
 
@@ -290,7 +291,7 @@ export async function getAccountsWithBalance(userId: number): Promise<AccountWit
       )`.as("net"),
     })
     .from(transactions)
-    .where(and(eq(transactions.userId, userId), eq(transactions.cleared, true)))
+    .where(and(eq(transactions.userId, userId), effectiveTransaction()))
     .groupBy(transactions.accountId);
 
   const netMap = new Map(netByAccount.map((row) => [row.accountId, Number(row.net)]));

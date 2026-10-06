@@ -1,6 +1,7 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { budgets, categories, categoryGroups, transactions } from "../db/schema.js";
+import { effectiveTransaction } from "./transaction-filters.js";
 
 // Presupuesto simplificado estilo YNAB: "asignar lo que ya tienes". No es
 // una réplica completa (sin cuentas fuera-de-presupuesto, sin "importe
@@ -36,7 +37,11 @@ function monthEndBoundary(month: string): string {
   return `${month}-31`;
 }
 
-const activityExpr = sql<number>`sum(case when ${transactions.type} = 'expense' then -${transactions.amount} when ${transactions.type} = 'income' then ${transactions.amount} else 0 end)`;
+// Solo los gastos son "actividad" de una categoría. Los ingresos ya entran
+// completos en "Para presupuestar" (ver getBudgetSummary): contarlos también
+// aquí los duplicaría (inflaba el disponible de la categoría y el total).
+// Un reembolso categorizado cuenta, por tanto, como ingreso a presupuestar.
+const activityExpr = sql<number>`sum(case when ${transactions.type} = 'expense' then -${transactions.amount} else 0 end)`;
 
 /** Suma de `assigned`, por categoría, de las filas de budgets de este usuario hasta (e incluyendo) `throughMonth`. */
 async function assignedByCategory(userId: number, throughMonth: string, exactMonth?: string) {
@@ -55,9 +60,14 @@ async function assignedByCategory(userId: number, throughMonth: string, exactMon
   return new Map(rows.map((r) => [r.categoryId, Number(r.total)]));
 }
 
-/** Suma de actividad (gasto en negativo, ingreso en positivo), por categoría, hasta `endDate` inclusive (o dentro de un rango si se da `startDate`). */
+/** Suma de actividad (gasto en negativo), por categoría, solo movimientos liquidados, hasta `endDate` inclusive (o dentro de un rango si se da `startDate`). */
 async function activityByCategory(userId: number, endDate: string, startDate?: string) {
-  const conditions = [eq(transactions.userId, userId), sql`${transactions.categoryId} is not null`, lte(transactions.date, endDate)];
+  const conditions = [
+    eq(transactions.userId, userId),
+    effectiveTransaction(),
+    sql`${transactions.categoryId} is not null`,
+    lte(transactions.date, endDate),
+  ];
   if (startDate) conditions.push(gte(transactions.date, startDate));
 
   const rows = await db
@@ -92,17 +102,50 @@ export async function getBudgetSummary(userId: number, month: string): Promise<B
       db
         .select({ total: sql<number>`coalesce(sum(${transactions.amount}), 0)` })
         .from(transactions)
-        .where(and(eq(transactions.userId, userId), eq(transactions.type, "income"), lte(transactions.date, endOfMonth))),
+        .where(
+          and(
+            eq(transactions.userId, userId),
+            effectiveTransaction(),
+            eq(transactions.type, "income"),
+            lte(transactions.date, endOfMonth),
+          ),
+        ),
     ]);
 
+  return assembleBudgetSummary({
+    month,
+    groupRows,
+    catRows: catRows.map((r) => r.category),
+    assignedThisMonth,
+    cumulativeAssigned,
+    activityThisMonth,
+    cumulativeActivity,
+    incomeThroughMonth: Number(incomeRow[0]?.total ?? 0),
+  });
+}
+
+export interface BudgetSummaryInputs {
+  month: string;
+  groupRows: { id: number; name: string }[];
+  catRows: { id: number; groupId: number; name: string }[];
+  assignedThisMonth: Map<number, number>;
+  cumulativeAssigned: Map<number, number>;
+  /** Gasto del mes por categoría, en negativo. */
+  activityThisMonth: Map<number, number>;
+  cumulativeActivity: Map<number, number>;
+  incomeThroughMonth: number;
+}
+
+/** Parte pura de getBudgetSummary (sin base de datos), separada para poder probarla. */
+export function assembleBudgetSummary(input: BudgetSummaryInputs): BudgetSummary {
   const categoriesByGroup = new Map<number, CategoryBudget[]>();
-  for (const { category: c } of catRows) {
-    const available = (cumulativeAssigned.get(c.id) ?? 0) + (cumulativeActivity.get(c.id) ?? 0);
+  for (const c of input.catRows) {
+    const available = (input.cumulativeAssigned.get(c.id) ?? 0) + (input.cumulativeActivity.get(c.id) ?? 0);
     const entry: CategoryBudget = {
       id: c.id,
       name: c.name,
-      assigned: assignedThisMonth.get(c.id) ?? 0,
-      activity: activityThisMonth.get(c.id) ?? 0,
+      assigned: input.assignedThisMonth.get(c.id) ?? 0,
+      activity: input.activityThisMonth.get(c.id) ?? 0,
       available: Math.round(available * 100) / 100,
     };
     const list = categoriesByGroup.get(c.groupId) ?? [];
@@ -110,7 +153,7 @@ export async function getBudgetSummary(userId: number, month: string): Promise<B
     categoriesByGroup.set(c.groupId, list);
   }
 
-  const groups: CategoryGroupBudget[] = groupRows.map((g) => ({
+  const groups: CategoryGroupBudget[] = input.groupRows.map((g) => ({
     id: g.id,
     name: g.name,
     categories: categoriesByGroup.get(g.id) ?? [],
@@ -119,11 +162,11 @@ export async function getBudgetSummary(userId: number, month: string): Promise<B
   // "Para presupuestar" = todo lo ingresado hasta este mes, menos todo lo
   // asignado hasta este mes (a cualquier categoría) — arrastra de un mes a
   // otro igual que "available", así que no hace falta guardar un saldo aparte.
-  const totalAssignedThroughMonth = [...cumulativeAssigned.values()].reduce((s, v) => s + v, 0);
-  const readyToAssign = Number(incomeRow[0]?.total ?? 0) - totalAssignedThroughMonth;
+  const totalAssignedThroughMonth = [...input.cumulativeAssigned.values()].reduce((s, v) => s + v, 0);
+  const readyToAssign = input.incomeThroughMonth - totalAssignedThroughMonth;
 
   return {
-    month,
+    month: input.month,
     readyToAssign: Math.round(readyToAssign * 100) / 100,
     groups,
   };
