@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { amountRangeValid, amountRangeIssue, buildConditions, transactionFilterFields } from "../services/transaction-query.js";
 import { db } from "../db/index.js";
 import {
   payslips,
@@ -236,17 +237,12 @@ exportRouter.get("/", async (req, res, next) => {
 });
 
 // ─── Transaction Export ─────────────────────────────────────────
-const transactionExportSchema = z.object({
-  format: z.enum(["csv", "json"]).default("csv"),
-  accountId: z.coerce.number().int().positive().optional(),
-  categoryId: z.coerce.number().int().positive().optional(),
-  groupId: z.coerce.number().int().positive().optional(),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  type: z.enum(["expense", "income", "transfer"]).optional(),
-  cleared: z.enum(["true", "false"]).optional(),
-  search: z.string().optional(),
-});
+const transactionExportSchema = z
+  .object({
+    format: z.enum(["csv", "json"]).default("csv"),
+    ...transactionFilterFields,
+  })
+  .refine(amountRangeValid, amountRangeIssue);
 
 exportRouter.get("/transactions", async (req, res, next) => {
   try {
@@ -259,29 +255,8 @@ exportRouter.get("/transactions", async (req, res, next) => {
       });
     }
 
-    const { format, accountId, categoryId, groupId, from, to, type, cleared, search } = parsed.data;
-
-    const conditions = [eq(transactions.userId, userId)];
-    if (accountId) conditions.push(eq(transactions.accountId, accountId));
-    if (categoryId) conditions.push(eq(transactions.categoryId, categoryId));
-    if (groupId) {
-      conditions.push(
-        sql`${transactions.categoryId} IN (
-          SELECT ${categories.id} FROM ${categories}
-          WHERE ${categories.groupId} = ${groupId}
-        )`,
-      );
-    }
-    if (from) conditions.push(gte(transactions.date, from));
-    if (to) conditions.push(lte(transactions.date, to));
-    if (type) conditions.push(eq(transactions.type, type));
-    if (cleared === "true") conditions.push(eq(transactions.cleared, true));
-    if (cleared === "false") conditions.push(eq(transactions.cleared, false));
-    if (search) {
-      conditions.push(
-        sql`(${transactions.payee} ILIKE ${"%" + search + "%"} OR ${transactions.memo} ILIKE ${"%" + search + "%"})`,
-      );
-    }
+    const { format, ...filters } = parsed.data;
+    const conditions = buildConditions(userId, filters);
 
     const rows = await db
       .select({

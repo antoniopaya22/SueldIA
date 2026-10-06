@@ -6,11 +6,15 @@ import {
   categories,
   categoryGroups,
 } from "../db/schema.js";
-import { eq, and, sql, desc, asc, gte, lte, ilike, inArray } from "drizzle-orm";
+import { eq, and, sql, desc, asc, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { defaultCleared } from "../services/transaction-filters.js";
 import { suggestPayees } from "../services/payee-suggestions.service.js";
+import { applyBatch, batchSchema } from "../services/transaction-batch.service.js";
+import {
+  amountRangeValid, amountRangeIssue, buildBaseConditions, buildConditions, transactionFilterFields,
+} from "../services/transaction-query.js";
 import { getTodayIsoDate } from "../services/recurring-transactions.service.js";
 
 export const transactionsRouter = Router();
@@ -30,21 +34,15 @@ const transactionSchema = z.object({
   targetAccountId: z.number().int().positive().optional(),
 });
 
-const filtersSchema = z.object({
-  accountId: z.coerce.number().int().positive().optional(),
-  categoryId: z.coerce.number().int().positive().optional(),
-  groupId: z.coerce.number().int().positive().optional(),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  type: z.enum(["expense", "income", "transfer"]).optional(),
-  cleared: z.enum(["true", "false"]).optional(),
-  payee: z.string().optional(),
-  search: z.string().optional(),
-  sortBy: z.enum(["date", "payee", "category", "amount", "type"]).default("date"),
-  sortDir: z.enum(["asc", "desc"]).default("desc"),
-  page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().min(1).max(10000).default(50),
-});
+const filtersSchema = z
+  .object({
+    ...transactionFilterFields,
+    sortBy: z.enum(["date", "payee", "category", "amount", "type"]).default("date"),
+    sortDir: z.enum(["asc", "desc"]).default("desc"),
+    page: z.coerce.number().int().positive().default(1),
+    limit: z.coerce.number().int().min(1).max(10000).default(50),
+  })
+  .refine(amountRangeValid, amountRangeIssue);
 
 const updateTransactionSchema = transactionSchema.partial();
 
@@ -97,39 +95,39 @@ transactionsRouter.get("/", async (req, res, next) => {
       });
     }
 
-    const { accountId, categoryId, groupId, from, to, type, cleared, payee, search, sortBy, sortDir, page, limit } =
-      parsed.data;
+    const { sortBy, sortDir, page, limit, ...filters } = parsed.data;
     const offset = (page - 1) * limit;
 
-    const conditions = [eq(transactions.userId, userId)];
-    if (accountId) conditions.push(eq(transactions.accountId, accountId));
-    if (categoryId) conditions.push(eq(transactions.categoryId, categoryId));
-    if (cleared === "true") conditions.push(eq(transactions.cleared, true));
-    if (cleared === "false") conditions.push(eq(transactions.cleared, false));
-    if (groupId) {
-      conditions.push(
-        sql`${transactions.categoryId} IN (
-          SELECT ${categories.id} FROM ${categories}
-          WHERE ${categories.groupId} = ${groupId}
-        )`,
-      );
-    }
-    if (from) conditions.push(gte(transactions.date, from));
-    if (to) conditions.push(lte(transactions.date, to));
-    if (type) conditions.push(eq(transactions.type, type));
-    if (payee) conditions.push(ilike(transactions.payee, `%${payee}%`));
-    if (search) {
-      conditions.push(
-        sql`(${transactions.payee} ILIKE ${"%" + search + "%"} OR ${transactions.memo} ILIKE ${"%" + search + "%"})`,
-      );
-    }
+    // `base` = todos los filtros salvo el de estado: sirve para contar los
+    // pendientes de la selección aunque se esté filtrando por "liquidadas".
+    const base = buildBaseConditions(userId, filters);
+    const conditions = buildConditions(userId, filters);
 
     const whereClause = and(...conditions);
 
-    const [{ count }] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(transactions)
-      .where(whereClause);
+    // Totales con exactamente los mismos filtros que la lista (los traspasos no son ingreso ni gasto),
+    // más los pendientes de esa selección y cuántos GASTOS tiene el usuario sin categoría en total
+    // (un ingreso sin categoría es lo normal: el presupuesto lo cuenta entero, no necesita una).
+    const [[{ count }], [totals], [{ pending }], [{ uncategorizedExpenses }]] = await Promise.all([
+      db.select({ count: sql<number>`count(*)::int` }).from(transactions).where(whereClause),
+      db
+        .select({
+          income: sql<number>`coalesce(sum(case when ${transactions.type} = 'income' then ${transactions.amount} else 0 end), 0)`,
+          expense: sql<number>`coalesce(sum(case when ${transactions.type} = 'expense' then ${transactions.amount} else 0 end), 0)`,
+        })
+        .from(transactions)
+        .where(whereClause),
+      db
+        .select({ pending: sql<number>`count(*)::int` })
+        .from(transactions)
+        .where(and(...base, eq(transactions.cleared, false))),
+      db
+        .select({ uncategorizedExpenses: sql<number>`count(*)::int` })
+        .from(transactions)
+        .where(and(eq(transactions.userId, userId), isNull(transactions.categoryId), eq(transactions.type, "expense"))),
+    ]);
+    const income = Math.round(Number(totals.income) * 100) / 100;
+    const expense = Math.round(Number(totals.expense) * 100) / 100;
 
     const rows = await db
       .select({
@@ -194,7 +192,32 @@ transactionsRouter.get("/", async (req, res, next) => {
       .limit(limit)
       .offset(offset);
 
-    res.json({ data: rows, total: count, page, limit });
+    res.json({
+      data: rows,
+      total: count,
+      page,
+      limit,
+      summary: { income, expense, net: Math.round((income - expense) * 100) / 100, pending, uncategorizedExpenses },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Categorizar, liquidar o borrar varios movimientos a la vez.
+transactionsRouter.post("/batch", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = batchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Operación inválida",
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const result = await applyBatch(userId, parsed.data);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.json({ updated: result.updated, skipped: result.skipped });
   } catch (err) {
     next(err);
   }

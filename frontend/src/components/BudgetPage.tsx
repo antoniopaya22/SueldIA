@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { assignBudget, getBudgetSummary, type BudgetSummary, type CategoryBudget } from "../lib/api";
 import { formatCurrency } from "../lib/format";
+import { monthRange, transactionsHref } from "../lib/transaction-filters";
 import { cn } from "cn";
 
 const MONTHS_FULL = [
@@ -100,9 +101,10 @@ function AssignedCell({
 
 // ─── Tabla de un grupo ───────────────────────────────────────────
 function GroupTable({
-  categories, pendingId, onAssign,
+  categories, month, pendingId, onAssign,
 }: {
   categories: CategoryBudget[];
+  month: string;
   pendingId: number | null;
   onAssign: (categoryId: number, previous: number, next: number) => void;
 }) {
@@ -131,7 +133,16 @@ function GroupTable({
               />
             </TableCell>
             <TableCell className={cn("py-2.5 text-right tabular-nums", signedTone(c.activity))}>
-              {formatCurrency(c.activity)}
+              {c.activity === 0 ? formatCurrency(c.activity) : (
+                <a
+                  // La actividad solo suma gastos liquidados: el enlace filtra igual para que el total coincida.
+                  href={transactionsHref({ categoryId: c.id, type: "expense", cleared: "true", ...monthRange(month) })}
+                  className="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
+                  title="Ver los movimientos de este mes"
+                >
+                  {formatCurrency(c.activity)}
+                </a>
+              )}
             </TableCell>
             <TableCell className={cn("py-2.5 pr-5 text-right font-medium tabular-nums", signedTone(c.available))}>
               {formatCurrency(c.available)}
@@ -271,6 +282,7 @@ function BudgetView() {
           <SectionCard key={g.id} title={g.name} flush>
             <GroupTable
               categories={g.categories}
+              month={month}
               pendingId={pendingId}
               onAssign={(categoryId, previous, next) => assignMut.mutate({ categoryId, assigned: next, previous })}
             />

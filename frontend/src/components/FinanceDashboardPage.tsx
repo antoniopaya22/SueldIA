@@ -7,6 +7,7 @@ import {
   AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarRange, Download, PiggyBank, RefreshCcw, Wallet,
 } from "lucide-react";
 import { getAccounts, getFinanceAnalytics, type FinanceAnalyticsFilters } from "../lib/api";
+import { monthRange, transactionsHref } from "../lib/transaction-filters";
 import { formatCompact, formatCurrency, formatMonthLabel, formatPct } from "../lib/format";
 import { Providers } from "./Providers";
 import { EmptyState } from "./ui/EmptyState";
@@ -91,11 +92,30 @@ function FinanceDashboardView() {
     const topCategories = expenseCategories.slice(0, 6);
     const otherTotal = expenseCategories.slice(6).reduce((s, c) => s + c.total, 0);
     const categorySlices = [
-      ...topCategories.map((c, i) => ({ key: c.bucketKey, label: c.categoryName, group: c.groupName, value: c.total, color: paletteColor(i) })),
-      ...(otherTotal > 0 ? [{ key: "__other", label: "Otras", group: "", value: otherTotal, color: "var(--muted-foreground)" }] : []),
+      ...topCategories.map((c, i) => ({
+        key: c.bucketKey,
+        label: c.categoryName,
+        group: c.groupName,
+        value: c.total,
+        color: paletteColor(i),
+        // El dashboard solo cuenta lo liquidado: el enlace filtra igual para que el total coincida.
+        href: transactionsHref({
+          ...(c.categoryId === null ? { uncategorized: true } : { categoryId: c.categoryId }),
+          type: "expense", from: filters.from, to: filters.to, accountId, cleared: "true",
+        }),
+      })),
+      ...(otherTotal > 0 ? [{ key: "__other", label: "Otras", group: "", value: otherTotal, color: "var(--muted-foreground)", href: undefined as string | undefined }] : []),
     ];
 
-    const payees = (analytics?.payees ?? []).filter((p) => p.type === "expense").slice(0, 7);
+    const payees = (analytics?.payees ?? [])
+      .filter((p) => p.type === "expense")
+      .slice(0, 7)
+      .map((p) => ({
+        ...p,
+        href: p.payee === "Sin beneficiario"
+          ? undefined
+          : transactionsHref({ search: p.payee, type: "expense", from: filters.from, to: filters.to, accountId, cleared: "true" }),
+      }));
 
     return {
       monthly,
@@ -106,7 +126,7 @@ function FinanceDashboardView() {
       expenseTotal,
       payees,
     };
-  }, [analytics]);
+  }, [analytics, filters, accountId]);
 
   if (isLoading || loadingAccounts) return <FinanceSkeleton />;
 
@@ -139,6 +159,11 @@ function FinanceDashboardView() {
   }
 
   if (!analytics) return null;
+
+  // Pulsar una barra lleva a los movimientos (liquidados, como en el gráfico) de ese mes.
+  const openMonth = (bar: { month?: string }) => {
+    if (bar.month) window.location.href = transactionsHref({ ...monthRange(bar.month), accountId, cleared: "true" });
+  };
 
   const { summary } = analytics;
   const selectedAccount = accounts.find((a) => a.id === accountId);
@@ -227,7 +252,7 @@ function FinanceDashboardView() {
             <ChartCard
               className="lg:col-span-2"
               title="Flujo mensual"
-              description="Ingresos, gastos y ahorro de cada mes"
+              description="Ingresos, gastos y ahorro de cada mes. Pulsa una barra para ver sus movimientos."
               action={<CardLink href="/app/finance/analytics">Ver más</CardLink>}
               height={316}
               legend={
@@ -246,8 +271,8 @@ function FinanceDashboardView() {
                   <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={16} />
                   <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />
                   <Tooltip content={<ChartTooltip />} cursor={chartBarCursor} />
-                  <Bar dataKey="income" name="Ingresos" fill={flowColors.income} radius={[4, 4, 0, 0]} maxBarSize={22} />
-                  <Bar dataKey="expenses" name="Gastos" fill={flowColors.expense} fillOpacity={0.75} radius={[4, 4, 0, 0]} maxBarSize={22} />
+                  <Bar dataKey="income" name="Ingresos" fill={flowColors.income} radius={[4, 4, 0, 0]} maxBarSize={22} cursor="pointer" onClick={openMonth} />
+                  <Bar dataKey="expenses" name="Gastos" fill={flowColors.expense} fillOpacity={0.75} radius={[4, 4, 0, 0]} maxBarSize={22} cursor="pointer" onClick={openMonth} />
                   <Line dataKey="net" name="Ahorro" type="monotone" stroke={flowColors.net} strokeWidth={2} dot={false} />
                 </ComposedChart>
               </ResponsiveContainer>
@@ -276,7 +301,11 @@ function FinanceDashboardView() {
                     {derived.categorySlices.map((s) => (
                       <li key={s.key} className="flex items-center gap-2 text-sm">
                         <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
-                        <span className="min-w-0 flex-1 truncate text-foreground" title={s.group ? `${s.label} · ${s.group}` : s.label}>{s.label}</span>
+                        {s.href ? (
+                          <a href={s.href} className="min-w-0 flex-1 truncate rounded-sm text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50" title={`Ver movimientos de ${s.group ? `${s.label} · ${s.group}` : s.label}`}>{s.label}</a>
+                        ) : (
+                          <span className="min-w-0 flex-1 truncate text-foreground">{s.label}</span>
+                        )}
                         <span className="text-xs tabular-nums text-muted-foreground">
                           {derived.expenseTotal > 0 ? formatPct((s.value / derived.expenseTotal) * 100) : "—"}
                         </span>
@@ -299,6 +328,7 @@ function FinanceDashboardView() {
                   items={derived.payees.map((p, i) => ({
                     key: p.bucketKey,
                     label: shortenLabel(p.payee, 28),
+                    href: p.href,
                     value: p.total,
                     color: i === 0 ? flowColors.expense : chartColors.quaternary,
                     meta: `${p.count} mov.`,
@@ -313,7 +343,9 @@ function FinanceDashboardView() {
                   <li key={a.accountId} className="flex items-center gap-3 px-5 py-3">
                     <span className="size-2.5 shrink-0 rounded-full" style={{ backgroundColor: adaptiveColor(a.color, chartColors.secondary) }} />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-foreground">{a.accountName}</p>
+                      <p className="truncate text-sm font-medium text-foreground">
+                        <a href={transactionsHref({ accountId: a.accountId })} className="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50" title={`Ver movimientos de ${a.accountName}`}>{a.accountName}</a>
+                      </p>
                       <p className="truncate text-xs text-muted-foreground tabular-nums">
                         <span className={a.income > 0 ? "text-emerald-700 dark:text-emerald-400" : undefined}>{a.income > 0 ? "+" : ""}{formatCurrency(a.income)}</span>
                         {" · "}

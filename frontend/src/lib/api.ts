@@ -619,6 +619,10 @@ export interface TransactionFilters {
   cleared?: "true" | "false";
   payee?: string;
   search?: string;
+  /** Solo gastos/ingresos sin categoría. */
+  uncategorized?: boolean;
+  minAmount?: number;
+  maxAmount?: number;
   sortBy?: "date" | "payee" | "category" | "amount" | "type";
   sortDir?: "asc" | "desc";
   page?: number;
@@ -636,12 +640,37 @@ export const getTransactions = (filters: TransactionFilters = {}) => {
   if (filters.cleared) params.set("cleared", filters.cleared);
   if (filters.payee) params.set("payee", filters.payee);
   if (filters.search) params.set("search", filters.search);
+  if (filters.uncategorized) params.set("uncategorized", "true");
+  if (filters.minAmount !== undefined) params.set("minAmount", String(filters.minAmount));
+  if (filters.maxAmount !== undefined) params.set("maxAmount", String(filters.maxAmount));
   if (filters.sortBy) params.set("sortBy", filters.sortBy);
   if (filters.sortDir) params.set("sortDir", filters.sortDir);
   params.set("page", String(filters.page ?? 1));
   params.set("limit", String(filters.limit ?? 50));
-  return request<Paginated<Transaction>>(`/transactions?${params}`);
+  return request<TransactionsPage>(`/transactions?${params}`);
 };
+
+/** Cifras de la selección actual: salen del servidor con los mismos filtros que la lista. */
+export interface TransactionsSummary {
+  income: number;
+  expense: number;
+  net: number;
+  /** Pendientes de liquidar dentro de la selección (ignorando el filtro de estado). */
+  pending: number;
+  /** Gastos sin categoría en toda la cuenta del usuario, con o sin filtros (un ingreso sin categoría es normal). */
+  uncategorizedExpenses: number;
+}
+
+export type TransactionsPage = Paginated<Transaction> & { summary: TransactionsSummary };
+
+export type TransactionBatch =
+  | { action: "set-category"; ids: number[]; categoryId: number | null }
+  | { action: "set-cleared"; ids: number[]; cleared: boolean }
+  | { action: "delete"; ids: number[] };
+
+/** Categorizar, liquidar o borrar varios movimientos. `skipped` = los que no se podían tocar (traspasos, recurrentes…). */
+export const batchTransactions = (body: TransactionBatch) =>
+  request<{ updated: number; skipped: number }>("/transactions/batch", { method: "POST", body: JSON.stringify(body) });
 
 export interface PayeeSuggestion {
   payee: string;
@@ -784,6 +813,10 @@ export const exportTransactions = async (filters: Omit<TransactionFilters, "sort
   if (filters.type) params.set("type", filters.type);
   if (filters.cleared) params.set("cleared", filters.cleared);
   if (filters.search) params.set("search", filters.search);
+  if (filters.payee) params.set("payee", filters.payee);
+  if (filters.uncategorized) params.set("uncategorized", "true");
+  if (filters.minAmount !== undefined) params.set("minAmount", String(filters.minAmount));
+  if (filters.maxAmount !== undefined) params.set("maxAmount", String(filters.maxAmount));
   const fmt = filters.format ?? "csv";
   params.set("format", fmt);
 

@@ -307,3 +307,30 @@ export function TypeToggle<T extends TxType>({
 /** Input de importe con símbolo € y sin flechas. */
 export const amountInputClass =
   "pr-8 tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
+
+/** Chip de filtro rápido (periodo, "sin categoría"…): pulsado = filtro activo. */
+export function FilterChip({
+  active, onClick, children, count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  count?: number;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
+        active
+          ? "border-primary/40 bg-primary/10 text-primary-700 dark:text-primary"
+          : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground",
+      )}
+    >
+      {children}
+      {count !== undefined && <span className="tabular-nums opacity-70">{count}</span>}
+    </button>
+  );
+}

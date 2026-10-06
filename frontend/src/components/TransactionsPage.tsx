@@ -6,13 +6,13 @@ import {
   AlertTriangle, PiggyBank, Wallet,
 } from "lucide-react";
 import {
+  batchTransactions,
   createRecurringTransaction,
   deleteRecurringTransaction,
   deleteTransaction,
   exportTransactions,
   getAccounts,
   getCategories,
-  getFinanceAnalytics,
   getRecurringTransactions,
   getTransactions,
   setRecurringTransactionActive,
@@ -26,6 +26,8 @@ import { Providers } from "./Providers";
 import { toast } from "sonner";
 import { formatCurrency } from "../lib/format";
 import { invalidateFinance } from "../lib/finance-cache";
+import { useTransactionFilters } from "../hooks/use-transaction-filters";
+import { PERIOD_LABELS, activePeriod, periodRange, type PeriodKey } from "../lib/transaction-filters";
 import { EmptyState } from "./ui/EmptyState";
 import { ConfirmModal } from "./ui/ConfirmModal";
 import {
@@ -43,12 +45,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { darkBoost } from "../lib/color";
 import {
-  CategorySelect, NONE, getNextMonthlyOccurrence, getTodayIsoDate, type TxType,
+  CategorySelect, FilterChip, NONE, getNextMonthlyOccurrence, getTodayIsoDate, type TxType,
 } from "./finance-manage/transactions/shared";
 import type { TxForm } from "./finance-manage/transactions/TransactionDialog";
 import { TransactionFormDialog } from "./finance-manage/transactions/TransactionFormDialog";
 import { useQuickCategory } from "./finance-manage/transactions/useQuickCategory";
 import { RecurringDialog, type RecurringForm } from "./finance-manage/transactions/RecurringDialog";
+import { AmountRangeFilter } from "./finance-manage/transactions/AmountRangeFilter";
+import { BulkActionBar } from "./finance-manage/transactions/BulkActionBar";
 import { RecurringRuleCard } from "./finance-manage/transactions/RecurringRuleCard";
 import { TransactionTable, type SortDir, type SortField } from "./finance-manage/transactions/TransactionTable";
 import { cn } from "cn";
@@ -85,19 +89,24 @@ function TransactionsView() {
 
   // ─── Filtros y vista ─────────────────────────────────────────
   const [tab, setTab] = useState<"movements" | "recurring">("movements");
-  const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
-  // El buscador ⌘K enlaza aquí con ?buscar=<texto> (ver app/CommandMenu.tsx).
-  const [searchQuery, setSearchQuery] = useState(() =>
-    typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("buscar") ?? "",
-  );
+  // Los filtros viven en la URL (?cuenta=…&categoria=…): compartibles, recargables y enlazables desde gráficos.
+  const { filters: urlFilters, update: updateFilters, clear: clearFilters, page, setPage } = useTransactionFilters();
+  const selectedAccountId = urlFilters.accountId ?? null;
+  const searchQuery = urlFilters.search ?? "";
+  const filterType = urlFilters.type ?? "";
+  const filterCategoryId = urlFilters.categoryId ?? "";
+  const filterFrom = urlFilters.from ?? "";
+  const filterTo = urlFilters.to ?? "";
+  const filterCleared = urlFilters.cleared ?? "";
   const [sortBy, setSortBy] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-  const [filterType, setFilterType] = useState<"" | TxType>("");
-  const [filterCategoryId, setFilterCategoryId] = useState<number | "">("");
-  const [filterFrom, setFilterFrom] = useState("");
-  const [filterTo, setFilterTo] = useState("");
-  const [filterCleared, setFilterCleared] = useState<"" | "true" | "false">("");
-  const [page, setPage] = useState(1);
+
+  // Modo selección: actuar sobre varios movimientos a la vez (categorizar, liquidar, borrar).
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  // Otra página, otros filtros u otro orden = otra lista: la selección no se arrastra.
+  useEffect(() => { setSelectedIds(new Set()); }, [urlFilters, page, sortBy, sortDir]);
 
   // ─── Diálogos ────────────────────────────────────────────────
   const [txDialogOpen, setTxDialogOpen] = useState(false);
@@ -109,19 +118,10 @@ function TransactionsView() {
   const [deleteTxTarget, setDeleteTxTarget] = useState<Transaction | null>(null);
   const [deleteRecurringTarget, setDeleteRecurringTarget] = useState<RecurringTransaction | null>(null);
 
-  const filters: TransactionFilters = useMemo(() => ({
-    accountId: selectedAccountId ?? undefined,
-    search: searchQuery || undefined,
-    type: filterType || undefined,
-    categoryId: filterCategoryId ? Number(filterCategoryId) : undefined,
-    from: filterFrom || undefined,
-    to: filterTo || undefined,
-    cleared: filterCleared || undefined,
-    sortBy,
-    sortDir,
-    page,
-    limit: PAGE_SIZE,
-  }), [selectedAccountId, searchQuery, filterType, filterCategoryId, filterFrom, filterTo, filterCleared, sortBy, sortDir, page]);
+  const filters: TransactionFilters = useMemo(
+    () => ({ ...urlFilters, sortBy, sortDir, page, limit: PAGE_SIZE }),
+    [urlFilters, sortBy, sortDir, page],
+  );
 
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const { data: categoryGroups = [] } = useQuery({ queryKey: ["categories"], queryFn: getCategories });
@@ -134,24 +134,8 @@ function TransactionsView() {
     queryFn: () => getTransactions(filters),
     placeholderData: (prev) => prev,
   });
-  // Totales del periodo (la API de analítica admite fechas, cuenta y categoría).
-  const summaryFilters = useMemo(() => ({
-    from: filterFrom || undefined,
-    to: filterTo || undefined,
-    accountId: selectedAccountId ?? undefined,
-    categoryId: filterCategoryId ? Number(filterCategoryId) : undefined,
-  }), [filterFrom, filterTo, selectedAccountId, filterCategoryId]);
-  // Pendientes de liquidar con los mismos filtros (solo interesa el total).
-  const pendingFilters = useMemo(() => ({ ...filters, cleared: "false" as const, page: 1, limit: 1 }), [filters]);
-  const { data: pendingData } = useQuery({
-    queryKey: ["transactions", pendingFilters],
-    queryFn: () => getTransactions(pendingFilters),
-    enabled: filterCleared !== "true",
-  });
-  const { data: summaryData } = useQuery({
-    queryKey: ["finance-analytics", "transactions-summary", summaryFilters],
-    queryFn: () => getFinanceAnalytics(summaryFilters),
-  });
+  // Las cifras salen del servidor con los mismos filtros que la lista: siempre cuadran con lo que se ve.
+  const summary = txData?.summary;
 
   const activeAccounts = useMemo(() => accounts.filter((a) => !a.archived), [accounts]);
   const accountsById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
@@ -175,6 +159,26 @@ function TransactionsView() {
   const deleteMut = useMutation({
     mutationFn: deleteTransaction,
     onSuccess: () => { invalidateTx(); toast.success("Transacción eliminada"); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const batchMut = useMutation({
+    mutationFn: batchTransactions,
+    onSuccess: (res, vars) => {
+      invalidateTx();
+      setSelectedIds(new Set());
+      setBulkDeleteOpen(false);
+      const n = res.updated;
+      const noun = n === 1 ? "movimiento" : "movimientos";
+      const done =
+        vars.action === "delete" ? (n === 1 ? "eliminado" : "eliminados")
+        : vars.action === "set-category" ? (vars.categoryId === null ? "sin categoría" : n === 1 ? "categorizado" : "categorizados")
+        : vars.cleared ? (n === 1 ? "liquidado" : "liquidados") : (n === 1 ? "pasado a pendiente" : "pasados a pendiente");
+      toast.success(`${n} ${noun} ${done}`);
+      if (res.skipped > 0) {
+        toast.info(`${res.skipped} ${res.skipped === 1 ? "omitido" : "omitidos"}: traspasos o pagos recurrentes que esa acción no admite`);
+      }
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -339,27 +343,12 @@ function TransactionsView() {
     setPage(1);
   };
 
-  const clearFilters = () => {
-    setFilterType("");
-    setFilterCategoryId("");
-    setFilterFrom("");
-    setFilterTo("");
-    setFilterCleared("");
-    setSearchQuery("");
-    setPage(1);
-  };
+  const handleExport = () => exportTransactions(urlFilters);
 
-  const handleExport = () => exportTransactions({
-    accountId: selectedAccountId ?? undefined,
-    search: searchQuery || undefined,
-    type: filterType || undefined,
-    categoryId: filterCategoryId ? Number(filterCategoryId) : undefined,
-    from: filterFrom || undefined,
-    to: filterTo || undefined,
-    cleared: filterCleared || undefined,
-  });
-
-  const activeFilterCount = [filterType, filterCategoryId, filterFrom || filterTo, filterCleared, searchQuery].filter(Boolean).length;
+  const activeFilterCount = [
+    filterType, filterCategoryId, urlFilters.groupId, filterFrom || filterTo, filterCleared, searchQuery,
+    urlFilters.uncategorized, urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined,
+  ].filter(Boolean).length;
   const transactions = txData?.data ?? [];
   const totalCount = txData?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
@@ -397,7 +386,6 @@ function TransactionsView() {
     );
   }
 
-  const summary = summaryData?.summary;
   const totalBalance = activeAccounts.reduce((s, a) => s + a.balance, 0);
 
   return (
@@ -447,7 +435,7 @@ function TransactionsView() {
                     type="button"
                     role="radio"
                     aria-checked={selected}
-                    onClick={() => { setSelectedAccountId(a.id); setPage(1); }}
+                    onClick={() => updateFilters({ accountId: a.id ?? undefined })}
                     className={cn(
                       "flex min-w-36 cursor-pointer flex-col items-start rounded-xl border px-3.5 py-2.5 text-left outline-none transition-all focus-visible:ring-2 focus-visible:ring-ring/50",
                       selected
@@ -492,23 +480,43 @@ function TransactionsView() {
       {tab === "movements" ? (
         <>
           <StatGrid className="grid-cols-2">
-            <StatCard label="Ingresos" value={summary ? formatCurrency(summary.incomeTotal) : "—"} icon={TrendingUp} hint={filterFrom || filterTo ? "En el periodo filtrado" : "Todo el histórico"} />
-            <StatCard label="Gastos" value={summary ? formatCurrency(summary.expenseTotal) : "—"} icon={TrendingDown} hint={selectedAccount ? selectedAccount.name : "Todas las cuentas"} />
+            <StatCard label="Ingresos" value={summary ? formatCurrency(summary.income) : "—"} icon={TrendingUp} hint={activeFilterCount ? "Con los filtros actuales" : "Todo el histórico"} />
+            <StatCard label="Gastos" value={summary ? formatCurrency(summary.expense) : "—"} icon={TrendingDown} hint={selectedAccount ? selectedAccount.name : "Todas las cuentas"} />
             <StatCard
               label="Balance"
-              value={summary ? <span className={summary.netTotal < 0 ? "text-red-600 dark:text-red-400" : undefined}>{summary.netTotal > 0 ? "+" : ""}{formatCurrency(summary.netTotal)}</span> : "—"}
+              value={summary ? <span className={summary.net < 0 ? "text-red-600 dark:text-red-400" : undefined}>{summary.net > 0 ? "+" : ""}{formatCurrency(summary.net)}</span> : "—"}
               icon={Scale}
-              hint={summary && summary.incomeTotal > 0 ? `Ahorras el ${Math.round(summary.savingsRate)} % de lo que ingresas` : "Ingresos menos gastos"}
+              hint={summary && summary.income > 0 ? `Ahorras el ${Math.round((summary.net / summary.income) * 100)} % de lo que ingresas` : "Ingresos menos gastos"}
             />
             <StatCard
               label="Por liquidar"
-              value={filterCleared === "true" ? 0 : pendingData?.total ?? "—"}
+              value={filterCleared === "true" ? 0 : summary?.pending ?? "—"}
               icon={ListChecks}
               hint={activeFilterCount ? `De ${totalCount} con los filtros actuales` : `De ${totalCount} movimientos`}
             />
           </StatGrid>
 
           <div className="mt-6 overflow-clip rounded-xl border border-border bg-card shadow-[0_1px_2px_rgb(0_0_0/0.03)]">
+            {/* Aviso: movimientos sin categoría (no cuentan en el presupuesto) */}
+            {summary && summary.uncategorizedExpenses > 0 && !urlFilters.uncategorized && (
+              <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border bg-amber-500/5 px-4 py-2.5 text-sm">
+                <p className="flex items-center gap-2 text-amber-900 dark:text-amber-200">
+                  <Tag className="size-4 shrink-0" aria-hidden="true" />
+                  <span>
+                    <strong className="tabular-nums">{summary.uncategorizedExpenses}</strong>{" "}
+                    {summary.uncategorizedExpenses === 1 ? "gasto sin categoría" : "gastos sin categoría"}: sin ella no cuentan en tu presupuesto.
+                  </span>
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { updateFilters({ uncategorized: true, type: "expense", categoryId: undefined, groupId: undefined }); setSelectionMode(true); }}
+                >
+                  Revisar
+                </Button>
+              </div>
+            )}
+
             {/* Barra de filtros */}
             <div className="flex flex-col gap-3 border-b border-border p-4">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -516,7 +524,7 @@ function TransactionsView() {
                   <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                   <Input
                     value={searchQuery}
-                    onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+                    onChange={(e) => updateFilters({ search: e.target.value || undefined })}
                     placeholder="Buscar por beneficiario o nota"
                     aria-label="Buscar transacciones"
                     className="pl-8"
@@ -525,7 +533,7 @@ function TransactionsView() {
                 <Segmented
                   aria-label="Tipo de movimiento"
                   value={filterType || "all"}
-                  onChange={(v) => { setFilterType(v === "all" ? "" : v); setPage(1); }}
+                  onChange={(v) => updateFilters({ type: v === "all" ? undefined : v })}
                   options={[
                     { value: "all", label: "Todos" },
                     { value: "expense", label: "Gastos" },
@@ -538,12 +546,12 @@ function TransactionsView() {
               <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                 <CategorySelect
                   value={filterCategoryId}
-                  onChange={(v) => { setFilterCategoryId(v); setPage(1); }}
+                  onChange={(v) => updateFilters({ categoryId: v === "" ? undefined : Number(v), groupId: undefined, uncategorized: undefined })}
                   groups={categoryGroups}
                   noneLabel="Todas las categorías"
                   className="col-span-2 sm:w-56"
                 />
-                <Select value={filterCleared || NONE} onValueChange={(v) => { setFilterCleared(!v || v === NONE ? "" : (v as "true" | "false")); setPage(1); }}>
+                <Select value={filterCleared || NONE} onValueChange={(v) => updateFilters({ cleared: !v || v === NONE ? undefined : (v as "true" | "false") })}>
                   <SelectTrigger className="w-full sm:w-44" aria-label="Filtrar por estado">
                     <SelectValue>{(v: string) => CLEARED_LABELS[v] ?? v}</SelectValue>
                   </SelectTrigger>
@@ -572,7 +580,7 @@ function TransactionsView() {
                   <input
                     type="date"
                     value={filterFrom}
-                    onChange={(e) => { setFilterFrom(e.target.value); setPage(1); }}
+                    onChange={(e) => updateFilters({ from: e.target.value || undefined })}
                     aria-label="Desde"
                     className="h-8 min-w-0 flex-1 bg-transparent text-sm tabular-nums outline-none sm:w-32 sm:flex-none"
                   />
@@ -580,7 +588,7 @@ function TransactionsView() {
                   <input
                     type="date"
                     value={filterTo}
-                    onChange={(e) => { setFilterTo(e.target.value); setPage(1); }}
+                    onChange={(e) => updateFilters({ to: e.target.value || undefined })}
                     aria-label="Hasta"
                     className="h-8 min-w-0 flex-1 bg-transparent text-sm tabular-nums outline-none sm:w-32 sm:flex-none"
                   />
@@ -591,12 +599,57 @@ function TransactionsView() {
                   </Button>
                 )}
               </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {(Object.keys(PERIOD_LABELS) as PeriodKey[]).map((key) => {
+                  const active = activePeriod(filterFrom, filterTo) === key;
+                  return (
+                    <FilterChip
+                      key={key}
+                      active={active}
+                      onClick={() => updateFilters(active ? { from: undefined, to: undefined } : periodRange(key))}
+                    >
+                      {PERIOD_LABELS[key]}
+                    </FilterChip>
+                  );
+                })}
+                <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-border sm:block" />
+                <FilterChip
+                  active={!!urlFilters.uncategorized}
+                  count={summary?.uncategorizedExpenses}
+                  onClick={() => updateFilters(urlFilters.uncategorized
+                    ? { uncategorized: undefined }
+                    : { uncategorized: true, type: "expense", categoryId: undefined, groupId: undefined })}
+                >
+                  <Tag className="size-3" aria-hidden="true" /> Sin categoría
+                </FilterChip>
+                {urlFilters.groupId && (
+                  <FilterChip active onClick={() => updateFilters({ groupId: undefined })}>
+                    Grupo: {categoryGroups.find((g) => g.id === urlFilters.groupId)?.name ?? "—"}
+                    <X className="size-3" aria-hidden="true" />
+                  </FilterChip>
+                )}
+                <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-border sm:block" />
+                <AmountRangeFilter min={urlFilters.minAmount} max={urlFilters.maxAmount} onChange={updateFilters} />
+                <Button
+                  variant={selectionMode ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => { setSelectionMode((m) => !m); setSelectedIds(new Set()); }}
+                  aria-pressed={selectionMode}
+                  className="ml-auto gap-1.5"
+                >
+                  <ListChecks className="size-4" aria-hidden="true" /> {selectionMode ? "Salir de la selección" : "Seleccionar"}
+                </Button>
+              </div>
             </div>
 
             {/* Tabla */}
             <div className={cn("transition-opacity", isFetching && txData && "opacity-60")}>
               {transactions.length === 0 ? (
-                activeFilterCount > 0 ? (
+                urlFilters.uncategorized && summary?.uncategorizedExpenses === 0 ? (
+                  <EmptyState compact icon={ListChecks} title="Todo en orden" description="No te queda ningún gasto sin categoría.">
+                    <Button variant="outline" size="sm" onClick={clearFilters}>Ver todos los movimientos</Button>
+                  </EmptyState>
+                ) : activeFilterCount > 0 ? (
                   <EmptyState compact icon={Search} title="Sin resultados" description="Ningún movimiento coincide con los filtros actuales.">
                     <Button variant="outline" size="sm" onClick={clearFilters}>Limpiar filtros</Button>
                   </EmptyState>
@@ -626,6 +679,11 @@ function TransactionsView() {
                   onToggleCleared={(tx) => clearMut.mutate(tx.id)}
                   onSchedule={openRecurringFromTransaction}
                   onDuplicate={openDuplicateForm}
+                  selection={selectionMode ? {
+                    ids: selectedIds,
+                    onToggle: (id) => setSelectedIds((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; }),
+                    onToggleAll: (ids, select) => setSelectedIds((cur) => { const next = new Set(cur); for (const id of ids) { if (select) next.add(id); else next.delete(id); } return next; }),
+                  } : undefined}
                   onDelete={setDeleteTxTarget}
                 />
               )}
@@ -714,6 +772,26 @@ function TransactionsView() {
 
       {quickCategory.dialog}
 
+      {selectionMode && selectedIds.size > 0 && (
+        <BulkActionBar
+          count={selectedIds.size}
+          groups={categoryGroups}
+          busy={batchMut.isPending}
+          onCategorize={(categoryId) => batchMut.mutate({ action: "set-category", ids: [...selectedIds], categoryId })}
+          onSetCleared={(cleared) => batchMut.mutate({ action: "set-cleared", ids: [...selectedIds], cleared })}
+          onDelete={() => setBulkDeleteOpen(true)}
+          onClear={() => setSelectedIds(new Set())}
+        />
+      )}
+      <ConfirmModal
+        open={bulkDeleteOpen}
+        title="Eliminar movimientos"
+        message={`¿Eliminar ${selectedIds.size} ${selectedIds.size === 1 ? "movimiento" : "movimientos"}? Los pagos recurrentes se omiten (se gestionan desde su programación) y de un traspaso se borran las dos partes. No se puede deshacer.`}
+        confirmLabel="Eliminar"
+        variant="danger"
+        onConfirm={() => batchMut.mutate({ action: "delete", ids: [...selectedIds] })}
+        onCancel={() => setBulkDeleteOpen(false)}
+      />
       <ConfirmModal
         open={!!deleteTxTarget}
         title="Eliminar transacción"
