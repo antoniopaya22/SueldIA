@@ -10,6 +10,7 @@ import { eq, and, sql, desc, asc, gte, lte, ilike, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { defaultCleared } from "../services/transaction-filters.js";
+import { suggestPayees } from "../services/payee-suggestions.service.js";
 import { getTodayIsoDate } from "../services/recurring-transactions.service.js";
 
 export const transactionsRouter = Router();
@@ -194,6 +195,31 @@ transactionsRouter.get("/", async (req, res, next) => {
       .offset(offset);
 
     res.json({ data: rows, total: count, page, limit });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const payeeSuggestionsSchema = z.object({
+  q: z.string().max(100).optional(),
+  type: z.enum(["expense", "income"]).optional(),
+  limit: z.coerce.number().int().min(1).max(20).default(8),
+});
+
+// Beneficiarios ya usados, con categoría/cuenta/importe de su último movimiento
+// (autocompletado del formulario). Antes de /:id: si no, "payees" se leería como id.
+transactionsRouter.get("/payees", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = payeeSuggestionsSchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Parámetros de consulta inválidos",
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const data = await suggestPayees(userId, parsed.data);
+    res.json({ data });
   } catch (err) {
     next(err);
   }
