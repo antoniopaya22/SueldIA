@@ -11,6 +11,7 @@ import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { defaultCleared } from "../services/transaction-filters.js";
 import { suggestPayees } from "../services/payee-suggestions.service.js";
+import { ruleCategoryFor } from "../services/category-rules.service.js";
 import { applyBatch, batchSchema } from "../services/transaction-batch.service.js";
 import {
   amountRangeValid, amountRangeIssue, buildBaseConditions, buildConditions, transactionFilterFields,
@@ -281,6 +282,12 @@ transactionsRouter.post("/", async (req, res, next) => {
 
     const { targetAccountId, ...txData } = parsed.data;
     const cleared = txData.cleared ?? defaultCleared(txData.date, getTodayIsoDate());
+
+    // Sin categoría, una regla automática del usuario puede ponerla según el beneficiario.
+    if (txData.type !== "transfer" && txData.categoryId == null) {
+      const ruleCategoryId = await ruleCategoryFor(userId, txData.payee);
+      if (ruleCategoryId !== null) txData.categoryId = ruleCategoryId;
+    }
 
     if (txData.type !== "transfer" && txData.categoryId != null) {
       const category = await getOwnedCategory(txData.categoryId, userId);

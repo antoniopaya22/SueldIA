@@ -263,6 +263,20 @@ async function listFilteredFinanceRows(filters: FinanceFilters): Promise<Finance
 
 /* ───────── Account balance ──────────────────────────────────── */
 
+/**
+ * Efecto de un movimiento en el saldo de SU cuenta: + ingreso, − gasto y, en un
+ * traspaso, + la pata de entrada (la de id más bajo del par) y − la de salida.
+ */
+export const signedAmountSql = sql`
+  case
+    when ${transactions.type} = 'income' then ${transactions.amount}
+    when ${transactions.type} = 'expense' then -${transactions.amount}
+    when ${transactions.type} = 'transfer' and ${transactions.transferId} is not null and ${transactions.transferId} < ${transactions.id}
+      then ${transactions.amount}
+    when ${transactions.type} = 'transfer' then -${transactions.amount}
+    else 0
+  end`;
+
 export async function getAccountsWithBalance(userId: number): Promise<AccountWithBalance[]> {
   const userAccounts = await db
     .select()
@@ -279,16 +293,7 @@ export async function getAccountsWithBalance(userId: number): Promise<AccountWit
       accountId: transactions.accountId,
       // sum() sobre doublePrecision devuelve double precision (número), no
       // numeric (que sí llegaría como string) — ver la nota de schema.ts.
-      net: sql<number>`sum(
-        case
-          when ${transactions.type} = 'income' then ${transactions.amount}
-          when ${transactions.type} = 'expense' then -${transactions.amount}
-          when ${transactions.type} = 'transfer' and ${transactions.transferId} is not null and ${transactions.transferId} < ${transactions.id}
-            then ${transactions.amount}
-          when ${transactions.type} = 'transfer' then -${transactions.amount}
-          else 0
-        end
-      )`.as("net"),
+      net: sql<number>`sum(${signedAmountSql})`.as("net"),
     })
     .from(transactions)
     .where(and(eq(transactions.userId, userId), effectiveTransaction()))

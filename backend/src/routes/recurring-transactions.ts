@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
+import { getSubscriptionSuggestions } from "../services/subscriptions.service.js";
 import { validateIdParam } from "../middleware/params.js";
 import { db } from "../db/index.js";
 import {
@@ -109,6 +110,16 @@ recurringTransactionsRouter.get("/", async (req, res, next) => {
         pendingCount: pendingCounts.get(rule.id) ?? 0,
       })),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Gastos que se repiten cada mes y aún no están programados (para proponer crear la regla).
+recurringTransactionsRouter.get("/suggestions", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    res.json({ data: await getSubscriptionSuggestions(userId) });
   } catch (err) {
     next(err);
   }
