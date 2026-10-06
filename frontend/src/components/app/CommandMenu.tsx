@@ -6,6 +6,7 @@ import { HOME_ITEM, SETTINGS_ITEM, WORKSPACES } from "./navigation";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { getPayslips, getTransactions } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
+import { openNewTransaction } from "@/lib/new-transaction";
 
 interface CommandEntry {
   id: string;
@@ -100,7 +101,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
       label: ws.primaryAction.label,
       hint: ws.label,
       icon: ws.primaryAction.icon,
-      run: go(ws.primaryAction.href),
+      run: ws.primaryAction.opens === "new-transaction" ? () => openNewTransaction() : go(ws.primaryAction.href),
     }));
     const theme = (value: ThemePreference, label: string, icon: LucideIcon): CommandEntry => ({
       id: `theme:${value}`,

@@ -643,6 +643,24 @@ export const getTransactions = (filters: TransactionFilters = {}) => {
   return request<Paginated<Transaction>>(`/transactions?${params}`);
 };
 
+export interface PayeeSuggestion {
+  payee: string;
+  type: "expense" | "income";
+  categoryId: number | null;
+  accountId: number;
+  amount: number;
+  count: number;
+}
+
+/** Beneficiarios ya usados (con la categoría/cuenta/importe de su último movimiento) para autocompletar. */
+export const getPayeeSuggestions = (opts: { q?: string; type?: "expense" | "income"; limit?: number } = {}) => {
+  const params = new URLSearchParams();
+  if (opts.q) params.set("q", opts.q);
+  if (opts.type) params.set("type", opts.type);
+  if (opts.limit) params.set("limit", String(opts.limit));
+  return request<{ data: PayeeSuggestion[] }>(`/transactions/payees?${params}`).then((r) => r.data);
+};
+
 export const createTransaction = (data: {
   accountId: number;
   categoryId?: number | null;

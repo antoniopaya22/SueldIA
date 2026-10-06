@@ -21,6 +21,8 @@ export interface QuickAction {
   label: string;
   href: string;
   icon: LucideIcon;
+  /** Si está, la acción abre este diálogo en el sitio en vez de navegar a `href` (que queda de enlace de respaldo). */
+  opens?: "new-transaction";
 }
 
 export interface WorkspaceMeta {
@@ -44,7 +46,7 @@ export const WORKSPACES: WorkspaceMeta[] = [
     description: "Cuentas, gastos e ingresos",
     icon: Wallet,
     href: "/app/finance",
-    primaryAction: { label: "Nueva transacción", href: "/app/transactions?nueva=1", icon: Plus },
+    primaryAction: { label: "Nueva transacción", href: "/app/transactions?nueva=1", icon: Plus, opens: "new-transaction" },
     items: [
       { href: "/app/finance", label: "Dashboard", icon: Wallet, exact: true, keywords: "finanzas resumen" },
       { href: "/app/finance/analytics", label: "Analítica", icon: PieChart, keywords: "finanzas gráficos gastos" },

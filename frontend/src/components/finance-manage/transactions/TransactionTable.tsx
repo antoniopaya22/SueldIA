@@ -1,6 +1,6 @@
 import { Fragment, useMemo } from "react";
 import {
-  CheckCircle2, Circle, ChevronDown, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock,
+  CheckCircle2, Circle, ChevronDown, Copy, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock,
 } from "lucide-react";
 import type { Account, Transaction } from "../../../lib/api";
 import { formatCurrency } from "../../../lib/format";
@@ -23,6 +23,7 @@ interface Props {
   onEdit: (tx: Transaction) => void;
   onToggleCleared: (tx: Transaction) => void;
   onSchedule: (tx: Transaction) => void;
+  onDuplicate: (tx: Transaction) => void;
   onDelete: (tx: Transaction) => void;
 }
 
@@ -55,6 +56,7 @@ function useRowActions(props: Props) {
       icon: tx.cleared ? Circle : CheckCircle2,
       onSelect: () => props.onToggleCleared(tx),
     });
+    if (tx.type !== "transfer") actions.push({ label: "Duplicar", icon: Copy, onSelect: () => props.onDuplicate(tx) });
     if (canSchedule) actions.push({ label: "Programar como recurrente", icon: Repeat, onSelect: () => props.onSchedule(tx) });
     if (!tx.recurringTransactionId) {
       actions.push({ label: "Eliminar", icon: Trash2, onSelect: () => props.onDelete(tx), destructive: true, separated: true });

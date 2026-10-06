@@ -3,9 +3,7 @@ import type { ReactNode } from "react";
 import { AuthProvider } from "./AuthProvider";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { Toaster } from "./ui/sonner";
-import { createAppQueryClient } from "../lib/query-client";
-
-const queryClient = createAppQueryClient();
+import { appQueryClient as queryClient } from "../lib/query-client";
 
 export function Providers({ children }: { children: ReactNode }) {
   return (

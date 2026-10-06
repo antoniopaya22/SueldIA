@@ -1,10 +1,13 @@
+import { useMemo } from "react";
+import { Combobox } from "@base-ui/react/combobox";
 import {
   ArrowDownRight, ArrowUpRight, ArrowLeftRight, Wallet, Landmark, CreditCard, Banknote, TrendingUp,
-  type LucideIcon,
+  Check, ChevronDown, X, type LucideIcon,
 } from "lucide-react";
 import type { Account, CategoryGroup, RecurringCadence } from "../../../lib/api";
+import { Input } from "@/components/ui/input";
 import {
-  Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { cn } from "cn";
 import { darkBoost } from "../../../lib/color";
@@ -54,6 +57,11 @@ export const CADENCE_LABELS: Record<RecurringCadence, string> = { weekly: "Seman
 export function getTodayIsoDate(): string {
   const value = new Date();
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+}
+
+export function getYesterdayIsoDate(reference = new Date()): string {
+  const y = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate() - 1);
+  return formatIsoDate(y.getFullYear(), y.getMonth() + 1, y.getDate());
 }
 
 function parseIsoDate(isoDate: string) {
@@ -154,6 +162,24 @@ export function AccountSelect({
   );
 }
 
+interface CategoryOption {
+  id: number;
+  label: string;
+  groupName: string;
+}
+
+interface CategoryOptionGroup {
+  value: string;
+  items: CategoryOption[];
+}
+
+const normalizeText = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+
+/**
+ * Selector de categoría con búsqueda (por nombre de categoría o de grupo, sin
+ * distinguir tildes). Con decenas de categorías, un desplegable sin filtro era
+ * lo más lento de rellenar al apuntar un gasto.
+ */
 export function CategorySelect({
   id, value, onChange, groups, noneLabel = "Sin categoría", className,
 }: {
@@ -164,33 +190,80 @@ export function CategorySelect({
   noneLabel?: string;
   className?: string;
 }) {
-  const flat = groups.flatMap((g) => g.categories.map((c) => ({ ...c, groupName: g.name })));
+  const optionGroups = useMemo<CategoryOptionGroup[]>(
+    () => groups
+      .filter((g) => g.categories.length > 0)
+      .map((g) => ({ value: g.name, items: g.categories.map((c) => ({ id: c.id, label: c.name, groupName: g.name })) })),
+    [groups],
+  );
+  const selected = useMemo(
+    () => optionGroups.flatMap((g) => g.items).find((o) => o.id === value) ?? null,
+    [optionGroups, value],
+  );
+
   return (
-    <Select value={value ? String(value) : NONE} onValueChange={(v) => onChange(!v || v === NONE ? "" : Number(v))}>
-      <SelectTrigger id={id} className={cn("w-full", className)}>
-        <SelectValue placeholder={noneLabel}>
-          {(v: string) => {
-            const c = flat.find((cat) => String(cat.id) === v);
-            return c ? (
-              <span className="truncate">
-                <span className="text-muted-foreground">{c.groupName} · </span>{c.name}
-              </span>
-            ) : (
-              <span className="text-muted-foreground">{noneLabel}</span>
-            );
-          }}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={NONE}>{noneLabel}</SelectItem>
-        {groups.map((g) => (
-          <SelectGroup key={g.id}>
-            <SelectLabel>{g.name}</SelectLabel>
-            {g.categories.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
-          </SelectGroup>
-        ))}
-      </SelectContent>
-    </Select>
+    <Combobox.Root
+      items={optionGroups}
+      value={selected}
+      onValueChange={(option: CategoryOption | null) => onChange(option ? option.id : "")}
+      isItemEqualToValue={(a: CategoryOption, b: CategoryOption) => a.id === b.id}
+      itemToStringLabel={(option: CategoryOption) => option.label}
+      filter={(option: CategoryOption, query: string) => normalizeText(`${option.groupName} ${option.label}`).includes(normalizeText(query.trim()))}
+    >
+      <Combobox.InputGroup className={cn("relative w-full", className)}>
+        <Combobox.Input
+          id={id}
+          placeholder={noneLabel}
+          // Al volver a la categoría ya elegida, el texto queda seleccionado: basta con escribir para cambiarla.
+          onFocus={(e) => e.currentTarget.select()}
+          render={<Input className="pr-14" />}
+        />
+        <div className="absolute inset-y-0 right-0 flex items-center pr-1">
+          <Combobox.Clear
+            aria-label="Quitar categoría"
+            className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <X className="size-3.5" aria-hidden="true" />
+          </Combobox.Clear>
+          <Combobox.Trigger
+            aria-label="Abrir lista de categorías"
+            className="flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+            <ChevronDown className="size-4" aria-hidden="true" />
+          </Combobox.Trigger>
+        </div>
+      </Combobox.InputGroup>
+      <Combobox.Portal>
+        <Combobox.Positioner sideOffset={4} className="isolate z-50 outline-none">
+          <Combobox.Popup className="w-(--anchor-width) min-w-48 max-w-(--available-width) origin-(--transform-origin) overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-ending-style:opacity-0 data-starting-style:opacity-0">
+            <Combobox.Empty className="px-3 py-4 text-center text-sm text-muted-foreground empty:hidden">
+              Ninguna categoría coincide
+            </Combobox.Empty>
+            <Combobox.List className="max-h-[min(18rem,var(--available-height))] overflow-y-auto overscroll-contain p-1 outline-0 data-empty:p-0">
+              {(group: CategoryOptionGroup) => (
+                <Combobox.Group key={group.value} items={group.items} className="block">
+                  <Combobox.GroupLabel className="px-1.5 py-1 text-xs text-muted-foreground">{group.value}</Combobox.GroupLabel>
+                  <Combobox.Collection>
+                    {(option: CategoryOption) => (
+                      <Combobox.Item
+                        key={option.id}
+                        value={option}
+                        className="relative flex cursor-default items-center rounded-md py-1.5 pr-8 pl-1.5 text-sm outline-hidden select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+                      >
+                        <span className="truncate">{option.label}</span>
+                        <Combobox.ItemIndicator className="absolute right-2 flex size-4 items-center justify-center">
+                          <Check className="size-4" aria-hidden="true" />
+                        </Combobox.ItemIndicator>
+                      </Combobox.Item>
+                    )}
+                  </Combobox.Collection>
+                </Combobox.Group>
+              )}
+            </Combobox.List>
+          </Combobox.Popup>
+        </Combobox.Positioner>
+      </Combobox.Portal>
+    </Combobox.Root>
   );
 }
 
