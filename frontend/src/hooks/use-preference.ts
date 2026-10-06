@@ -36,10 +36,14 @@ export function usePreference<T>(
   key: string,
   defaultValue: T,
   validate?: (value: unknown) => value is T,
-): [T, (next: T | ((prev: T) => T)) => void, { loaded: boolean; reset: () => void }] {
+): [T, (next: T | ((prev: T) => T)) => void, { loaded: boolean; synced: boolean; reset: () => void }] {
   const queryClient = useQueryClient();
   // Con el valor por defecto en el primer pintado (también en el prerender estático): sin desajustes de hidratación.
   const [value, setValueState] = useState<T>(defaultValue);
+  // `synced`: el valor del servidor (si lo había) ya se ha volcado en `value`. `loaded` solo dice que la
+  // petición terminó: en ese mismo instante `value` aún puede ser el anterior, así que para "hacer algo una
+  // vez con el valor guardado" hay que esperar a `synced`.
+  const [synced, setSynced] = useState(false);
   const valueRef = useRef(value);
   valueRef.current = value;
 
@@ -63,6 +67,7 @@ export function usePreference<T>(
       setValueState(remote);
       writeLocal(key, remote);
     }
+    setSynced(true);
   }, [server, key, accept]);
 
   const persist = useCallback(
@@ -104,5 +109,5 @@ export function usePreference<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [persist]);
 
-  return [value, setValue, { loaded: isSuccess, reset }];
+  return [value, setValue, { loaded: isSuccess, synced, reset }];
 }

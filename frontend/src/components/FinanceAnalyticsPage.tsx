@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { transactionsHref } from "../lib/transaction-filters";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart,
   PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, Download, RefreshCcw, Scale, Wallet, X,
+  AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, Download, RefreshCcw, Scale, SlidersHorizontal, Wallet, X,
 } from "lucide-react";
 import {
   getAccounts, getCategories, getFinanceAnalytics,
@@ -24,14 +25,23 @@ import {
   adaptiveColor, flowColors, paletteColor, presetRange, rangeLabel, shortenLabel,
   tickFormatter as fmtTick, valueFormatter as fmtValue, type RangePreset, type ValueMode,
 } from "./finance/finance-ui";
-import { AnalyticsPanel, AnalyticsSection, ExpandedPanelDialog, MatrixHeatmap, type PanelConfig } from "./finance/AnalyticsPanel";
+import { AnalyticsPanel, ExpandedPanelDialog, MatrixHeatmap, type PanelConfig } from "./finance/AnalyticsPanel";
+import { AnalyticsCustomizeSheet } from "./finance/AnalyticsCustomizeSheet";
+import { AnalyticsViewsMenu } from "./finance/AnalyticsViewsMenu";
+import { usePreference } from "../hooks/use-preference";
+import {
+  DEFAULT_PANEL_SETTINGS, normalizeLayout, normalizePanelSettings, normalizeViews,
+  type AnalyticsView, type LayoutEntry, type PanelKey, type PanelSettings,
+} from "../lib/analytics-settings";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "cn";
 
+// Los paneles que son un gráfico con controles (todos menos las "lecturas rápidas", que es una tarjeta aparte).
+type ChartPanelKey = Exclude<PanelKey, "insights">;
+
 // ─── Tipos de controles ─────────────────────────────────────────
 type PeriodPreset = RangePreset | "custom";
-type PanelKey = "trend" | "cumulative" | "distribution" | "payees" | "weekday" | "stack" | "accounts" | "efficiency" | "compare" | "matrix";
 type TrendMetric = "all" | "income" | "expenses" | "net" | "count" | "savingsRate";
 type ChartView = "bars" | "area" | "line";
 type FlowType = "expense" | "income";
@@ -121,36 +131,69 @@ function FinanceAnalyticsView() {
   const [accountId, setAccountId] = useState<number | undefined>();
   const [groupId, setGroupId] = useState<number | undefined>();
   const [categoryId, setCategoryId] = useState<number | undefined>();
-  const [expandedPanel, setExpandedPanel] = useState<PanelKey | null>(null);
+  const [expandedPanel, setExpandedPanel] = useState<ChartPanelKey | null>(null);
 
-  const [trendMetric, setTrendMetric] = useState<TrendMetric>("all");
-  const [trendView, setTrendView] = useState<ChartView>("bars");
-  const [distributionMetric, setDistributionMetric] = useState<FlowType>("expense");
-  const [distributionScope, setDistributionScope] = useState<Scope>("category");
-  const [distributionView, setDistributionView] = useState<"donut" | "bars">("donut");
-  const [distributionValue, setDistributionValue] = useState<RankValue>("total");
-  const [distributionLimit, setDistributionLimit] = useState(8);
-  const [payeeMetric, setPayeeMetric] = useState<FlowType>("expense");
-  const [payeeValue, setPayeeValue] = useState<RankValue>("total");
-  const [payeeLimit, setPayeeLimit] = useState(8);
-  const [stackGrouping, setStackGrouping] = useState<Scope>("category");
-  const [stackMetric, setStackMetric] = useState<FlowType>("expense");
-  const [stackView, setStackView] = useState<"bars" | "area">("bars");
-  const [stackLimit, setStackLimit] = useState(5);
-  const [weekdayMetric, setWeekdayMetric] = useState<WeekdayMetric>("expense");
-  const [weekdayView, setWeekdayView] = useState<"radar" | "bars">("radar");
-  const [accountMetric, setAccountMetric] = useState<AccountMetric>("balance");
-  const [accountView, setAccountView] = useState<"bars" | "donut">("bars");
-  const [accountLimit, setAccountLimit] = useState(6);
-  const [cumulativeMetric, setCumulativeMetric] = useState<CumulativeMetric>("net");
-  const [cumulativeView, setCumulativeView] = useState<"area" | "line">("area");
-  const [efficiencyMetric, setEfficiencyMetric] = useState<EfficiencyMetric>("savingsRate");
-  const [compareScope, setCompareScope] = useState<Scope>("group");
-  const [compareValue, setCompareValue] = useState<RankValue>("total");
-  const [compareLimit, setCompareLimit] = useState(6);
-  const [matrixScope, setMatrixScope] = useState<Scope>("category");
-  const [matrixMetric, setMatrixMetric] = useState<FlowType>("expense");
-  const [matrixLimit, setMatrixLimit] = useState(6);
+  // Lo que cada panel recuerda (tipo de gráfico, métrica, "Top N"): se guarda en la cuenta y se valida al leerlo.
+  const [storedSettings, setStoredSettings] = usePreference<unknown>("analytics-settings", DEFAULT_PANEL_SETTINGS);
+  const settings = useMemo(() => normalizePanelSettings(storedSettings), [storedSettings]);
+  const setting = <K extends keyof PanelSettings>(key: K) => (value: PanelSettings[K]) =>
+    setStoredSettings((prev: unknown) => ({ ...normalizePanelSettings(prev), [key]: value }));
+  const trendMetric = settings.trendMetric;
+  const setTrendMetric = setting("trendMetric");
+  const trendView = settings.trendView;
+  const setTrendView = setting("trendView");
+  const distributionMetric = settings.distributionMetric;
+  const setDistributionMetric = setting("distributionMetric");
+  const distributionScope = settings.distributionScope;
+  const setDistributionScope = setting("distributionScope");
+  const distributionView = settings.distributionView;
+  const setDistributionView = setting("distributionView");
+  const distributionValue = settings.distributionValue;
+  const setDistributionValue = setting("distributionValue");
+  const distributionLimit = settings.distributionLimit;
+  const setDistributionLimit = setting("distributionLimit");
+  const payeeMetric = settings.payeeMetric;
+  const setPayeeMetric = setting("payeeMetric");
+  const payeeValue = settings.payeeValue;
+  const setPayeeValue = setting("payeeValue");
+  const payeeLimit = settings.payeeLimit;
+  const setPayeeLimit = setting("payeeLimit");
+  const stackGrouping = settings.stackGrouping;
+  const setStackGrouping = setting("stackGrouping");
+  const stackMetric = settings.stackMetric;
+  const setStackMetric = setting("stackMetric");
+  const stackView = settings.stackView;
+  const setStackView = setting("stackView");
+  const stackLimit = settings.stackLimit;
+  const setStackLimit = setting("stackLimit");
+  const weekdayMetric = settings.weekdayMetric;
+  const setWeekdayMetric = setting("weekdayMetric");
+  const weekdayView = settings.weekdayView;
+  const setWeekdayView = setting("weekdayView");
+  const accountMetric = settings.accountMetric;
+  const setAccountMetric = setting("accountMetric");
+  const accountView = settings.accountView;
+  const setAccountView = setting("accountView");
+  const accountLimit = settings.accountLimit;
+  const setAccountLimit = setting("accountLimit");
+  const cumulativeMetric = settings.cumulativeMetric;
+  const setCumulativeMetric = setting("cumulativeMetric");
+  const cumulativeView = settings.cumulativeView;
+  const setCumulativeView = setting("cumulativeView");
+  const efficiencyMetric = settings.efficiencyMetric;
+  const setEfficiencyMetric = setting("efficiencyMetric");
+  const compareScope = settings.compareScope;
+  const setCompareScope = setting("compareScope");
+  const compareValue = settings.compareValue;
+  const setCompareValue = setting("compareValue");
+  const compareLimit = settings.compareLimit;
+  const setCompareLimit = setting("compareLimit");
+  const matrixScope = settings.matrixScope;
+  const setMatrixScope = setting("matrixScope");
+  const matrixMetric = settings.matrixMetric;
+  const setMatrixMetric = setting("matrixMetric");
+  const matrixLimit = settings.matrixLimit;
+  const setMatrixLimit = setting("matrixLimit");
 
   const { data: accounts = [], isLoading: loadingAccounts, error: accountsError } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const { data: categoryGroups = [], isLoading: loadingCategories, error: categoriesError } = useQuery({ queryKey: ["categories"], queryFn: getCategories });
@@ -409,6 +452,57 @@ function FinanceAnalyticsView() {
     setCategoryId(undefined);
     applyPreset(DEFAULT_PRESET);
   };
+
+  // ─── Diseño de la página y vistas guardadas (se guardan en la cuenta) ──
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [storedLayout, setStoredLayout, layoutPref] = usePreference<unknown>("analytics-layout", null);
+  const layout = useMemo(() => normalizeLayout(storedLayout), [storedLayout]);
+  const [storedViews, setStoredViews] = usePreference<unknown>("analytics-views", []);
+  const views = useMemo(() => normalizeViews(storedViews), [storedViews]);
+  const [defaultViewId, setDefaultViewId, defaultViewPref] = usePreference<string | null>("analytics-default-view", null);
+
+  const applyView = (view: AnalyticsView) => {
+    setAccountId(view.accountId);
+    setGroupId(view.groupId);
+    setCategoryId(view.categoryId);
+    if (view.preset === "custom") {
+      setPeriodPreset("custom");
+      setFrom(view.from ?? defaultRange.from);
+      setTo(view.to ?? defaultRange.to);
+    } else {
+      applyPreset(view.preset);
+    }
+  };
+
+  const saveCurrentView = (name: string) => {
+    const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const custom = periodPreset === "custom";
+    setStoredViews([
+      ...views,
+      { id, name, preset: periodPreset, from: custom ? from : undefined, to: custom ? to : undefined, accountId, groupId, categoryId },
+    ]);
+    toast.success(`Vista «${name}» guardada`);
+  };
+
+  const deleteView = (id: string) => {
+    setStoredViews(views.filter((v) => v.id !== id));
+    if (defaultViewId === id) setDefaultViewId(null);
+  };
+
+  const activeViewId = views.find((v) =>
+    v.accountId === accountId && v.groupId === groupId && v.categoryId === categoryId && v.preset === periodPreset &&
+    (v.preset !== "custom" || (v.from === from && v.to === to)),
+  )?.id ?? null;
+
+  // La vista por defecto se aplica una sola vez, al entrar, cuando las preferencias ya están en el estado.
+  const defaultViewApplied = useRef(false);
+  useEffect(() => {
+    if (defaultViewApplied.current || !defaultViewPref.synced) return;
+    defaultViewApplied.current = true;
+    const view = views.find((v) => v.id === defaultViewId);
+    if (view) applyView(view);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultViewPref.synced]);
 
   if (loading) return <AnalyticsSkeleton />;
 
@@ -825,7 +919,7 @@ function FinanceAnalyticsView() {
   );
 
   // ─── Paneles ──────────────────────────────────────────────────
-  const panels: Record<PanelKey, PanelConfig> = {
+  const panels: Record<ChartPanelKey, PanelConfig> = {
     trend: {
       title: "Pulso mensual",
       description: [
@@ -1008,7 +1102,7 @@ function FinanceAnalyticsView() {
     },
   };
 
-  const panel = (key: PanelKey, className?: string) => (
+  const panel = (key: ChartPanelKey, className?: string) => (
     <AnalyticsPanel panel={panels[key]} onExpand={() => setExpandedPanel(key)} className={className} />
   );
 
@@ -1038,6 +1132,18 @@ function FinanceAnalyticsView() {
       actions={
         <>
           <Segmented aria-label="Periodo" value={periodPreset} onChange={applyPreset} options={PRESET_OPTIONS} />
+          <AnalyticsViewsMenu
+            views={views}
+            defaultViewId={defaultViewId}
+            activeViewId={activeViewId}
+            onApply={applyView}
+            onSave={saveCurrentView}
+            onDelete={deleteView}
+            onSetDefault={setDefaultViewId}
+          />
+          <Button variant="outline" size="sm" className="gap-1.5 bg-card" onClick={() => setCustomizeOpen(true)}>
+            <SlidersHorizontal className="size-3.5" aria-hidden="true" /> Personalizar
+          </Button>
           <Button variant="outline" size="icon-sm" className="bg-card" onClick={() => refetch()} disabled={isFetching} aria-label="Actualizar" title="Actualizar">
             <RefreshCcw className={cn("size-3.5", isFetching && "animate-spin")} />
           </Button>
@@ -1086,6 +1192,36 @@ function FinanceAnalyticsView() {
         </Button>
       )}
     </PageHeader>
+  );
+
+  const insightsCard = (
+      <SectionCard title="Lecturas rápidas" description="Se recalculan con los filtros y controles de cada panel">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Insight
+            label="Serie dominante"
+            value={distributionData[0]?.label ?? "—"}
+            hint={distributionData[0] ? `${fmtValue(distributionMode)(distributionData[0].value)} · ${formatPct(distributionData[0].share)}` : "Sin datos en Distribución"}
+          />
+          <Insight
+            label="Día con más actividad"
+            value={topWeekday && topWeekday.value !== 0 ? topWeekday.label : "—"}
+            hint={topWeekday && topWeekday.value !== 0 ? fmtValue(weekdayMode)(Math.abs(topWeekday.value)) : "Sin patrón semanal"}
+          />
+          <Insight
+            label="Series apiladas"
+            value={String(stackTrend.series.length)}
+            hint={`${stackGrouping === "category" ? "Categorías" : "Grupos"} en la tendencia`}
+          />
+          <Insight
+            label="Cuenta con más peso"
+            value={accountChartData[0]?.label ?? "—"}
+            hint={accountChartData[0] ? fmtValue(accountMode)(accountChartData[0].value) : "Sin datos de cuenta"}
+          />
+        </div>
+        <a href="/app/transactions" className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-5 w-full")}>
+          Ver movimientos
+        </a>
+      </SectionCard>
   );
 
   return (
@@ -1145,66 +1281,29 @@ function FinanceAnalyticsView() {
         </EmptyState>
       ) : (
         <>
-          <AnalyticsSection title="Evolución" description="Cómo se mueve tu dinero mes a mes.">
-            {panel("trend")}
-            <div className="grid gap-6 xl:grid-cols-2">
-              {panel("cumulative")}
-              {panel("efficiency")}
-            </div>
-          </AnalyticsSection>
-
-          <AnalyticsSection title="Reparto" description="Dónde se concentran ingresos y gastos.">
-            <div className="grid gap-6 xl:grid-cols-2">
-              {panel("distribution")}
-              {panel("payees")}
-            </div>
-            <div className="grid gap-6 xl:grid-cols-2">
-              {panel("compare")}
-              {panel("weekday")}
-            </div>
-          </AnalyticsSection>
-
-          <AnalyticsSection title="Categorías en el tiempo" description="Qué series pesan cada mes y cuándo aparecen los picos.">
-            {panel("stack")}
-            {panel("matrix")}
-          </AnalyticsSection>
-
-          <AnalyticsSection title="Cuentas y claves" description="Tus cuentas y lo más destacado según los paneles de arriba.">
-            <div className="grid gap-6 xl:grid-cols-2">
-              {panel("accounts")}
-              <SectionCard title="Lecturas rápidas" description="Se recalculan con los filtros y controles de cada panel">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Insight
-                    label="Serie dominante"
-                    value={distributionData[0]?.label ?? "—"}
-                    hint={distributionData[0] ? `${fmtValue(distributionMode)(distributionData[0].value)} · ${formatPct(distributionData[0].share)}` : "Sin datos en Distribución"}
-                  />
-                  <Insight
-                    label="Día con más actividad"
-                    value={topWeekday && topWeekday.value !== 0 ? topWeekday.label : "—"}
-                    hint={topWeekday && topWeekday.value !== 0 ? fmtValue(weekdayMode)(Math.abs(topWeekday.value)) : "Sin patrón semanal"}
-                  />
-                  <Insight
-                    label="Series apiladas"
-                    value={String(stackTrend.series.length)}
-                    hint={`${stackGrouping === "category" ? "Categorías" : "Grupos"} en la tendencia`}
-                  />
-                  <Insight
-                    label="Cuenta con más peso"
-                    value={accountChartData[0]?.label ?? "—"}
-                    hint={accountChartData[0] ? fmtValue(accountMode)(accountChartData[0].value) : "Sin datos de cuenta"}
-                  />
-                </div>
-                <a href="/app/transactions" className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-5 w-full")}>
-                  Ver movimientos
-                </a>
-              </SectionCard>
-            </div>
-          </AnalyticsSection>
+          <div className="mt-8 grid gap-6 xl:grid-cols-2">
+            {layout.filter((entry) => entry.visible).map((entry) => (
+              <div key={entry.key} className={cn("min-w-0", entry.span === "full" && "xl:col-span-2")}>
+                {entry.key === "insights" ? insightsCard : panel(entry.key)}
+              </div>
+            ))}
+          </div>
+          {layout.every((entry) => !entry.visible) && (
+            <EmptyState className="mt-8" icon={SlidersHorizontal} title="Has ocultado todos los gráficos" description="Elige cuáles quieres ver desde «Personalizar».">
+              <Button onClick={() => setCustomizeOpen(true)}>Personalizar</Button>
+            </EmptyState>
+          )}
         </>
       )}
 
       <ExpandedPanelDialog panel={expandedPanel ? panels[expandedPanel] : null} onClose={() => setExpandedPanel(null)} />
+      <AnalyticsCustomizeSheet
+        open={customizeOpen}
+        onOpenChange={setCustomizeOpen}
+        layout={layout}
+        onChange={(next: LayoutEntry[]) => setStoredLayout(next)}
+        onReset={() => layoutPref.reset()}
+      />
     </div>
   );
 }
