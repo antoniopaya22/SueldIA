@@ -11,6 +11,7 @@ import {
 import { getMonthReport } from "../services/month-report.service.js";
 import { getBalanceHistory } from "../services/balance-history.service.js";
 import { getForecast } from "../services/forecast.service.js";
+import { getAmountDistribution, getDailySeries } from "../services/chart-series.service.js";
 import { getTodayIsoDate } from "../services/recurring-transactions.service.js";
 
 export const financeRouter = Router();
@@ -194,6 +195,34 @@ financeRouter.get("/forecast", async (req, res, next) => {
       return res.status(400).json({ error: "Parámetros de consulta inválidos", details: parsed.error.flatten().fieldErrors });
     }
     res.json(await getForecast(userId, parsed.data.days));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Ingresos y gastos día a día (ritmo de gasto y calendario de calor).
+financeRouter.get("/daily", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = financeQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Parámetros de consulta inválidos", details: parsed.error.flatten().fieldErrors });
+    }
+    res.json({ data: await getDailySeries({ userId, ...parsed.data }) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Cuántos movimientos (y cuánto dinero) hay en cada tramo de importe.
+financeRouter.get("/amounts", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = financeQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Parámetros de consulta inválidos", details: parsed.error.flatten().fieldErrors });
+    }
+    res.json(await getAmountDistribution({ userId, ...parsed.data }));
   } catch (err) {
     next(err);
   }

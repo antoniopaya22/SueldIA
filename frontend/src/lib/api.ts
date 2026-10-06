@@ -1301,3 +1301,35 @@ export const savePreference = (key: string, value: unknown) =>
 
 export const removePreference = (key: string) =>
   request<{ ok: boolean }>(`/preferences/${encodeURIComponent(key)}`, { method: "DELETE" });
+
+// ─── Series para los gráficos de la analítica ───────────────────
+export interface DailyPoint {
+  date: string;
+  income: number;
+  expense: number;
+  count: number;
+}
+
+const filterParams = (filters?: FinanceAnalyticsFilters) => {
+  const params = new URLSearchParams();
+  if (filters?.from) params.set("from", filters.from);
+  if (filters?.to) params.set("to", filters.to);
+  if (filters?.accountId) params.set("accountId", String(filters.accountId));
+  if (filters?.groupId) params.set("groupId", String(filters.groupId));
+  if (filters?.categoryId) params.set("categoryId", String(filters.categoryId));
+  return params;
+};
+
+/** Ingresos y gastos de cada día con movimientos (los días sin movimientos no vienen). */
+export const getDailySeries = (filters?: FinanceAnalyticsFilters) =>
+  request<{ data: DailyPoint[] }>(`/finance/daily?${filterParams(filters)}`).then((r) => r.data);
+
+export interface AmountDistribution {
+  /** Límites de los tramos: <e0, e0–e1, … , ≥eN. */
+  edges: number[];
+  expense: Array<{ count: number; total: number }>;
+  income: Array<{ count: number; total: number }>;
+}
+
+export const getAmountDistribution = (filters?: FinanceAnalyticsFilters) =>
+  request<AmountDistribution>(`/finance/amounts?${filterParams(filters)}`);
