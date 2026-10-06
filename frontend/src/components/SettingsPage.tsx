@@ -24,6 +24,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
+import { usePreference } from "@/hooks/use-preference";
+import { CHART_PALETTES, DEFAULT_CHART_PALETTE, isChartPaletteId, previewColors } from "@/lib/chart-palettes";
 import { cn } from "cn";
 
 // Fila de ajustes: descripción a la izquierda, control a la derecha (apila en móvil).
@@ -119,6 +121,49 @@ function ThemePicker() {
               <Icon className="size-3.5" aria-hidden="true" />
               {label}
             </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Paleta de los gráficos: se aplica al momento en toda la app y sigue al usuario entre dispositivos. */
+function ChartPalettePicker() {
+  const [palette, setPalette] = usePreference("chart-palette", DEFAULT_CHART_PALETTE, isChartPaletteId);
+  const { resolved } = useTheme();
+  const heights = [62, 88, 46, 74, 55];
+  return (
+    <div role="radiogroup" aria-label="Paleta de los gráficos" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {CHART_PALETTES.map((p) => {
+        const selected = palette === p.id;
+        const colors = previewColors(p.id, resolved);
+        return (
+          <button
+            key={p.id}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => setPalette(p.id)}
+            className="group cursor-pointer text-left outline-none"
+          >
+            <div
+              className={cn(
+                "relative flex h-16 items-end gap-1 overflow-hidden rounded-lg border bg-card px-3 pt-2 transition-all group-focus-visible:ring-2 group-focus-visible:ring-ring/50",
+                selected ? "border-primary-500 ring-2 ring-primary-500/25 dark:border-primary dark:ring-primary/25" : "border-border group-hover:border-foreground/25",
+              )}
+            >
+              {colors.map((color, i) => (
+                <span key={i} className="flex-1 rounded-t-sm" style={{ backgroundColor: color, height: `${heights[i]}%` }} aria-hidden="true" />
+              ))}
+              {selected && (
+                <span className="absolute top-1 right-1 flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm">
+                  <Check className="size-2.5" strokeWidth={3} />
+                </span>
+              )}
+            </div>
+            <span className={cn("mt-2 block text-xs font-medium", selected ? "text-foreground" : "text-muted-foreground")}>{p.label}</span>
+            <span className="block text-[11px] leading-tight text-muted-foreground">{p.description}</span>
           </button>
         );
       })}
@@ -362,6 +407,9 @@ function SettingsView() {
         <SectionCard title="Apariencia">
           <SettingRow title="Tema" description="Claro, oscuro o el mismo que tu sistema. Se aplica al momento.">
             <ThemePicker />
+          </SettingRow>
+          <SettingRow title="Colores de los gráficos" description="Elige la paleta que mejor lees. Se aplica en todos los gráficos y la recordamos en tus otros dispositivos.">
+            <ChartPalettePicker />
           </SettingRow>
         </SectionCard>
 

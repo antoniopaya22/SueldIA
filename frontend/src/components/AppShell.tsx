@@ -46,6 +46,7 @@ import {
 import { formatRelativeDate } from "@/lib/format";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { CommandMenu } from "@/components/app/CommandMenu";
+import { PreferencesBoot } from "@/components/app/PreferencesBoot";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TransactionFormDialog } from "@/components/finance-manage/transactions/TransactionFormDialog";
 import type { TxForm } from "@/components/finance-manage/transactions/TransactionDialog";
@@ -578,16 +579,17 @@ export function AppShell({ currentPath, children }: AppShellProps) {
           </div>
         </SidebarInset>
         <CommandMenu open={searchOpen} onOpenChange={setSearchOpen} />
-        {txDialog.mounted && (
-          <QueryClientProvider client={appQueryClient}>
+        <QueryClientProvider client={appQueryClient}>
+          <PreferencesBoot />
+          {txDialog.mounted && (
             <TransactionFormDialog
               open={txDialog.open}
               onClose={() => setTxDialog((d) => ({ ...d, open: false }))}
               editing={null}
               initial={txDialog.initial}
             />
-          </QueryClientProvider>
-        )}
+          )}
+        </QueryClientProvider>
       </SidebarProvider>
     </TooltipProvider>
   );

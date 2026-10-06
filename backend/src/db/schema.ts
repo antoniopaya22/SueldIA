@@ -372,3 +372,24 @@ export const categoryRules = pgTable(
     userMatchIdx: uniqueIndex("category_rules_user_match_idx").on(table.userId, table.match),
   }),
 );
+
+// ─── Preferencias del usuario ───────────────────────────────────
+// Pares clave → JSON (texto) para recordar ajustes de interfaz entre sesiones y
+// dispositivos: paleta de gráficos, qué paneles de la analítica se ven y en qué
+// orden, vistas guardadas, etc. Lo que se guarda lo valida el cliente de cada
+// pantalla; aquí solo se acotan tamaño y número de claves.
+export const userPreferences = pgTable(
+  "user_preferences",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    value: text("value").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userKeyIdx: uniqueIndex("user_preferences_user_key_idx").on(table.userId, table.key),
+  }),
+);
