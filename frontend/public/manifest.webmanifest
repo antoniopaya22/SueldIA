@@ -1,0 +1,40 @@
+{
+  "id": "/app",
+  "name": "SueldIA",
+  "short_name": "SueldIA",
+  "description": "Gestiona y analiza tus nóminas, cuentas, gastos y presupuestos.",
+  "lang": "es",
+  "dir": "ltr",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#2e3a48",
+  "theme_color": "#2e3a48",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Nueva transacción",
+      "short_name": "Nueva",
+      "url": "/app/transactions?nueva=1",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Subir nómina",
+      "short_name": "Subir",
+      "url": "/app/upload",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    },
+    {
+      "name": "Analítica",
+      "short_name": "Analítica",
+      "url": "/app/finance/analytics",
+      "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}

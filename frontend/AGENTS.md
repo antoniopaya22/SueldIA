@@ -146,6 +146,10 @@ Patrón visual: bruto en navy (línea discontinua), neto en verde (área/sólido
 - **Colores elegidos por el usuario** (perfiles, cuentas, grupos): pasarlos siempre por `lib/color.ts` — `adaptiveColor(hex)` para series/`style` (los muy oscuros pasan a `--chart-2`) o `darkBoost(hex)` como clase; si no, el navy desaparece en modo oscuro.
 - Componentes locales por dominio: `components/finance/` (tooltips por serie, rankings, presets de periodo), `components/finance-manage/` (tabla y diálogos de transacciones, swatches, acciones de fila), `components/payroll/` (badges de estado, `ProfileDot`, `PayslipDetail`).
 
+## PWA
+
+La app es instalable: `public/manifest.webmanifest` (nombre, colores, iconos en `public/icons/`, atajos a Nueva transacción / Subir nómina / Analítica), enlazado desde `Layout.astro`, `MarketingLayout.astro` y `login.astro`. `public/sw.js` es un service worker **mínimo**: solo guarda `public/offline.html` y la muestra si una navegación falla sin red. **No cachea nada de `/api` ni de las páginas de la app** (son datos financieros); no añadir caché de datos sin decidirlo explícitamente. Si cambias `offline.html`, sube la versión de `CACHE` en `sw.js`.
+
 ## Reglas Críticas
 
 - **No usar default exports** excepto en componentes de página (el export default envuelve con Providers)

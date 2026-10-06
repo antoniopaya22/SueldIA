@@ -16,6 +16,18 @@ import LoginWrapper from "../components/LoginWrapper";
     <link rel="icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#2e3a48" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="SueldIA" />
+    <script is:inline>
+      // Service worker mínimo (solo página sin conexión): ver public/sw.js.
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", function () {
+          navigator.serviceWorker.register("/sw.js").catch(function () {});
+        });
+      }
+    </script>
     <script is:inline>
       try {
         var stored = localStorage.getItem("theme");
