@@ -69,7 +69,7 @@ const SORT_OPTIONS: { value: string; label: string; field: SortField; dir: SortD
 const CLEARED_LABELS: Record<string, string> = { [NONE]: "Cualquier estado", true: "Liquidadas", false: "Pendientes" };
 
 function emptyTxForm(today: string, accountId: number | null, type: TxType = "expense"): TxForm {
-  return { type, accountId: accountId ?? "", targetAccountId: "", categoryId: "", amount: "", date: today, payee: "", memo: "" };
+  return { type, accountId: accountId ?? "", targetAccountId: "", categoryId: "", amount: "", date: today, payee: "", memo: "", cleared: true };
 }
 
 function emptyRecurringForm(today: string, accountId: number | null): RecurringForm {
@@ -315,6 +315,7 @@ function TransactionsView() {
       date: tx.date,
       payee: tx.payee ?? "",
       memo: tx.memo ?? "",
+      cleared: tx.cleared,
     });
     setTxDialogOpen(true);
   };
@@ -340,6 +341,7 @@ function TransactionsView() {
       date: txForm.date,
       payee: txForm.payee || null,
       memo: txForm.memo || null,
+      cleared: txForm.cleared,
       categoryId: txForm.type === "transfer" ? null : txForm.categoryId ? Number(txForm.categoryId) : null,
       targetAccountId: txForm.type === "transfer" && txForm.targetAccountId ? Number(txForm.targetAccountId) : undefined,
     };
