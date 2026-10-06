@@ -84,3 +84,18 @@ describe("buildMonthReport · beneficiarios nuevos", () => {
     expect(buildMonthReport(rs, "2025-03").newPayees.map((p) => p.payee)).toEqual(["Tienda Nueva"]);
   });
 });
+
+describe("buildMonthReport · mes en curso", () => {
+  it("un mes a medias no lista bajadas (aún no se sabe), pero sí subidas", () => {
+    const partial = buildMonthReport(rows, "2025-03", "2025-03-10");
+    expect(partial.partial).toBe(true);
+    expect(partial.decreases).toEqual([]);
+    expect(partial.increases.map((c) => c.name)).toEqual(["Supermercado", "Compras"]);
+  });
+
+  it("un mes ya cerrado es completo y sí lista bajadas", () => {
+    const closed = buildMonthReport(rows, "2025-03", "2025-04-02");
+    expect(closed.partial).toBe(false);
+    expect(closed.decreases.map((c) => c.name)).toEqual(["Ocio"]);
+  });
+});

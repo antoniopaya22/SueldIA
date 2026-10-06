@@ -4,6 +4,7 @@ import { categories, categoryGroups, transactions } from "../db/schema.js";
 import { median } from "../utils/math.js";
 import { normalizeText } from "../utils/text.js";
 import { shiftMonthKey } from "./budgets.service.js";
+import { getTodayIsoDate } from "./recurring-transactions.service.js";
 import { effectiveTransaction } from "./transaction-filters.js";
 
 /* ───────── Informe del mes ──────────────────────────────────────
@@ -68,6 +69,12 @@ export interface MonthTotals {
 export interface MonthReport {
   month: string;
   previousMonth: string;
+  /**
+   * El mes no ha terminado: comparar su gasto con la media de meses completos
+   * engaña (el alquiler aún no se ha pagado y parece que "gastas un 100 % menos"),
+   * así que no se listan bajadas y el cliente no debe mostrar variaciones.
+   */
+  partial: boolean;
   totals: MonthTotals;
   previousTotals: MonthTotals;
   categories: ReportCategory[];
@@ -107,7 +114,8 @@ const monthOf = (date: string) => date.slice(0, 7);
  * `rows` debe incluir el mes y hasta los 6 anteriores (ya filtrado a liquidados
  * y sin traspasos). Los meses "anteriores con datos" son los que tienen algún gasto.
  */
-export function buildMonthReport(rows: ReportRow[], month: string): MonthReport {
+export function buildMonthReport(rows: ReportRow[], month: string, today: string = getTodayIsoDate()): MonthReport {
+  const partial = month >= today.slice(0, 7);
   const previousMonth = shiftMonthKey(month, -1);
   const current = rows.filter((r) => monthOf(r.date) === month);
   const prior = rows.filter((r) => monthOf(r.date) < month);
@@ -158,7 +166,8 @@ export function buildMonthReport(rows: ReportRow[], month: string): MonthReport 
 
   const comparable = historyMonths > 0 ? categoriesReport.filter((c) => Math.max(c.spent, c.average) >= CHANGE_MIN_AMOUNT) : [];
   const increases = comparable.filter((c) => c.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, TOP_N);
-  const decreases = comparable.filter((c) => c.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, TOP_N);
+  // Con el mes a medias, "gastas menos" no se puede saber todavía; "gastas más" sí (ya superaste tu media).
+  const decreases = partial ? [] : comparable.filter((c) => c.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, TOP_N);
 
   // ── Gastos inusuales: mucho más que lo típico de su categoría ──
   const priorAmountsByCategory = new Map<string, number[]>();
@@ -207,6 +216,7 @@ export function buildMonthReport(rows: ReportRow[], month: string): MonthReport 
   return {
     month,
     previousMonth,
+    partial,
     totals: totalsOf(current),
     previousTotals: totalsOf(previous),
     categories: categoriesReport,
