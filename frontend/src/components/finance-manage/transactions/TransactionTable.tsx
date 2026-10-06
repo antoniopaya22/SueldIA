@@ -1,6 +1,6 @@
 import { Fragment, useMemo } from "react";
 import {
-  CheckCircle2, Circle, ChevronDown, Copy, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock,
+  CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock,
 } from "lucide-react";
 import type { Account, Transaction } from "../../../lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -25,6 +25,11 @@ interface Props {
   onToggleCleared: (tx: Transaction) => void;
   onSchedule: (tx: Transaction) => void;
   onDuplicate: (tx: Transaction) => void;
+  /** Liquidar un cargo programado con otro importe (recibos variables). */
+  onSettle: (tx: Transaction) => void;
+  /** Dividir un gasto en varias categorías, o volver a unir sus partes. */
+  onSplit: (tx: Transaction) => void;
+  onUnsplit: (tx: Transaction) => void;
   onDelete: (tx: Transaction) => void;
   /** Modo selección: casillas para actuar sobre varios movimientos a la vez. */
   selection?: {
@@ -58,11 +63,17 @@ function useRowActions(props: Props) {
     const canSchedule = tx.type !== "transfer" && !tx.recurringTransactionId;
     const actions: RowAction[] = [];
     if (canEdit) actions.push({ label: "Editar", icon: Pencil, onSelect: () => props.onEdit(tx) });
+    if (tx.recurringTransactionId && !tx.cleared) {
+      actions.push({ label: "Liquidar con otro importe…", icon: Coins, onSelect: () => props.onSettle(tx) });
+    }
     actions.push({
       label: tx.cleared ? "Marcar como pendiente" : "Marcar como liquidada",
       icon: tx.cleared ? Circle : CheckCircle2,
       onSelect: () => props.onToggleCleared(tx),
     });
+    const canSplit = tx.type !== "transfer" && !tx.recurringTransactionId && !tx.payslipId && !tx.splitGroupId;
+    if (canSplit) actions.push({ label: "Dividir en categorías…", icon: Split, onSelect: () => props.onSplit(tx) });
+    if (tx.splitGroupId) actions.push({ label: "Unir las partes", icon: Merge, onSelect: () => props.onUnsplit(tx) });
     if (tx.type !== "transfer") actions.push({ label: "Duplicar", icon: Copy, onSelect: () => props.onDuplicate(tx) });
     if (canSchedule) actions.push({ label: "Programar como recurrente", icon: Repeat, onSelect: () => props.onSchedule(tx) });
     if (!tx.recurringTransactionId) {
@@ -90,9 +101,14 @@ function ClearedToggle({ tx, onToggle }: { tx: Transaction; onToggle: () => void
 
 function TxBadges({ tx, today }: { tx: Transaction; today: string }) {
   const isFutureRecurring = !!tx.recurringTransactionId && !!tx.scheduledFor && tx.scheduledFor > today && !tx.cleared;
-  if (!tx.recurringTransactionId && !isFutureRecurring) return null;
+  if (!tx.recurringTransactionId && !isFutureRecurring && !tx.splitGroupId) return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
+      {tx.splitGroupId && (
+        <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground" title="Parte de un gasto dividido en varias categorías">
+          <Split className="size-2.5" aria-hidden="true" /> Dividido
+        </span>
+      )}
       {tx.recurringTransactionId && (
         <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary-700 dark:text-primary">
           <Repeat className="size-2.5" aria-hidden="true" /> Recurrente
@@ -228,7 +244,7 @@ export function TransactionTable(props: Props) {
                             <p className="truncate font-medium text-foreground">
                               {tx.payee || (tx.type === "transfer" ? "Transferencia" : "Sin beneficiario")}
                             </p>
-                            {(tx.memo || tx.recurringTransactionId) && (
+                            {(tx.memo || tx.recurringTransactionId || tx.splitGroupId) && (
                               <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                                 <TxBadges tx={tx} today={today} />
                                 {tx.memo && <span className="truncate">{tx.memo}</span>}

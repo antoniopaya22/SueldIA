@@ -59,6 +59,7 @@ import {
   findWorkspace,
   getActiveWorkspace,
   getBreadcrumbTrail,
+  groupNavItems,
   isActivePath,
   type NavItem,
   type WorkspaceMeta,
@@ -552,16 +553,18 @@ export function AppShell({ currentPath, children }: AppShellProps) {
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
-            <SidebarGroup className="py-1">
-              <SidebarGroupLabel className="text-[11px] tracking-wide text-sidebar-foreground/75">{activeWorkspace.label}</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu className="gap-0.5">
-                  {activeWorkspace.items.map((item) => (
-                    <NavLink key={item.href} item={item} currentPath={currentPath} />
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
+            {groupNavItems(activeWorkspace.items).map((group) => (
+              <SidebarGroup key={group.label ?? activeWorkspace.label} className="py-1">
+                <SidebarGroupLabel className="text-[11px] tracking-wide text-sidebar-foreground/75">{group.label ?? activeWorkspace.label}</SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu className="gap-0.5">
+                    {group.items.map((item) => (
+                      <NavLink key={item.href} item={item} currentPath={currentPath} />
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            ))}
           </SidebarContent>
           <SidebarFooter>
             <NavUser />

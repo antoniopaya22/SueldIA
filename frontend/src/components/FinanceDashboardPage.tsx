@@ -4,7 +4,7 @@ import {
   Bar, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarRange, Download, PiggyBank, RefreshCcw, Wallet,
+  AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarRange, PiggyBank, RefreshCcw, Wallet,
 } from "lucide-react";
 import { getAccounts, getFinanceAnalytics, type FinanceAnalyticsFilters } from "../lib/api";
 import { monthRange, transactionsHref } from "../lib/transaction-filters";
@@ -22,6 +22,7 @@ import {
   shortenLabel, type RangePreset,
 } from "./finance/finance-ui";
 import { BalanceHistoryCard } from "./finance/BalanceHistoryCard";
+import { GettingStartedCard } from "./finance/GettingStartedCard";
 import { ForecastCard } from "./finance/ForecastCard";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
@@ -146,16 +147,12 @@ function FinanceDashboardView() {
     return (
       <>
         <PageHeader title="Tus finanzas," accent="de un vistazo." description="Saldo, flujo mensual y focos de gasto de todas tus cuentas." />
-        <EmptyState
-          icon={Wallet}
-          title="Aún no hay datos financieros"
-          description="Importa tu CSV de YNAB o crea una cuenta para ver tu saldo, ingresos y gastos."
-          actionLabel="Importar datos"
-          actionHref="/app/import"
-          actionIcon={Download}
-        >
-          <a href="/app/accounts" className={buttonVariants({ variant: "outline" })}>Crear cuenta</a>
-        </EmptyState>
+        <GettingStartedCard alwaysShow />
+        <p className="text-sm text-muted-foreground">
+          ¿Vienes de YNAB?{" "}
+          <a href="/app/import" className="font-medium text-foreground underline underline-offset-4">Importa tu CSV</a>{" "}
+          y lo tendrás todo de golpe.
+        </p>
       </>
     );
   }
@@ -198,6 +195,8 @@ function FinanceDashboardView() {
   return (
     <div>
       {header}
+
+      <GettingStartedCard />
 
       <StatGrid>
         <StatCard

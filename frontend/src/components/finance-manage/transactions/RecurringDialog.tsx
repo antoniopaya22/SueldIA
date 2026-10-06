@@ -2,6 +2,7 @@ import type { Account, CategoryGroup, RecurringCadence } from "../../../lib/api"
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -21,6 +22,8 @@ export interface RecurringForm {
   endDate: string;
   payee: string;
   memo: string;
+  /** Domiciliación: se liquida sola el día del cargo. */
+  autoSettle: boolean;
 }
 
 interface Props {
@@ -50,7 +53,7 @@ export function RecurringDialog({ open, editing, form, setForm, accounts, groups
           <DialogHeader className="border-b border-border px-5 pt-5 pb-4">
             <DialogTitle>{editing ? "Editar pago recurrente" : "Programar pago recurrente"}</DialogTitle>
             <DialogDescription>
-              Las instancias se crean como pendientes y no afectan al saldo hasta que las marques como liquidadas.
+              Las instancias se crean como pendientes y no afectan al saldo hasta que las marques como liquidadas, salvo las de las reglas automáticas, que se liquidan solas el día del cargo.
             </DialogDescription>
           </DialogHeader>
 
@@ -141,6 +144,21 @@ export function RecurringDialog({ open, editing, form, setForm, accounts, groups
             <div className="space-y-1.5">
               <Label htmlFor="rec-memo">Nota</Label>
               <Input id="rec-memo" value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} placeholder="Opcional" />
+            </div>
+
+            <div className="flex items-start gap-2.5">
+              <Checkbox
+                id="rec-auto"
+                checked={form.autoSettle}
+                onCheckedChange={(checked) => setForm({ ...form, autoSettle: checked === true })}
+                className="mt-0.5"
+              />
+              <div className="space-y-0.5">
+                <Label htmlFor="rec-auto" className="cursor-pointer">Liquidar automáticamente el día del cargo</Label>
+                <p className="text-xs text-muted-foreground">
+                  Para domiciliaciones: llegado el día, el movimiento pasa solo a tu saldo. Si no, queda pendiente hasta que lo marques.
+                </p>
+              </div>
             </div>
 
             {editing && (
