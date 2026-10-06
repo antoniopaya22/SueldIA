@@ -1,0 +1,1 @@
+ALTER TABLE "recurring_transactions" ADD COLUMN "auto_settle" boolean DEFAULT false NOT NULL;

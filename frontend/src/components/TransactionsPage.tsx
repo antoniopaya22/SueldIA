@@ -21,7 +21,10 @@ import {
   getTransactions,
   setRecurringTransactionActive,
   toggleCleared,
+  splitTransaction,
+  unsplitTransaction,
   updateRecurringTransaction,
+  updateTransaction,
   type RecurringTransaction,
   type Transaction,
   type TransactionFilters,
@@ -55,6 +58,8 @@ import type { TxForm } from "./finance-manage/transactions/TransactionDialog";
 import { TransactionFormDialog } from "./finance-manage/transactions/TransactionFormDialog";
 import { useQuickCategory } from "./finance-manage/transactions/useQuickCategory";
 import { RecurringDialog, type RecurringForm } from "./finance-manage/transactions/RecurringDialog";
+import { SettleDialog } from "./finance-manage/transactions/SettleDialog";
+import { SplitDialog } from "./finance-manage/transactions/SplitDialog";
 import { AmountRangeFilter } from "./finance-manage/transactions/AmountRangeFilter";
 import { BulkActionBar } from "./finance-manage/transactions/BulkActionBar";
 import { describeApply } from "./categories/CategoryRulesCard";
@@ -79,7 +84,7 @@ const CLEARED_LABELS: Record<string, string> = { [NONE]: "Cualquier estado", tru
 function emptyRecurringForm(today: string, accountId: number | null): RecurringForm {
   return {
     type: "expense", accountId: accountId ?? "", categoryId: "", amount: "", cadence: "monthly",
-    intervalCount: 1, startDate: today, endDate: "", payee: "", memo: "",
+    intervalCount: 1, startDate: today, endDate: "", payee: "", memo: "", autoSettle: false,
   };
 }
 
@@ -122,6 +127,8 @@ function TransactionsView() {
   const [editingRecurringId, setEditingRecurringId] = useState<number | null>(null);
   const [recurringForm, setRecurringForm] = useState<RecurringForm>(() => emptyRecurringForm(today, null));
   const [deleteTxTarget, setDeleteTxTarget] = useState<Transaction | null>(null);
+  const [settleTarget, setSettleTarget] = useState<Transaction | null>(null);
+  const [splitTarget, setSplitTarget] = useState<Transaction | null>(null);
   const [deleteRecurringTarget, setDeleteRecurringTarget] = useState<RecurringTransaction | null>(null);
 
   const filters: TransactionFilters = useMemo(
@@ -204,6 +211,36 @@ function TransactionsView() {
           ? `${describeApply(res)}. ${res.skipped} sin sugerencia: categorízalos a mano o crea una regla.`
           : describeApply(res),
       );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // Liquidar un cargo programado con el importe real (recibos variables).
+  const settleMut = useMutation({
+    mutationFn: ({ id, amount }: { id: number; amount: number }) => updateTransaction(id, { amount, cleared: true }),
+    onSuccess: () => {
+      invalidateTx();
+      setSettleTarget(null);
+      toast.success("Movimiento liquidado con el importe real");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const splitMut = useMutation({
+    mutationFn: ({ id, parts }: { id: number; parts: Parameters<typeof splitTransaction>[1] }) => splitTransaction(id, parts),
+    onSuccess: (res) => {
+      invalidateTx();
+      setSplitTarget(null);
+      toast.success(`Gasto dividido en ${res.ids.length} partes`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const unsplitMut = useMutation({
+    mutationFn: unsplitTransaction,
+    onSuccess: () => {
+      invalidateTx();
+      toast.success("Partes unidas en un solo gasto");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -320,6 +357,7 @@ function TransactionsView() {
       endDate: rule.endDate ?? "",
       payee: rule.payee ?? "",
       memo: rule.memo ?? "",
+      autoSettle: rule.autoSettle,
     });
     setRecurringDialogOpen(true);
   };
@@ -338,6 +376,7 @@ function TransactionsView() {
       endDate: "",
       payee: s.payee,
       memo: "",
+      autoSettle: false,
     });
     setRecurringDialogOpen(true);
   };
@@ -356,6 +395,7 @@ function TransactionsView() {
       endDate: "",
       payee: tx.payee ?? "",
       memo: tx.memo ?? "",
+      autoSettle: false,
     });
     setRecurringDialogOpen(true);
   };
@@ -377,6 +417,7 @@ function TransactionsView() {
       endDate: recurringForm.endDate || null,
       payee: recurringForm.payee || null,
       memo: recurringForm.memo || null,
+      autoSettle: recurringForm.autoSettle,
     };
     if (editingRecurringId) updateRecurringMut.mutate({ id: editingRecurringId, data: payload });
     else createRecurringMut.mutate(payload);
@@ -416,7 +457,7 @@ function TransactionsView() {
       paused: visibleRecurringRules.length - active.length,
       monthlyOut: active.filter((r) => r.type === "expense").reduce((s, r) => s + monthlyEquivalent(r), 0),
       monthlyIn: active.filter((r) => r.type === "income").reduce((s, r) => s + monthlyEquivalent(r), 0),
-      pending: visibleRecurringRules.reduce((s, r) => s + r.pendingCount, 0),
+      overdue: visibleRecurringRules.reduce((s, r) => s + r.overdueCount, 0),
     };
   }, [visibleRecurringRules]);
 
@@ -732,6 +773,9 @@ function TransactionsView() {
                   onToggleCleared={(tx) => clearMut.mutate(tx.id)}
                   onSchedule={openRecurringFromTransaction}
                   onDuplicate={openDuplicateForm}
+                  onSettle={setSettleTarget}
+                  onSplit={setSplitTarget}
+                  onUnsplit={(tx) => unsplitMut.mutate(tx.id)}
                   selection={selectionMode ? {
                     ids: selectedIds,
                     onToggle: (id) => setSelectedIds((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; }),
@@ -769,7 +813,7 @@ function TransactionsView() {
             <StatCard label="Reglas activas" value={recurringStats.active} icon={Repeat} hint={recurringStats.paused ? `${recurringStats.paused} en pausa` : "Ninguna en pausa"} />
             <StatCard label="Gastos fijos al mes" value={formatCurrency(recurringStats.monthlyOut)} icon={TrendingDown} hint="Equivalente mensual" />
             <StatCard label="Ingresos fijos al mes" value={formatCurrency(recurringStats.monthlyIn)} icon={PiggyBank} hint="Equivalente mensual" />
-            <StatCard label="Pendientes" value={recurringStats.pending} icon={ListChecks} hint="Instancias sin liquidar" />
+            <StatCard label="Vencidas" value={recurringStats.overdue} icon={ListChecks} hint={recurringStats.overdue > 0 ? "Ya han llegado a su fecha: por liquidar" : "Nada vencido por liquidar"} />
           </StatGrid>
 
           <SubscriptionSuggestions suggestions={subscriptionSuggestions} onSchedule={openRecurringFromSuggestion} />
@@ -777,7 +821,7 @@ function TransactionsView() {
           <SectionCard
             className="mt-6"
             title="Pagos recurrentes"
-            description="Las instancias se crean como pendientes y no afectan al saldo hasta que las marques como liquidadas."
+            description="Las instancias se crean como pendientes y no afectan al saldo hasta que las marques como liquidadas, salvo las de las reglas automáticas, que se liquidan solas el día del cargo."
           >
             {visibleRecurringRules.length > 0 ? (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -847,6 +891,19 @@ function TransactionsView() {
           onClear={() => setSelectedIds(new Set())}
         />
       )}
+      <SplitDialog
+        transaction={splitTarget}
+        groups={categoryGroups}
+        pending={splitMut.isPending}
+        onClose={() => setSplitTarget(null)}
+        onConfirm={(parts) => splitTarget && splitMut.mutate({ id: splitTarget.id, parts })}
+      />
+      <SettleDialog
+        transaction={settleTarget}
+        pending={settleMut.isPending}
+        onClose={() => setSettleTarget(null)}
+        onConfirm={(amount) => settleTarget && settleMut.mutate({ id: settleTarget.id, amount })}
+      />
       <ConfirmModal
         open={bulkDeleteOpen}
         title="Eliminar movimientos"
@@ -859,7 +916,7 @@ function TransactionsView() {
       <ConfirmModal
         open={!!deleteTxTarget}
         title="Eliminar transacción"
-        message="¿Eliminar esta transacción? Esta acción no se puede deshacer."
+        message={deleteTxTarget?.splitGroupId ? "Es una parte de un gasto dividido: se eliminarán todas sus partes. Esta acción no se puede deshacer." : "¿Eliminar esta transacción? Esta acción no se puede deshacer."}
         confirmLabel="Eliminar"
         variant="danger"
         onConfirm={() => { if (deleteTxTarget) deleteMut.mutate(deleteTxTarget.id); setDeleteTxTarget(null); }}

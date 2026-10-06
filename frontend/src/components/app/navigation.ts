@@ -13,6 +13,8 @@ export interface NavItem {
   exact?: boolean;
   /** Palabras extra para la búsqueda de la paleta de comandos. */
   keywords?: string;
+  /** Los elementos con sección van agrupados bajo su etiqueta (p. ej. "Configurar"); sin sección, bajo el nombre del espacio. */
+  section?: string;
 }
 
 export type WorkspaceKey = "finanzas" | "nominas";
@@ -48,14 +50,14 @@ export const WORKSPACES: WorkspaceMeta[] = [
     href: "/app/finance",
     primaryAction: { label: "Nueva transacción", href: "/app/transactions?nueva=1", icon: Plus, opens: "new-transaction" },
     items: [
-      { href: "/app/finance", label: "Dashboard", icon: Wallet, exact: true, keywords: "finanzas resumen" },
-      { href: "/app/finance/analytics", label: "Analítica", icon: PieChart, keywords: "finanzas gráficos gastos" },
+      { href: "/app/finance", label: "Resumen", icon: Wallet, exact: true, keywords: "finanzas resumen dashboard" },
+      { href: "/app/transactions", label: "Transacciones", icon: Receipt, keywords: "movimientos gastos ingresos apuntar" },
+      { href: "/app/budget", label: "Presupuesto", icon: PiggyBank, keywords: "presupuesto categorías asignar objetivos" },
       { href: "/app/finance/report", label: "Informe del mes", icon: FileChartColumn, keywords: "informe resumen mes comparar media inusual" },
-      { href: "/app/accounts", label: "Cuentas", icon: Landmark, keywords: "banco tarjeta saldo" },
-      { href: "/app/categories", label: "Categorías", icon: Tags, keywords: "grupos" },
-      { href: "/app/budget", label: "Presupuesto", icon: PiggyBank, keywords: "presupuesto categorías asignar" },
-      { href: "/app/transactions", label: "Transacciones", icon: Receipt, keywords: "movimientos gastos ingresos" },
-      { href: "/app/import", label: "Importar", icon: ArrowDownToLine, keywords: "ynab csv" },
+      { href: "/app/finance/analytics", label: "Analítica", icon: PieChart, keywords: "finanzas gráficos gastos" },
+      { href: "/app/accounts", label: "Cuentas", icon: Landmark, keywords: "banco tarjeta saldo patrimonio" },
+      { href: "/app/categories", label: "Categorías", icon: Tags, section: "Configurar", keywords: "grupos reglas automáticas" },
+      { href: "/app/import", label: "Importar", icon: ArrowDownToLine, section: "Configurar", keywords: "ynab csv" },
     ],
   },
   {
@@ -122,4 +124,16 @@ export function getBreadcrumbTrail(currentPath: string): Crumb[] {
     ];
   }
   return [{ label: HOME_ITEM.label, href: HOME_ITEM.href }];
+}
+
+/** Agrupa los elementos del menú por sección conservando el orden (`label: null` = la etiqueta del espacio). */
+export function groupNavItems(items: NavItem[]): { label: string | null; items: NavItem[] }[] {
+  const groups: { label: string | null; items: NavItem[] }[] = [];
+  for (const item of items) {
+    const label = item.section ?? null;
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.items.push(item);
+    else groups.push({ label, items: [item] });
+  }
+  return groups;
 }

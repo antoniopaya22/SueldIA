@@ -13,6 +13,7 @@ import { defaultCleared } from "../services/transaction-filters.js";
 import { suggestPayees } from "../services/payee-suggestions.service.js";
 import { ruleCategoryFor } from "../services/category-rules.service.js";
 import { applyBatch, batchSchema } from "../services/transaction-batch.service.js";
+import { splitTransaction, unsplitTransaction } from "../services/transaction-split.service.js";
 import {
   amountRangeValid, amountRangeIssue, buildBaseConditions, buildConditions, transactionFilterFields,
 } from "../services/transaction-query.js";
@@ -170,6 +171,7 @@ transactionsRouter.get("/", async (req, res, next) => {
         flag: transactions.flag,
         importedFrom: transactions.importedFrom,
         payslipId: transactions.payslipId,
+        splitGroupId: transactions.splitGroupId,
         createdAt: transactions.createdAt,
       })
       .from(transactions)
@@ -219,6 +221,47 @@ transactionsRouter.post("/batch", async (req, res, next) => {
     const result = await applyBatch(userId, parsed.data);
     if (!result.ok) return res.status(result.status).json({ error: result.error });
     res.json({ updated: result.updated, skipped: result.skipped });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const splitSchema = z.object({
+  parts: z
+    .array(
+      z.object({
+        categoryId: z.number().int().positive().nullable(),
+        amount: z.number().positive("Cada parte debe ser mayor que cero"),
+        memo: z.string().max(500).nullish(),
+      }),
+    )
+    .min(2, "Divide en al menos dos partes")
+    .max(20),
+});
+
+// Dividir un gasto en varias categorías (las partes deben sumar el total).
+transactionsRouter.post("/:id/split", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = splitSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
+    }
+    const result = await splitTransaction(userId, Number(req.params.id), parsed.data.parts);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.status(201).json({ groupId: result.groupId, ids: result.ids });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Volver a dejar un gasto dividido como uno solo.
+transactionsRouter.post("/:id/unsplit", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const result = await unsplitTransaction(userId, Number(req.params.id));
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.json({ id: result.id });
   } catch (err) {
     next(err);
   }
@@ -423,6 +466,10 @@ transactionsRouter.put("/:id", async (req, res, next) => {
     const targetTx = transferDirection === "inflow" ? existing : paired;
     const nextType = parsed.data.type ?? existing.type;
 
+    if (existing.splitGroupId && nextType !== existing.type) {
+      return res.status(400).json({ error: "Une las partes del gasto dividido antes de cambiar su tipo" });
+    }
+
     if (nextType === "transfer") {
       const sourceAccountId = parsed.data.accountId ?? sourceTx.accountId;
       const destinationAccountId = parsed.data.targetAccountId ?? targetTx?.accountId;
@@ -586,6 +633,20 @@ transactionsRouter.put("/:id", async (req, res, next) => {
 
       if (!updated) return null;
 
+      // Fecha, cuenta, beneficiario, etiqueta y estado son del gasto, no de una parte: se igualan en todas.
+      if (existing.splitGroupId) {
+        await tx
+          .update(transactions)
+          .set({
+            accountId: updated.accountId,
+            date: updated.date,
+            payee: updated.payee,
+            flag: updated.flag,
+            cleared: updated.cleared,
+          })
+          .where(and(eq(transactions.userId, userId), eq(transactions.splitGroupId, existing.splitGroupId)));
+      }
+
       if (paired) {
         await tx
           .delete(transactions)
@@ -631,6 +692,14 @@ transactionsRouter.delete("/:id", async (req, res, next) => {
           .where(and(eq(transactions.id, existing.transferId), eq(transactions.userId, userId)));
       }
 
+      // Un gasto dividido es un solo gasto: se borra entero, no una parte suelta.
+      if (existing.splitGroupId) {
+        await tx
+          .delete(transactions)
+          .where(and(eq(transactions.userId, userId), eq(transactions.splitGroupId, existing.splitGroupId)));
+        return;
+      }
+
       await tx.delete(transactions).where(eq(transactions.id, id));
     });
 
@@ -652,12 +721,17 @@ transactionsRouter.patch("/:id/clear", async (req, res, next) => {
       .where(and(eq(transactions.id, id), eq(transactions.userId, userId)));
     if (!existing) return res.status(404).json({ error: "Transacción no encontrada" });
 
+    // Todas las partes de un gasto dividido se liquidan a la vez.
     const [updated] = await db
       .update(transactions)
       .set({ cleared: !existing.cleared })
-      .where(eq(transactions.id, id))
+      .where(
+        existing.splitGroupId
+          ? and(eq(transactions.userId, userId), eq(transactions.splitGroupId, existing.splitGroupId))
+          : eq(transactions.id, id),
+      )
       .returning();
-    res.json(updated);
+    res.json(existing.splitGroupId ? (await db.select().from(transactions).where(eq(transactions.id, id)))[0] : updated);
   } catch (err) {
     next(err);
   }

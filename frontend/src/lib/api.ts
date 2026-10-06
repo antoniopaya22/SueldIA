@@ -647,6 +647,9 @@ export interface Transaction {
   transferDirection: "outflow" | "inflow" | null;
   flag: string | null;
   importedFrom: string | null;
+  payslipId: number | null;
+  /** Mismo valor en todas las partes de un gasto dividido; null si no está dividido. */
+  splitGroupId: string | null;
   createdAt: string;
 }
 
@@ -786,9 +789,14 @@ export interface RecurringTransaction {
   memo: string | null;
   flag: string | null;
   active: boolean;
+  /** Domiciliación: las ocurrencias se liquidan solas el día del cargo. */
+  autoSettle: boolean;
   createdAt: string;
   nextOccurrence: string | null;
+  /** Instancias sin liquidar (vencidas y futuras). */
   pendingCount: number;
+  /** De ellas, las que ya han vencido: lo que de verdad hay que revisar. */
+  overdueCount: number;
 }
 
 export const getRecurringTransactions = () =>
@@ -806,6 +814,7 @@ export const createRecurringTransaction = (data: {
   payee?: string | null;
   memo?: string | null;
   flag?: string | null;
+  autoSettle?: boolean;
 }) =>
   request<RecurringTransaction>("/recurring-transactions", {
     method: "POST",
@@ -837,6 +846,7 @@ export const updateRecurringTransaction = (
     payee?: string | null;
     memo?: string | null;
     flag?: string | null;
+    autoSettle?: boolean;
   },
 ) =>
   request<RecurringTransaction>(`/recurring-transactions/${id}`, {
@@ -1258,3 +1268,26 @@ export const assignBudget = (categoryId: number, month: string, assigned: number
     method: "PUT",
     body: JSON.stringify({ categoryId, month, assigned }),
   });
+
+// ─── Dividir un gasto ───────────────────────────────────────────
+export interface SplitPart {
+  categoryId: number | null;
+  amount: number;
+  memo?: string | null;
+}
+
+/** Divide un gasto en varias categorías; las partes deben sumar el total. */
+export const splitTransaction = (id: number, parts: SplitPart[]) =>
+  request<{ groupId: string; ids: number[] }>(`/transactions/${id}/split`, {
+    method: "POST",
+    body: JSON.stringify({ parts }),
+  });
+
+/** Vuelve a dejar un gasto dividido como uno solo. */
+export const unsplitTransaction = (id: number) =>
+  request<{ id: number }>(`/transactions/${id}/unsplit`, { method: "POST" });
+
+// ─── Categorías de partida ──────────────────────────────────────
+/** Crea las categorías de partida (en español) que aún no existan. */
+export const seedDefaultCategories = () =>
+  request<{ groups: number; categories: number }>("/categories/seed-defaults", { method: "POST" });

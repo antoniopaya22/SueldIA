@@ -35,6 +35,7 @@ const recurringTransactionSchema = z
     payee: z.string().max(200).nullish(),
     memo: z.string().max(500).nullish(),
     flag: z.string().max(100).nullish(),
+    autoSettle: z.boolean().default(false),
   })
   .refine(
     (value) => !value.endDate || value.endDate >= value.startDate,
@@ -83,6 +84,7 @@ recurringTransactionsRouter.get("/", async (req, res, next) => {
         memo: recurringTransactions.memo,
         flag: recurringTransactions.flag,
         active: recurringTransactions.active,
+        autoSettle: recurringTransactions.autoSettle,
         createdAt: recurringTransactions.createdAt,
       })
       .from(recurringTransactions)
@@ -107,7 +109,9 @@ recurringTransactionsRouter.get("/", async (req, res, next) => {
           },
           today,
         ),
-        pendingCount: pendingCounts.get(rule.id) ?? 0,
+        pendingCount: pendingCounts.get(rule.id)?.pending ?? 0,
+        // Las ya vencidas (fecha de hoy o anterior): lo que de verdad hay que revisar.
+        overdueCount: pendingCounts.get(rule.id)?.overdue ?? 0,
       })),
     });
   } catch (err) {
@@ -166,6 +170,7 @@ recurringTransactionsRouter.post("/", async (req, res, next) => {
         payee: parsed.data.payee ?? null,
         memo: parsed.data.memo ?? null,
         flag: parsed.data.flag ?? null,
+        autoSettle: parsed.data.autoSettle,
       })
       .returning();
 
@@ -230,6 +235,7 @@ recurringTransactionsRouter.put("/:id", async (req, res, next) => {
           payee: parsed.data.payee ?? null,
           memo: parsed.data.memo ?? null,
           flag: parsed.data.flag ?? null,
+          autoSettle: parsed.data.autoSettle,
         })
         .where(and(eq(recurringTransactions.id, id), eq(recurringTransactions.userId, userId)))
         .returning();

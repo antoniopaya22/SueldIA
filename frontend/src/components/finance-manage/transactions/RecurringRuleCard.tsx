@@ -1,4 +1,4 @@
-import { CalendarClock, Pause, Pencil, Play, Trash2, Hourglass } from "lucide-react";
+import { CalendarClock, Pause, Pencil, Play, Trash2, Hourglass, Zap } from "lucide-react";
 import type { RecurringTransaction } from "../../../lib/api";
 import { formatCurrency } from "../../../lib/format";
 import { RowActions } from "../RowActions";
@@ -67,10 +67,23 @@ export function RecurringRuleCard({ rule, onEdit, onToggleActive, onDelete }: Pr
           <CalendarClock className="size-3" aria-hidden="true" />
           {rule.nextOccurrence ? `Próximo: ${formatDateLong(rule.nextOccurrence)}` : "Sin próximos vencimientos"}
         </span>
-        {rule.pendingCount > 0 && (
+        {rule.autoSettle && (
+          <span
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-muted-foreground"
+            title="Se liquida sola el día del cargo"
+          >
+            <Zap className="size-3" aria-hidden="true" /> Automática
+          </span>
+        )}
+        {rule.overdueCount > 0 && (
           <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-2 py-0.5 text-amber-700 dark:text-amber-400">
             <Hourglass className="size-3" aria-hidden="true" />
-            {rule.pendingCount} {rule.pendingCount === 1 ? "pendiente" : "pendientes"}
+            {rule.overdueCount} {rule.overdueCount === 1 ? "vencida" : "vencidas"}
+          </span>
+        )}
+        {rule.pendingCount > rule.overdueCount && (
+          <span className="rounded-md bg-muted px-2 py-0.5 text-muted-foreground" title="Ya generadas, aún no han llegado a su fecha">
+            {rule.pendingCount - rule.overdueCount} {rule.pendingCount - rule.overdueCount === 1 ? "próxima" : "próximas"}
           </span>
         )}
       </div>

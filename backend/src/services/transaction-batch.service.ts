@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db/index.js";
 import { transactions } from "../db/schema.js";
 import { categoryBelongsToUser } from "./budgets.service.js";
+import { splitSiblingIds } from "./transaction-split.service.js";
 
 const ids = z.array(z.number().int().positive()).min(1, "Selecciona al menos un movimiento").max(500, "Máximo 500 movimientos por operación");
 
@@ -24,7 +25,7 @@ export type BatchResult =
  * - categorizar ignora traspasos (no tienen categoría);
  * - borrar ignora los de una recurrente (se gestionan desde su programación);
  * - liquidar y borrar arrastran la otra pata de un traspaso, para que el par
- *   nunca quede a medias.
+ *   nunca quede a medias, y todas las partes de un gasto dividido.
  */
 export async function applyBatch(userId: number, input: BatchInput): Promise<BatchResult> {
   const requested = [...new Set(input.ids)];
@@ -34,12 +35,16 @@ export async function applyBatch(userId: number, input: BatchInput): Promise<Bat
       type: transactions.type,
       transferId: transactions.transferId,
       recurringTransactionId: transactions.recurringTransactionId,
+      splitGroupId: transactions.splitGroupId,
     })
     .from(transactions)
     .where(and(eq(transactions.userId, userId), inArray(transactions.id, requested)));
 
-  const withPairs = (selected: typeof rows) =>
-    [...new Set(selected.flatMap((r) => (r.transferId ? [r.id, r.transferId] : [r.id])))];
+  const withPairs = async (selected: typeof rows) => {
+    const groups = [...new Set(selected.map((r) => r.splitGroupId).filter((g): g is string => g !== null))];
+    const siblings = await splitSiblingIds(userId, groups);
+    return [...new Set([...selected.flatMap((r) => (r.transferId ? [r.id, r.transferId] : [r.id])), ...siblings])];
+  };
 
   switch (input.action) {
     case "set-category": {
@@ -61,7 +66,7 @@ export async function applyBatch(userId: number, input: BatchInput): Promise<Bat
         await db
           .update(transactions)
           .set({ cleared: input.cleared })
-          .where(and(eq(transactions.userId, userId), inArray(transactions.id, withPairs(rows))));
+          .where(and(eq(transactions.userId, userId), inArray(transactions.id, await withPairs(rows))));
       }
       return { ok: true, updated: rows.length, skipped: requested.length - rows.length };
     }
@@ -69,7 +74,7 @@ export async function applyBatch(userId: number, input: BatchInput): Promise<Bat
     case "delete": {
       const deletable = rows.filter((r) => !r.recurringTransactionId);
       if (deletable.length > 0) {
-        const toDelete = withPairs(deletable);
+        const toDelete = await withPairs(deletable);
         await db.transaction(async (tx) => {
           await tx.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, toDelete)));
         });

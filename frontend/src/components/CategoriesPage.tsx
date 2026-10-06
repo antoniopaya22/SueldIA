@@ -2,9 +2,10 @@ import { useMemo, useRef, useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Pencil, Trash2, FolderPlus, Folder, Tags, Search, ArrowRightLeft, Check, X,
-  AlertTriangle, Download, TrendingDown, CircleSlash,
+  AlertTriangle, Download, TrendingDown, CircleSlash, Wand2,
 } from "lucide-react";
 import { CategoryRulesCard } from "./categories/CategoryRulesCard";
+import { useSeedDefaultCategories } from "./categories/useSeedDefaultCategories";
 import { Providers } from "./Providers";
 import { toast } from "sonner";
 import { ConfirmModal } from "./ui/ConfirmModal";
@@ -245,6 +246,7 @@ function GroupCard({
 // ─── Página ─────────────────────────────────────────────────────
 function CategoriesView() {
   const queryClient = useQueryClient();
+  const seedDefaults = useSeedDefaultCategories();
   const { data: groups = [], isLoading, error } = useQuery({ queryKey: ["categories"], queryFn: getCategories });
   const range = useMemo(activityRange, []);
   const { data: analytics } = useQuery({
@@ -399,7 +401,10 @@ function CategoriesView() {
           title="Aún no tienes categorías"
           description="Crea un grupo (por ejemplo «Vivienda» o «Alimentación») y añade categorías dentro, o impórtalas desde YNAB."
         >
-          <Button onClick={openCreateGroup} className="gap-1.5"><FolderPlus className="size-4" /> Crear grupo</Button>
+          <Button onClick={() => seedDefaults.mutate()} disabled={seedDefaults.isPending} className="gap-1.5">
+            <Wand2 className="size-4" /> {seedDefaults.isPending ? "Creando…" : "Usar las categorías de partida"}
+          </Button>
+          <Button variant="outline" onClick={openCreateGroup} className="gap-1.5"><FolderPlus className="size-4" /> Crear grupo</Button>
           <a href="/app/import" className={cn(buttonVariants({ variant: "outline" }), "gap-1.5")}>
             <Download className="size-4" /> Importar YNAB
           </a>

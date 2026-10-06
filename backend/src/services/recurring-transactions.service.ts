@@ -1,4 +1,4 @@
-import { and, eq, gte, isNotNull, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import { db, type DbOrTx } from "../db/index.js";
 import { recurringTransactions, transactions } from "../db/schema.js";
 
@@ -115,6 +115,27 @@ export function getRecurringSyncThroughDate(lookaheadDays = 30): string {
   return addDaysIso(getTodayIsoDate(), lookaheadDays);
 }
 
+/** Una ocurrencia se liquida sola si su regla es una domiciliación y ya le ha llegado el día. */
+export function shouldAutoSettle(rule: { autoSettle: boolean }, occurrenceDate: string, today: string): boolean {
+  return rule.autoSettle && occurrenceDate <= today;
+}
+
+/** Pendientes por regla, separando las que ya vencieron (fecha de hoy o anterior) de las futuras. */
+export function summarizePending(
+  rows: { recurringTransactionId: number | null; date: string }[],
+  today: string,
+): Map<number, { pending: number; overdue: number }> {
+  const out = new Map<number, { pending: number; overdue: number }>();
+  for (const row of rows) {
+    if (row.recurringTransactionId === null) continue;
+    const entry = out.get(row.recurringTransactionId) ?? { pending: 0, overdue: 0 };
+    entry.pending += 1;
+    if (row.date <= today) entry.overdue += 1;
+    out.set(row.recurringTransactionId, entry);
+  }
+  return out;
+}
+
 function buildOccurrenceKey(recurringTransactionId: number, scheduledFor: string): string {
   return `${recurringTransactionId}:${scheduledFor}`;
 }
@@ -163,6 +184,7 @@ export async function syncRecurringTransactions(
   );
 
   const rowsToInsert: Array<typeof transactions.$inferInsert> = [];
+  const today = getTodayIsoDate();
 
   for (const rule of rules) {
     const occurrenceDates = listOccurrenceDates(
@@ -192,7 +214,7 @@ export async function syncRecurringTransactions(
         scheduledFor: occurrenceDate,
         payee: rule.payee,
         memo: rule.memo,
-        cleared: false,
+        cleared: shouldAutoSettle(rule, occurrenceDate, today),
         flag: rule.flag,
         importedFrom: "recurring",
       });
@@ -213,7 +235,39 @@ export async function syncRecurringTransactions(
       .onConflictDoNothing({ target: [transactions.recurringTransactionId, transactions.scheduledFor] });
   }
 
+  await settleDueAutoOccurrences(userId, dbOrTx);
+
   return rowsToInsert.length;
+}
+
+/**
+ * Liquida las ocurrencias pendientes ya vencidas de las reglas con liquidación
+ * automática (también las que se generaron antes de activar esa opción). Se
+ * ejecuta al final de cada sincronización, así que el cron diario la cubre.
+ */
+export async function settleDueAutoOccurrences(userId: number, dbOrTx: DbOrTx = db): Promise<void> {
+  const autoRules = dbOrTx
+    .select({ id: recurringTransactions.id })
+    .from(recurringTransactions)
+    .where(
+      and(
+        eq(recurringTransactions.userId, userId),
+        eq(recurringTransactions.active, true),
+        eq(recurringTransactions.autoSettle, true),
+      ),
+    );
+  await dbOrTx
+    .update(transactions)
+    .set({ cleared: true })
+    .where(
+      and(
+        eq(transactions.userId, userId),
+        eq(transactions.cleared, false),
+        isNotNull(transactions.scheduledFor),
+        lte(transactions.scheduledFor, getTodayIsoDate()),
+        inArray(transactions.recurringTransactionId, autoRules),
+      ),
+    );
 }
 
 export async function deletePendingRecurringOccurrences(
@@ -234,11 +288,11 @@ export async function deletePendingRecurringOccurrences(
 
 export async function countPendingOccurrencesByRule(
   userId: number,
-): Promise<Map<number, number>> {
+): Promise<Map<number, { pending: number; overdue: number }>> {
   const rows = await db
     .select({
       recurringTransactionId: transactions.recurringTransactionId,
-      total: transactions.id,
+      date: transactions.date,
     })
     .from(transactions)
     .where(
@@ -249,16 +303,7 @@ export async function countPendingOccurrencesByRule(
       ),
     );
 
-  const counts = new Map<number, number>();
-  for (const row of rows) {
-    if (row.recurringTransactionId === null) {
-      continue;
-    }
-
-    counts.set(row.recurringTransactionId, (counts.get(row.recurringTransactionId) ?? 0) + 1);
-  }
-
-  return counts;
+  return summarizePending(rows, getTodayIsoDate());
 }
 
 export async function getPendingOccurrencesForRule(

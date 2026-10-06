@@ -242,6 +242,11 @@ export const transactions = pgTable(
     transferId: integer("transfer_id"),
     flag: text("flag"),
     importedFrom: text("imported_from"),
+    // Un gasto dividido en varias categorías son varias filas reales (cada una con su
+    // categoría e importe) enlazadas por este identificador: así saldos, presupuesto e
+    // informes no cambian — lo que suma por categoría sigue sumando. Liquidar, borrar o
+    // cambiar fecha/cuenta/beneficiario de una parte se aplica a todo el grupo.
+    splitGroupId: text("split_group_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -258,6 +263,8 @@ export const transactions = pgTable(
     payslipIdx: uniqueIndex("transactions_payslip_idx").on(table.payslipId),
     // Presupuesto (actividad por categoría) y filtros por categoría.
     categoryIdx: index("transactions_category_idx").on(table.categoryId),
+    // Localizar las partes de un gasto dividido.
+    splitGroupIdx: index("transactions_split_group_idx").on(table.splitGroupId),
   }),
 );
 
@@ -289,6 +296,9 @@ export const recurringTransactions = pgTable("recurring_transactions", {
   memo: text("memo"),
   flag: text("flag"),
   active: boolean("active").notNull().default(true),
+  // Domiciliaciones: las ocurrencias se liquidan solas el día del cargo (si no, quedan
+  // pendientes hasta que el usuario las marque).
+  autoSettle: boolean("auto_settle").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

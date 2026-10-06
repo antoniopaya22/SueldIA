@@ -4,6 +4,7 @@ import { categoryGroups, categories } from "../db/schema.js";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
+import { seedDefaultCategories } from "../services/default-categories.service.js";
 
 export const categoriesRouter = Router();
 categoriesRouter.param("id", validateIdParam);
@@ -45,6 +46,16 @@ categoriesRouter.get("/", async (req, res, next) => {
     }));
 
     res.json({ data: groupMap });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Crear las categorías de partida (en español) que aún no tenga. Idempotente.
+categoriesRouter.post("/seed-defaults", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    res.status(201).json(await seedDefaultCategories(userId));
   } catch (err) {
     next(err);
   }
