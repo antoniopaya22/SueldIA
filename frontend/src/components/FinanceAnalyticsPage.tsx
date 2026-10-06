@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { transactionsHref } from "../lib/transaction-filters";
 import { useQuery } from "@tanstack/react-query";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart,
@@ -226,8 +227,19 @@ function FinanceAnalyticsView() {
       .map((item) => {
         const isCategory = distributionScope === "category";
         const label = isCategory ? (item as FinanceAnalyticsCategoryItem).categoryName : (item as FinanceAnalyticsGroupItem).groupName;
+        // Sin categoría/grupo el bucket es "sin categoría" (null): enlaza a ese filtro.
+        const id = isCategory ? (item as FinanceAnalyticsCategoryItem).categoryId : (item as FinanceAnalyticsGroupItem).groupId;
+        const href = transactionsHref({
+          ...(id === null ? { uncategorized: true } : isCategory ? { categoryId: id } : { groupId: id }),
+          type: distributionMetric,
+          from: from || undefined,
+          to: to || undefined,
+          accountId,
+          cleared: "true", // la analítica solo cuenta lo liquidado: así el total del enlace coincide
+        });
         return {
           key: item.bucketKey,
+          href,
           label,
           parentLabel: isCategory ? (item as FinanceAnalyticsCategoryItem).groupName : null,
           count: item.count,
@@ -238,13 +250,22 @@ function FinanceAnalyticsView() {
       .slice(0, distributionLimit);
     const totalValue = ranked.reduce((sum, item) => sum + item.value, 0);
     return ranked.map((item, index) => ({ ...item, share: totalValue > 0 ? (item.value / totalValue) * 100 : 0, color: paletteColor(index) }));
-  }, [analytics, distributionLimit, distributionMetric, distributionScope, distributionValue]);
+  }, [accountId, analytics, distributionLimit, distributionMetric, distributionScope, distributionValue, from, to]);
 
   const payeeData = useMemo(() => (analytics?.payees ?? [])
     .filter((item) => item.type === payeeMetric)
-    .map((item) => ({ key: item.bucketKey, label: item.payee, count: item.count, value: rankValue(item.total, item.count, payeeValue) }))
+    .map((item) => ({
+      key: item.bucketKey,
+      label: item.payee,
+      count: item.count,
+      value: rankValue(item.total, item.count, payeeValue),
+      // "Sin beneficiario" no se puede buscar por texto.
+      href: item.payee === "Sin beneficiario"
+        ? undefined
+        : transactionsHref({ search: item.payee, type: payeeMetric, from: from || undefined, to: to || undefined, accountId, cleared: "true" }),
+    }))
     .sort((a, b) => b.value - a.value)
-    .slice(0, payeeLimit), [analytics, payeeLimit, payeeMetric, payeeValue]);
+    .slice(0, payeeLimit), [accountId, analytics, from, payeeLimit, payeeMetric, payeeValue, to]);
 
   const stackTrend = useMemo(() => {
     const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
@@ -559,7 +580,7 @@ function FinanceAnalyticsView() {
       return (
         <RankedList
           format={format}
-          items={distributionData.map((d) => ({ key: d.key, label: d.label, sublabel: d.parentLabel, value: d.value, color: d.color, meta: formatPct(d.share) }))}
+          items={distributionData.map((d) => ({ key: d.key, label: d.label, sublabel: d.parentLabel, value: d.value, color: d.color, meta: formatPct(d.share), href: d.href }))}
         />
       );
     }
@@ -580,7 +601,7 @@ function FinanceAnalyticsView() {
           {distributionData.map((d) => (
             <li key={d.key} className="flex items-center gap-2 text-sm">
               <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: d.color }} />
-              <span className="min-w-0 flex-1 truncate text-foreground" title={d.parentLabel ? `${d.label} · ${d.parentLabel}` : d.label}>{d.label}</span>
+              <a href={d.href} className="min-w-0 flex-1 truncate rounded-sm text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50" title={`Ver movimientos de ${d.parentLabel ? `${d.label} · ${d.parentLabel}` : d.label}`}>{d.label}</a>
               <span className="text-xs tabular-nums text-muted-foreground">{formatPct(d.share)}</span>
               <span className="w-24 text-right font-medium tabular-nums text-foreground">{format(d.value)}</span>
             </li>
@@ -601,6 +622,7 @@ function FinanceAnalyticsView() {
         items={payeeData.map((p, i) => ({
           key: p.key,
           label: expanded ? p.label : shortenLabel(p.label, 30),
+          href: p.href,
           value: p.value,
           color: i === 0 ? color : chartColors.quaternary,
           meta: payeeValue === "count" ? undefined : `${p.count} mov.`,
@@ -721,6 +743,7 @@ function FinanceAnalyticsView() {
         items={accountChartData.map((a) => ({
           key: a.key,
           label: a.label,
+          href: transactionsHref({ accountId: a.accountId, from: from || undefined, to: to || undefined }),
           value: a.value,
           color: a.color,
           meta: accountMetric === "count" ? undefined : `${a.transactionCount} mov.`,

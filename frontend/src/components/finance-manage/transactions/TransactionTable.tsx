@@ -3,6 +3,7 @@ import {
   CheckCircle2, Circle, ChevronDown, Copy, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock,
 } from "lucide-react";
 import type { Account, Transaction } from "../../../lib/api";
+import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency } from "../../../lib/format";
 import { RowActions, type RowAction } from "../RowActions";
 import { darkBoost } from "../../../lib/color";
@@ -25,6 +26,12 @@ interface Props {
   onSchedule: (tx: Transaction) => void;
   onDuplicate: (tx: Transaction) => void;
   onDelete: (tx: Transaction) => void;
+  /** Modo selección: casillas para actuar sobre varios movimientos a la vez. */
+  selection?: {
+    ids: Set<number>;
+    onToggle: (id: number) => void;
+    onToggleAll: (ids: number[], select: boolean) => void;
+  };
 }
 
 // ─── Helpers de presentación ────────────────────────────────────
@@ -124,7 +131,8 @@ function SortHeader({ field, label, sortBy, sortDir, onSort, align = "left" }: {
 
 // ─── Tabla + lista ──────────────────────────────────────────────
 export function TransactionTable(props: Props) {
-  const { transactions, accountsById, showAccount, sortBy, sortDir, onSort, today, onToggleCleared } = props;
+  const { transactions, accountsById, showAccount, sortBy, sortDir, onSort, today, onToggleCleared, selection } = props;
+  const allSelected = !!selection && transactions.length > 0 && transactions.every((t) => selection.ids.has(t.id));
   const actionsFor = useRowActions(props);
   const grouped = sortBy === "date";
 
@@ -139,7 +147,7 @@ export function TransactionTable(props: Props) {
     return out;
   }, [transactions, grouped]);
 
-  const colCount = 4 + (grouped ? 0 : 1) + (showAccount ? 1 : 0) + 1;
+  const colCount = 4 + (grouped ? 0 : 1) + (showAccount ? 1 : 0) + 1 + (selection ? 1 : 0);
 
   return (
     <>
@@ -148,7 +156,16 @@ export function TransactionTable(props: Props) {
         <table className="w-full text-sm">
           <thead className="sticky top-14 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
             <tr className="border-b border-border text-left text-xs font-medium text-muted-foreground">
-              <th className="w-12 py-2.5 pl-4"><span className="sr-only">Estado</span></th>
+              {selection && (
+                <th className="w-10 py-2.5 pl-4">
+                  <Checkbox
+                    checked={allSelected}
+                    onCheckedChange={(checked) => selection.onToggleAll(transactions.map((t) => t.id), checked === true)}
+                    aria-label="Seleccionar todos los movimientos de esta página"
+                  />
+                </th>
+              )}
+              <th className={cn("w-12 py-2.5", selection ? "pl-1" : "pl-4")}><span className="sr-only">Estado</span></th>
               {!grouped && (
                 <th className="py-2.5 pr-4 font-medium whitespace-nowrap">
                   <SortHeader field="date" label="Fecha" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
@@ -186,8 +203,17 @@ export function TransactionTable(props: Props) {
                   const cat = categoryLabel(tx);
                   const account = accountsById.get(tx.accountId);
                   return (
-                    <tr key={tx.id} className="group/row border-b border-border last:border-0 transition-colors hover:bg-muted/40">
-                      <td className="py-2 pl-4 align-middle">
+                    <tr key={tx.id} className={cn("group/row border-b border-border last:border-0 transition-colors hover:bg-muted/40", selection?.ids.has(tx.id) && "bg-primary/5 hover:bg-primary/10")}>
+                      {selection && (
+                        <td className="py-2 pl-4 align-middle">
+                          <Checkbox
+                            checked={selection.ids.has(tx.id)}
+                            onCheckedChange={() => selection.onToggle(tx.id)}
+                            aria-label={`Seleccionar ${tx.payee || "movimiento"}`}
+                          />
+                        </td>
+                      )}
+                      <td className={cn("py-2 align-middle", selection ? "pl-1" : "pl-4")}>
                         <ClearedToggle tx={tx} onToggle={() => onToggleCleared(tx)} />
                       </td>
                       {!grouped && (
@@ -264,7 +290,14 @@ export function TransactionTable(props: Props) {
                 const amt = signedAmount(tx);
                 const cat = categoryLabel(tx);
                 return (
-                  <li key={tx.id} className="flex items-center gap-3 px-4 py-3">
+                  <li key={tx.id} className={cn("flex items-center gap-3 px-4 py-3", selection?.ids.has(tx.id) && "bg-primary/5")}>
+                    {selection && (
+                      <Checkbox
+                        checked={selection.ids.has(tx.id)}
+                        onCheckedChange={() => selection.onToggle(tx.id)}
+                        aria-label={`Seleccionar ${tx.payee || "movimiento"}`}
+                      />
+                    )}
                     <div className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg", meta.tile)}>
                       <meta.icon className="size-4" aria-hidden="true" />
                     </div>

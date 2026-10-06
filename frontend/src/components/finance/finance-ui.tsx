@@ -199,6 +199,8 @@ export interface RankedItem {
   color: string;
   /** Texto a la derecha bajo el valor (porcentaje, nº de movimientos...). */
   meta?: ReactNode;
+  /** Si está, la etiqueta enlaza al detalle (p. ej. Transacciones ya filtradas). */
+  href?: string;
 }
 
 /** Ranking con barra proporcional: más legible que un bar chart horizontal. */
@@ -215,7 +217,11 @@ export function RankedList({ items, format, className }: {
           <div className="flex items-baseline justify-between gap-3">
             <div className="flex min-w-0 items-center gap-2">
               <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />
-              <p className="truncate text-sm font-medium text-foreground" title={item.label}>{item.label}</p>
+              <p className="truncate text-sm font-medium text-foreground" title={item.href ? `Ver movimientos de ${item.label}` : item.label}>
+                {item.href ? (
+                  <a href={item.href} className="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50">{item.label}</a>
+                ) : item.label}
+              </p>
               {item.sublabel && <span className="hidden truncate text-xs text-muted-foreground sm:inline">{item.sublabel}</span>}
             </div>
             <div className="shrink-0 text-right">
