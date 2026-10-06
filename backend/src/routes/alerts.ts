@@ -9,7 +9,10 @@ import { alertConfigSchemas, evaluateRulesForUser, type AlertRuleType } from "..
 export const alertsRouter = Router();
 alertsRouter.param("id", validateIdParam);
 
-const ruleTypeSchema = z.enum(["salary_drop", "missing_payslip", "concept_change", "custom_threshold"]);
+const ruleTypeSchema = z.enum([
+  "salary_drop", "missing_payslip", "concept_change", "custom_threshold",
+  "category_overspent", "low_balance", "overdue_pending",
+]);
 
 /** Valida `config` contra el esquema propio de `type` (ver alerts.service.ts). */
 function parseConfigForType(type: AlertRuleType, config: unknown) {
