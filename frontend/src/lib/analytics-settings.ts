@@ -39,6 +39,16 @@ export interface PanelSettings {
   matrixScope: "category" | "group";
   matrixMetric: "expense" | "income";
   matrixLimit: number;
+  calendarMetric: "expense" | "income";
+  treemapMetric: "expense" | "income";
+  sankeyLimit: number;
+  waterfallLimit: number;
+  yoyMetric: "expenses" | "income" | "savings";
+  amountsMetric: "expense" | "income";
+  amountsView: "count" | "total";
+  multiplesMetric: "expense" | "income";
+  multiplesLimit: number;
+  budgetLimit: number;
 }
 
 type Spec = { [K in keyof PanelSettings]: { default: PanelSettings[K]; allowed?: readonly PanelSettings[K][] } };
@@ -73,6 +83,16 @@ export const PANEL_SETTINGS_SPEC: Spec = {
   matrixScope: { default: "category", allowed: ["category", "group"] },
   matrixMetric: { default: "expense", allowed: ["expense", "income"] },
   matrixLimit: { default: 6 },
+  calendarMetric: { default: "expense", allowed: ["expense", "income"] },
+  treemapMetric: { default: "expense", allowed: ["expense", "income"] },
+  sankeyLimit: { default: 6 },
+  waterfallLimit: { default: 6 },
+  yoyMetric: { default: "expenses", allowed: ["expenses", "income", "savings"] },
+  amountsMetric: { default: "expense", allowed: ["expense", "income"] },
+  amountsView: { default: "count", allowed: ["count", "total"] },
+  multiplesMetric: { default: "expense", allowed: ["expense", "income"] },
+  multiplesLimit: { default: 8 },
+  budgetLimit: { default: 8 },
 };
 
 export const DEFAULT_PANEL_SETTINGS = Object.fromEntries(
@@ -99,8 +119,9 @@ export function normalizePanelSettings(raw: unknown): PanelSettings {
 
 // ─── Paneles: registro y diseño ─────────────────────────────────
 export type PanelKey =
-  | "trend" | "cumulative" | "efficiency" | "distribution" | "payees" | "compare" | "weekday"
-  | "stack" | "matrix" | "accounts" | "insights";
+  | "trend" | "pace" | "cumulative" | "efficiency" | "distribution" | "treemap" | "payees" | "compare"
+  | "waterfall" | "sankey" | "weekday" | "calendar" | "stack" | "multiples" | "matrix" | "yoy"
+  | "budget" | "amounts" | "accounts" | "insights";
 
 export type PanelSpan = "half" | "full";
 
@@ -113,19 +134,29 @@ export interface PanelInfo {
 
 /**
  * Todos los paneles de la analítica. El orden de las claves es el diseño por
- * defecto (reproduce el de antes: Evolución, Reparto, Categorías en el tiempo,
- * Cuentas). Los paneles nuevos se añaden aquí y aparecen solos al usuario.
+ * defecto: los paneles "half" van de dos en dos para no dejar huecos junto a uno
+ * "full". Los paneles nuevos se añaden aquí y a un usuario que ya tenía su diseño
+ * le aparecen solos al final.
  */
 export const PANEL_REGISTRY: Record<PanelKey, PanelInfo> = {
   trend: { label: "Pulso mensual", description: "Ingresos, gastos y ahorro de cada mes", span: "full" },
+  pace: { label: "Ritmo de gasto", description: "Cuánto llevas gastado este mes frente al pasado y a tu media", span: "half" },
   cumulative: { label: "Acumulado", description: "La pendiente real del periodo: cuánto sumas mes a mes", span: "half" },
   efficiency: { label: "Eficiencia mensual", description: "Ahorro, importe medio por movimiento y densidad de actividad", span: "half" },
   distribution: { label: "Distribución", description: "Qué categorías o grupos concentran el dinero", span: "half" },
+  treemap: { label: "Mapa de gasto", description: "Bloques por grupo y categoría: el tamaño es el importe", span: "half" },
   payees: { label: "Beneficiarios principales", description: "A quién pagas o de quién cobras más", span: "half" },
   compare: { label: "Ingresos frente a gastos", description: "Ambas direcciones del flujo por grupo o categoría", span: "half" },
+  waterfall: { label: "De ingresos a ahorro", description: "Cascada: lo que entra, lo que se lleva cada grupo y lo que queda", span: "half" },
+  sankey: { label: "Flujo del dinero", description: "De dónde viene y a dónde va, en un diagrama de flujo", span: "full" },
   weekday: { label: "Ritmo semanal", description: "En qué días de la semana se concentra tu actividad", span: "half" },
+  yoy: { label: "Año contra año", description: "Cada año sobre los mismos 12 meses", span: "half" },
+  calendar: { label: "Calendario de calor", description: "El gasto (o ingreso) de cada día del último año", span: "full" },
   stack: { label: "Tendencia por categoría", description: "El peso de cada serie mes a mes, apilado", span: "full" },
+  multiples: { label: "Categorías una a una", description: "La evolución de cada categoría en su propio minigráfico", span: "full" },
   matrix: { label: "Matriz temporal", description: "Dónde aparecen los picos por categoría y mes", span: "full" },
+  budget: { label: "Presupuesto frente a gasto", description: "Lo presupuestado y lo gastado, categoría a categoría", span: "half" },
+  amounts: { label: "Tamaño de los movimientos", description: "Cuántos movimientos hay de cada importe", span: "half" },
   accounts: { label: "Peso por cuenta", description: "Tus cuentas por saldo, ingresos, gastos, neto o volumen", span: "half" },
   insights: { label: "Lecturas rápidas", description: "Lo más destacado de tus paneles", span: "half" },
 };

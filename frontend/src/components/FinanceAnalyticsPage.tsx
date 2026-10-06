@@ -27,6 +27,15 @@ import {
 } from "./finance/finance-ui";
 import { AnalyticsPanel, ExpandedPanelDialog, MatrixHeatmap, type PanelConfig } from "./finance/AnalyticsPanel";
 import { AnalyticsCustomizeSheet } from "./finance/AnalyticsCustomizeSheet";
+import { PaceChart } from "./finance/charts/PaceChart";
+import { CalendarHeatmap } from "./finance/charts/CalendarHeatmap";
+import { TreemapChart } from "./finance/charts/TreemapChart";
+import { SankeyChart } from "./finance/charts/SankeyChart";
+import { WaterfallChart } from "./finance/charts/WaterfallChart";
+import { YearOverYearChart } from "./finance/charts/YearOverYearChart";
+import { BudgetVsActualChart } from "./finance/charts/BudgetVsActualChart";
+import { AmountsChart } from "./finance/charts/AmountsChart";
+import { SmallMultiples } from "./finance/charts/SmallMultiples";
 import { AnalyticsViewsMenu } from "./finance/AnalyticsViewsMenu";
 import { usePreference } from "../hooks/use-preference";
 import {
@@ -194,6 +203,26 @@ function FinanceAnalyticsView() {
   const setMatrixMetric = setting("matrixMetric");
   const matrixLimit = settings.matrixLimit;
   const setMatrixLimit = setting("matrixLimit");
+  const calendarMetric = settings.calendarMetric;
+  const setCalendarMetric = setting("calendarMetric");
+  const treemapMetric = settings.treemapMetric;
+  const setTreemapMetric = setting("treemapMetric");
+  const sankeyLimit = settings.sankeyLimit;
+  const setSankeyLimit = setting("sankeyLimit");
+  const waterfallLimit = settings.waterfallLimit;
+  const setWaterfallLimit = setting("waterfallLimit");
+  const yoyMetric = settings.yoyMetric;
+  const setYoyMetric = setting("yoyMetric");
+  const amountsMetric = settings.amountsMetric;
+  const setAmountsMetric = setting("amountsMetric");
+  const amountsView = settings.amountsView;
+  const setAmountsView = setting("amountsView");
+  const multiplesMetric = settings.multiplesMetric;
+  const setMultiplesMetric = setting("multiplesMetric");
+  const multiplesLimit = settings.multiplesLimit;
+  const setMultiplesLimit = setting("multiplesLimit");
+  const budgetLimit = settings.budgetLimit;
+  const setBudgetLimit = setting("budgetLimit");
 
   const { data: accounts = [], isLoading: loadingAccounts, error: accountsError } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const { data: categoryGroups = [], isLoading: loadingCategories, error: categoriesError } = useQuery({ queryKey: ["categories"], queryFn: getCategories });
@@ -1099,6 +1128,110 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderAccountsChart,
+    },
+
+    // ─── Gráficos nuevos ─────────────────────────────────────────
+    pace: {
+      title: "Ritmo de gasto",
+      description: "Cuánto llevas gastado este mes frente al pasado y a tu media, y a dónde llegarías al ritmo actual.",
+      render: (expanded) => <PaceChart accountId={accountId} groupId={groupId} categoryId={categoryId} expanded={expanded} />,
+    },
+    treemap: {
+      title: treemapMetric === "expense" ? "Mapa de gasto" : "Mapa de ingresos",
+      description: "Cada bloque es una categoría, agrupadas por grupo: cuanto más grande, más dinero.",
+      controls: <Segmented aria-label="Tipo de flujo" value={treemapMetric} onChange={setTreemapMetric} options={FLOW_OPTIONS} />,
+      render: (expanded) => <TreemapChart categories={analytics?.categories ?? []} metric={treemapMetric} expanded={expanded} />,
+    },
+    waterfall: {
+      title: "De ingresos a ahorro",
+      description: "Lo que entra, lo que se lleva cada grupo de gasto y lo que te queda (o te falta).",
+      controls: <LimitSelect label="Número de grupos" value={waterfallLimit} onChange={setWaterfallLimit} options={[4, 6, 8, 10]} />,
+      render: (expanded) => (
+        <WaterfallChart
+          income={summary.incomeTotal}
+          groups={(analytics?.groups ?? []).filter((g) => g.type === "expense").map((g) => ({ name: g.groupName, total: g.total }))}
+          limit={waterfallLimit}
+          expanded={expanded}
+        />
+      ),
+    },
+    sankey: {
+      title: "Flujo del dinero",
+      description: "De dónde viene (ingresos) y a dónde va (grupos de gasto y ahorro). Si gastas más de lo que ingresas, lo verás como «desde ahorros previos».",
+      controls: <LimitSelect label="Número de grupos" value={sankeyLimit} onChange={setSankeyLimit} options={[4, 6, 8, 10]} />,
+      render: (expanded) => (
+        <SankeyChart
+          income={summary.incomeTotal}
+          groups={(analytics?.groups ?? []).filter((g) => g.type === "expense").map((g) => ({ name: g.groupName, total: g.total }))}
+          limit={sankeyLimit}
+          expanded={expanded}
+        />
+      ),
+    },
+    calendar: {
+      title: "Calendario de calor",
+      description: "Cada cuadrado es un día: cuanto más intenso, más dinero. Pulsa uno para ver sus movimientos.",
+      controls: <Segmented aria-label="Tipo de flujo" value={calendarMetric} onChange={setCalendarMetric} options={FLOW_OPTIONS} />,
+      render: (expanded) => (
+        <CalendarHeatmap accountId={accountId} groupId={groupId} categoryId={categoryId} from={from} to={to} metric={calendarMetric} expanded={expanded} />
+      ),
+    },
+    multiples: {
+      title: "Categorías una a una",
+      description: "La evolución mensual de cada categoría en su propio minigráfico. Pulsa una para ver sus movimientos.",
+      controls: (
+        <>
+          <Segmented aria-label="Tipo de flujo" value={multiplesMetric} onChange={setMultiplesMetric} options={FLOW_OPTIONS} />
+          <LimitSelect label="Número de categorías" value={multiplesLimit} onChange={setMultiplesLimit} options={[4, 8, 12, 16]} />
+        </>
+      ),
+      render: (expanded) => (
+        <SmallMultiples
+          monthlyCategories={analytics?.monthlyCategories ?? []}
+          months={monthlyChartData.map((m) => m.month)}
+          metric={multiplesMetric}
+          limit={multiplesLimit}
+          accountId={accountId}
+          expanded={expanded}
+        />
+      ),
+    },
+    yoy: {
+      title: "Año contra año",
+      description: "Cada año como una línea sobre los mismos 12 meses (los últimos tres años, sin importar el periodo de arriba).",
+      controls: (
+        <Segmented
+          aria-label="Métrica"
+          value={yoyMetric}
+          onChange={setYoyMetric}
+          options={[{ value: "expenses", label: "Gastos" }, { value: "income", label: "Ingresos" }, { value: "savings", label: "Ahorro" }]}
+        />
+      ),
+      render: (expanded) => <YearOverYearChart accountId={accountId} groupId={groupId} categoryId={categoryId} metric={yoyMetric} expanded={expanded} />,
+    },
+    budget: {
+      title: "Presupuesto frente a gasto",
+      description: "Lo presupuestado y lo gastado de cada categoría en el mes que elijas.",
+      controls: <LimitSelect label="Número de categorías" value={budgetLimit} onChange={setBudgetLimit} options={[6, 8, 12, 16]} />,
+      render: (expanded) => <BudgetVsActualChart limit={budgetLimit} expanded={expanded} />,
+    },
+    amounts: {
+      title: "Tamaño de los movimientos",
+      description: "¿Muchos movimientos pequeños o pocos grandes? Cuántos hay (o cuánto dinero suman) en cada tramo de importe.",
+      controls: (
+        <>
+          <Segmented aria-label="Tipo de flujo" value={amountsMetric} onChange={setAmountsMetric} options={FLOW_OPTIONS} />
+          <Segmented
+            aria-label="Valor"
+            value={amountsView}
+            onChange={setAmountsView}
+            options={[{ value: "count", label: "Movimientos" }, { value: "total", label: "Importe" }]}
+          />
+        </>
+      ),
+      render: (expanded) => (
+        <AmountsChart accountId={accountId} groupId={groupId} categoryId={categoryId} from={from} to={to} metric={amountsMetric} view={amountsView} expanded={expanded} />
+      ),
     },
   };
 
