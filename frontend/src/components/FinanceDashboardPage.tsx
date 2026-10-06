@@ -21,6 +21,8 @@ import {
   AccountSelect, ChartLegend, PieTooltip, RankedList, adaptiveColor, flowColors, paletteColor, presetRange, PRESET_LABELS,
   shortenLabel, type RangePreset,
 } from "./finance/finance-ui";
+import { BalanceHistoryCard } from "./finance/BalanceHistoryCard";
+import { ForecastCard } from "./finance/ForecastCard";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
 
@@ -369,6 +371,12 @@ function FinanceDashboardView() {
           </div>
         </>
       )}
+
+      {/* No dependen del periodo elegido arriba: el saldo es el de cada fin de mes y la previsión mira hacia delante. */}
+      <div className="mt-6 grid gap-6 lg:grid-cols-2">
+        <BalanceHistoryCard accountId={accountId} />
+        <ForecastCard />
+      </div>
     </div>
   );
 }

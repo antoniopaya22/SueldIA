@@ -6,7 +6,9 @@ import {
   AlertTriangle, PiggyBank, Wallet,
 } from "lucide-react";
 import {
+  applyCategorySuggestions,
   batchTransactions,
+  createCategoryRule,
   createRecurringTransaction,
   deleteRecurringTransaction,
   deleteTransaction,
@@ -14,6 +16,8 @@ import {
   getAccounts,
   getCategories,
   getRecurringTransactions,
+  getSubscriptionSuggestions,
+  type SubscriptionSuggestion,
   getTransactions,
   setRecurringTransactionActive,
   toggleCleared,
@@ -53,7 +57,9 @@ import { useQuickCategory } from "./finance-manage/transactions/useQuickCategory
 import { RecurringDialog, type RecurringForm } from "./finance-manage/transactions/RecurringDialog";
 import { AmountRangeFilter } from "./finance-manage/transactions/AmountRangeFilter";
 import { BulkActionBar } from "./finance-manage/transactions/BulkActionBar";
+import { describeApply } from "./categories/CategoryRulesCard";
 import { RecurringRuleCard } from "./finance-manage/transactions/RecurringRuleCard";
+import { SubscriptionSuggestions } from "./finance-manage/transactions/SubscriptionSuggestions";
 import { TransactionTable, type SortDir, type SortField } from "./finance-manage/transactions/TransactionTable";
 import { cn } from "cn";
 
@@ -125,6 +131,11 @@ function TransactionsView() {
 
   const { data: accounts = [], isLoading: loadingAccounts } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const { data: categoryGroups = [] } = useQuery({ queryKey: ["categories"], queryFn: getCategories });
+  const { data: subscriptionSuggestions = [] } = useQuery({
+    queryKey: ["recurring-suggestions"],
+    queryFn: getSubscriptionSuggestions,
+    enabled: tab === "recurring",
+  });
   const { data: recurringRules = [] } = useQuery({
     queryKey: ["recurring-transactions"],
     queryFn: getRecurringTransactions,
@@ -182,6 +193,21 @@ function TransactionsView() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  // "Sugerir": categoriza la selección con las reglas del usuario y, si no hay regla, con su historial.
+  const suggestMut = useMutation({
+    mutationFn: (ids: number[]) => applyCategorySuggestions(ids),
+    onSuccess: (res) => {
+      invalidateTx();
+      setSelectedIds(new Set());
+      (res.updated > 0 ? toast.success : toast.info)(
+        res.updated > 0 && res.skipped > 0
+          ? `${describeApply(res)}. ${res.skipped} sin sugerencia: categorízalos a mano o crea una regla.`
+          : describeApply(res),
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const clearMut = useMutation({
     mutationFn: toggleCleared,
     onSuccess: () => {
@@ -192,6 +218,7 @@ function TransactionsView() {
   });
 
   const invalidateRecurring = () => {
+    queryClient.invalidateQueries({ queryKey: ["recurring-suggestions"] });
     queryClient.invalidateQueries({ queryKey: ["transactions"] });
     queryClient.invalidateQueries({ queryKey: ["recurring-transactions"] });
   };
@@ -297,6 +324,24 @@ function TransactionsView() {
     setRecurringDialogOpen(true);
   };
 
+  // Una suscripción detectada se programa con lo que ya sabemos de ella; el usuario revisa y confirma.
+  const openRecurringFromSuggestion = (s: SubscriptionSuggestion) => {
+    setEditingRecurringId(null);
+    setRecurringForm({
+      type: "expense",
+      accountId: s.accountId,
+      categoryId: s.categoryId ?? "",
+      amount: s.amount.toFixed(2),
+      cadence: "monthly",
+      intervalCount: 1,
+      startDate: s.nextDate,
+      endDate: "",
+      payee: s.payee,
+      memo: "",
+    });
+    setRecurringDialogOpen(true);
+  };
+
   const openRecurringFromTransaction = (tx: Transaction) => {
     if (tx.type === "transfer" || tx.recurringTransactionId) return;
     setEditingRecurringId(null);
@@ -350,6 +395,14 @@ function TransactionsView() {
     urlFilters.uncategorized, urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined,
   ].filter(Boolean).length;
   const transactions = txData?.data ?? [];
+  // Si todos los seleccionados comparten beneficiario, se ofrece recordarlo como regla.
+  const commonPayee = useMemo(() => {
+    const payees = new Set(
+      transactions.filter((t) => selectedIds.has(t.id)).map((t) => (t.payee ?? "").trim()).filter(Boolean),
+    );
+    const selectedWithoutPayee = transactions.some((t) => selectedIds.has(t.id) && !(t.payee ?? "").trim());
+    return payees.size === 1 && !selectedWithoutPayee ? [...payees][0] : null;
+  }, [transactions, selectedIds]);
   const totalCount = txData?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
   const visibleRecurringRules = useMemo(
@@ -719,6 +772,8 @@ function TransactionsView() {
             <StatCard label="Pendientes" value={recurringStats.pending} icon={ListChecks} hint="Instancias sin liquidar" />
           </StatGrid>
 
+          <SubscriptionSuggestions suggestions={subscriptionSuggestions} onSchedule={openRecurringFromSuggestion} />
+
           <SectionCard
             className="mt-6"
             title="Pagos recurrentes"
@@ -776,8 +831,17 @@ function TransactionsView() {
         <BulkActionBar
           count={selectedIds.size}
           groups={categoryGroups}
-          busy={batchMut.isPending}
-          onCategorize={(categoryId) => batchMut.mutate({ action: "set-category", ids: [...selectedIds], categoryId })}
+          busy={batchMut.isPending || suggestMut.isPending}
+          commonPayee={commonPayee}
+          onSuggest={() => suggestMut.mutate([...selectedIds])}
+          onCategorize={(categoryId, remember) => {
+            batchMut.mutate({ action: "set-category", ids: [...selectedIds], categoryId });
+            if (remember && categoryId !== null && commonPayee) {
+              createCategoryRule({ match: commonPayee, categoryId })
+                .then(() => toast.success(`Regla creada: «${commonPayee}» irá a esa categoría`))
+                .catch((e: Error) => toast.error(e.message));
+            }
+          }}
           onSetCleared={(cleared) => batchMut.mutate({ action: "set-cleared", ids: [...selectedIds], cleared })}
           onDelete={() => setBulkDeleteOpen(true)}
           onClear={() => setSelectedIds(new Set())}

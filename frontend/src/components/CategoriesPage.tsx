@@ -4,6 +4,7 @@ import {
   Plus, Pencil, Trash2, FolderPlus, Folder, Tags, Search, ArrowRightLeft, Check, X,
   AlertTriangle, Download, TrendingDown, CircleSlash,
 } from "lucide-react";
+import { CategoryRulesCard } from "./categories/CategoryRulesCard";
 import { Providers } from "./Providers";
 import { toast } from "sonner";
 import { ConfirmModal } from "./ui/ConfirmModal";
@@ -477,6 +478,8 @@ function CategoriesView() {
               ))}
             </div>
           )}
+
+          <CategoryRulesCard groups={groups} />
         </>
       )}
 
