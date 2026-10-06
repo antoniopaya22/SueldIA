@@ -426,8 +426,35 @@ export const assignTag = (payslipId: number, tagId: number) =>
 export const removeTag = (payslipId: number, tagId: number) =>
   request<{ ok: boolean }>(`/tags/assign/${payslipId}/${tagId}`, { method: "DELETE" });
 
+export const putBudgetTarget = (categoryId: number, target: BudgetTargetInput) =>
+  request<{ id: number }>("/budgets/targets", {
+    method: "PUT",
+    body: JSON.stringify({ categoryId, ...target }),
+  });
+
+export const deleteBudgetTarget = (categoryId: number) =>
+  request<{ ok: boolean }>(`/budgets/targets/${categoryId}`, { method: "DELETE" });
+
+export type AutoAssignMode = "copy-previous" | "average-3" | "targets";
+
+/** Asignar de golpe: `total` es lo que sube lo asignado y `categories` a cuántas categorías afecta. */
+export const autoAssignBudget = (month: string, mode: AutoAssignMode) =>
+  request<{ categories: number; total: number }>("/budgets/auto-assign", {
+    method: "POST",
+    body: JSON.stringify({ month, mode }),
+  });
+
+/** Pasar dinero disponible de una categoría a otra (cubrir un sobregasto). */
+export const moveBudget = (month: string, fromCategoryId: number, toCategoryId: number, amount: number) =>
+  request<{ ok: boolean }>("/budgets/move", {
+    method: "POST",
+    body: JSON.stringify({ month, fromCategoryId, toCategoryId, amount }),
+  });
+
 // ─── Alerts ─────────────────────────────────────────────────────
-export type AlertRuleType = "salary_drop" | "missing_payslip" | "concept_change" | "custom_threshold";
+export type AlertRuleType =
+  | "salary_drop" | "missing_payslip" | "concept_change" | "custom_threshold"
+  | "category_overspent" | "low_balance" | "overdue_pending";
 
 // Formas de `config` por tipo de regla — deben reflejar
 // backend/src/services/alerts.service.ts (alertConfigSchemas).
@@ -450,11 +477,25 @@ export interface CustomThresholdConfig {
   comparator: "below" | "above";
   value: number;
 }
+// Alertas de finanzas (backend/src/services/finance-alerts.service.ts)
+export interface CategoryOverspentConfig {
+  categoryId?: number;
+}
+export interface LowBalanceConfig {
+  accountId?: number;
+  threshold: number;
+}
+export interface OverduePendingConfig {
+  graceDays?: number;
+}
 export type AlertRuleConfig =
   | SalaryDropConfig
   | MissingPayslipConfig
   | ConceptChangeConfig
-  | CustomThresholdConfig;
+  | CustomThresholdConfig
+  | CategoryOverspentConfig
+  | LowBalanceConfig
+  | OverduePendingConfig;
 
 export interface AlertRule {
   id: number;
@@ -1053,12 +1094,33 @@ export const importYnab = async (file: File, dryRun = false): Promise<ImportResu
 };
 
 // ─── Budgets ────────────────────────────────────────────────────
+export type BudgetTargetType = "monthly" | "by_date";
+
+export interface BudgetTargetInput {
+  type: BudgetTargetType;
+  amount: number;
+  /** "YYYY-MM"; solo en objetivos por fecha. */
+  targetMonth: string | null;
+}
+
+export interface BudgetTarget extends BudgetTargetInput {
+  /** Lo que habría que asignar este mes para ir según el objetivo. */
+  needed: number;
+  /** Lo que falta asignar este mes. */
+  shortfall: number;
+  funded: boolean;
+}
+
 export interface CategoryBudget {
   id: number;
   name: string;
   assigned: number;
+  /** Gasto del mes, en negativo. */
   activity: number;
   available: number;
+  /** Lo que ya había disponible al empezar el mes. */
+  carryIn: number;
+  target: BudgetTarget | null;
 }
 
 export interface CategoryGroupBudget {
@@ -1070,6 +1132,8 @@ export interface CategoryGroupBudget {
 export interface BudgetSummary {
   month: string;
   readyToAssign: number;
+  /** Lo que falta asignar este mes para cumplir todos los objetivos. */
+  targetsShortfall: number;
   groups: CategoryGroupBudget[];
 }
 

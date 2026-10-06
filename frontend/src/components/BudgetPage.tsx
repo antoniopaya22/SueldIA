@@ -1,15 +1,22 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ChevronLeft, ChevronRight, PiggyBank, Tags } from "lucide-react";
+import { AlertTriangle, Bell, ChevronLeft, ChevronRight, PiggyBank, Receipt, Tags, Target } from "lucide-react";
 import { toast } from "sonner";
 import { Providers } from "./Providers";
-import { PageHeader, StatCard, SectionCard, PageHeaderSkeleton, ListCardSkeleton } from "./app";
+import { PageHeader, StatCard, StatGrid, SectionCard, PageHeaderSkeleton, ListCardSkeleton } from "./app";
 import { EmptyState } from "./ui/EmptyState";
-import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { assignBudget, getBudgetSummary, type BudgetSummary, type CategoryBudget } from "../lib/api";
+import { BudgetTable } from "./budget/BudgetTable";
+import { CoverDialog, READY_TO_ASSIGN } from "./budget/CoverDialog";
+import { QuickAssignMenu } from "./budget/QuickAssignMenu";
+import { TargetDialog } from "./budget/TargetDialog";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  assignBudget, autoAssignBudget, deleteBudgetTarget, getBudgetSummary, moveBudget, putBudgetTarget,
+  type AutoAssignMode, type BudgetSummary, type CategoryBudget,
+} from "../lib/api";
 import { formatCurrency } from "../lib/format";
-import { monthRange, transactionsHref } from "../lib/transaction-filters";
+import { groupTotals } from "../lib/budget-progress";
+import { invalidateFinance } from "../lib/finance-cache";
 import { cn } from "cn";
 
 const MONTHS_FULL = [
@@ -33,136 +40,25 @@ function monthLabel(month: string): string {
   return `${MONTHS_FULL[Number(m) - 1]} ${y}`;
 }
 
-/** Negativo en rojo, resto en color normal — misma convención que en FinanceAnalyticsPage. */
-function signedTone(n: number): string {
-  return n < 0 ? "text-red-600 dark:text-red-400" : "text-foreground";
-}
-
-// ─── Celda "Asignado" editable en línea ─────────────────────────
-function AssignedCell({
-  value, pending, onSave,
-}: {
-  value: number;
-  pending: boolean;
-  onSave: (next: number) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(String(value));
-  const cancelledRef = useRef(false);
-
-  const startEdit = () => {
-    if (pending) return;
-    setDraft(value ? String(value) : "0");
-    setEditing(true);
-  };
-
-  const commit = () => {
-    const parsed = Number(draft.replace(",", "."));
-    if (!Number.isNaN(parsed) && parsed !== value) onSave(parsed);
-  };
-
-  if (!editing) {
-    return (
-      <button
-        type="button"
-        onClick={startEdit}
-        disabled={pending}
-        className="w-full cursor-text rounded px-1.5 py-1 text-right tabular-nums text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-wait disabled:opacity-60"
-        title="Editar importe asignado"
-      >
-        {formatCurrency(value)}
-      </button>
-    );
-  }
-
-  return (
-    <input
-      type="number"
-      step="0.01"
-      inputMode="decimal"
-      autoFocus
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onFocus={(e) => e.currentTarget.select()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); }
-        if (e.key === "Escape") { e.preventDefault(); cancelledRef.current = true; e.currentTarget.blur(); }
-      }}
-      onBlur={() => {
-        setEditing(false);
-        if (cancelledRef.current) { cancelledRef.current = false; return; }
-        commit();
-      }}
-      aria-label="Importe asignado"
-      className="h-8 w-full rounded-lg border border-input bg-transparent px-2 text-right text-sm tabular-nums outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-    />
-  );
-}
-
-// ─── Tabla de un grupo ───────────────────────────────────────────
-function GroupTable({
-  categories, month, pendingId, onAssign,
-}: {
-  categories: CategoryBudget[];
-  month: string;
-  pendingId: number | null;
-  onAssign: (categoryId: number, previous: number, next: number) => void;
-}) {
-  if (categories.length === 0) {
-    return <p className="px-5 py-4 text-sm text-muted-foreground">Sin categorías en este grupo — créalas en Categorías.</p>;
-  }
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow className="hover:bg-transparent">
-          <TableHead className="pl-5">Categoría</TableHead>
-          <TableHead className="text-right">Asignado</TableHead>
-          <TableHead className="text-right">Actividad</TableHead>
-          <TableHead className="pr-5 text-right">Disponible</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {categories.map((c) => (
-          <TableRow key={c.id}>
-            <TableCell className="py-2.5 pl-5 font-medium text-foreground">{c.name}</TableCell>
-            <TableCell className="py-1.5 text-right">
-              <AssignedCell
-                value={c.assigned}
-                pending={pendingId === c.id}
-                onSave={(next) => onAssign(c.id, c.assigned, next)}
-              />
-            </TableCell>
-            <TableCell className={cn("py-2.5 text-right tabular-nums", signedTone(c.activity))}>
-              {c.activity === 0 ? formatCurrency(c.activity) : (
-                <a
-                  // La actividad solo suma gastos liquidados: el enlace filtra igual para que el total coincida.
-                  href={transactionsHref({ categoryId: c.id, type: "expense", cleared: "true", ...monthRange(month) })}
-                  className="rounded-sm outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50"
-                  title="Ver los movimientos de este mes"
-                >
-                  {formatCurrency(c.activity)}
-                </a>
-              )}
-            </TableCell>
-            <TableCell className={cn("py-2.5 pr-5 text-right font-medium tabular-nums", signedTone(c.available))}>
-              {formatCurrency(c.available)}
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
+const AUTO_EMPTY_MESSAGE: Record<AutoAssignMode, string> = {
+  "copy-previous": "Nada que copiar: el mes anterior no tenía importes, o esas categorías ya tienen asignación este mes.",
+  "average-3": "Nada que asignar: no hay gasto en los meses anteriores, o esas categorías ya tienen asignación este mes.",
+  targets: "Los objetivos ya están al día.",
+};
 
 // ─── Página ─────────────────────────────────────────────────────
 function BudgetView() {
   const queryClient = useQueryClient();
   const [month, setMonth] = useState(currentMonth);
+  const [targetFor, setTargetFor] = useState<CategoryBudget | null>(null);
+  const [coverFor, setCoverFor] = useState<CategoryBudget | null>(null);
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["budgets", month],
     queryFn: () => getBudgetSummary(month),
   });
+
+  const refresh = () => invalidateFinance(queryClient);
 
   const assignMut = useMutation({
     mutationFn: ({ categoryId, assigned }: { categoryId: number; assigned: number; previous: number }) =>
@@ -190,9 +86,44 @@ function BudgetView() {
       if (context?.previousData) queryClient.setQueryData(["budgets", month], context.previousData);
       toast.error("No se pudo guardar el importe asignado");
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["budgets", month] });
+    // Refresca todo (no solo este mes): lo asignado arrastra a los meses siguientes.
+    onSuccess: refresh,
+  });
+
+  const autoMut = useMutation({
+    mutationFn: (mode: AutoAssignMode) => autoAssignBudget(month, mode),
+    onSuccess: (res, mode) => {
+      refresh();
+      if (res.categories === 0) toast.info(AUTO_EMPTY_MESSAGE[mode]);
+      else toast.success(`Asignados ${formatCurrency(res.total)} en ${res.categories} ${res.categories === 1 ? "categoría" : "categorías"}`);
     },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const targetMut = useMutation({
+    mutationFn: async (vars: { categoryId: number; remove: boolean; target?: Parameters<typeof putBudgetTarget>[1] }) => {
+      if (vars.remove) await deleteBudgetTarget(vars.categoryId);
+      else await putBudgetTarget(vars.categoryId, vars.target!);
+    },
+    onSuccess: (_res, vars) => {
+      refresh();
+      setTargetFor(null);
+      toast.success(vars.remove ? "Objetivo quitado" : "Objetivo guardado");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const coverMut = useMutation({
+    mutationFn: async ({ category, source, amount }: { category: CategoryBudget; source: typeof READY_TO_ASSIGN | number; amount: number }) => {
+      if (source === READY_TO_ASSIGN) await assignBudget(category.id, month, Math.round((category.assigned + amount) * 100) / 100);
+      else await moveBudget(month, source, category.id, amount);
+    },
+    onSuccess: () => {
+      refresh();
+      setCoverFor(null);
+      toast.success("Sobregasto cubierto");
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const monthSwitcher = (
@@ -230,9 +161,9 @@ function BudgetView() {
     );
   }
 
-  const totalCategories = data.groups.reduce((s, g) => s + g.categories.length, 0);
+  const allCategories = data.groups.flatMap((g) => g.categories);
 
-  if (totalCategories === 0) {
+  if (allCategories.length === 0) {
     return (
       <>
         <PageHeader title="Presupuesto" description="Reparte tus ingresos entre categorías, mes a mes." />
@@ -260,35 +191,122 @@ function BudgetView() {
       ? "Ya has asignado todo el dinero de este mes."
       : "Repártelo entre tus categorías para que trabaje para ti.";
 
+  const totals = groupTotals(allCategories);
+  const overspentCount = allCategories.filter((c) => c.available < -0.005).length;
+  const targetCount = allCategories.filter((c) => c.target).length;
   const pendingId = assignMut.isPending ? assignMut.variables?.categoryId ?? null : null;
 
   return (
     <div>
-      <PageHeader title="Presupuesto" description="Reparte tus ingresos entre categorías, mes a mes.">
+      <PageHeader
+        title="Presupuesto"
+        description="Reparte tus ingresos entre categorías, mes a mes."
+        actions={
+          <>
+            <a
+              href="/app/alerts?tipo=category_overspent"
+              className={cn(buttonVariants({ variant: "outline" }), "gap-1.5")}
+              title="Crear una alerta para enterarte cuando una categoría se pase"
+            >
+              <Bell className="size-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Avisarme si me paso</span>
+            </a>
+            <QuickAssignMenu onRun={(mode) => autoMut.mutate(mode)} busy={autoMut.isPending} hasTargets={targetCount > 0} />
+          </>
+        }
+      >
         {monthSwitcher}
       </PageHeader>
 
-      <StatCard
-        label="Para presupuestar"
-        value={<span className={readyValueClass}>{formatCurrency(data.readyToAssign)}</span>}
-        icon={PiggyBank}
-        hint={readyHint}
-        emphasis
-        className={cn(tone === "negative" && "border-amber-500/30 bg-amber-500/5")}
-      />
+      <StatGrid className="sm:grid-cols-3 xl:grid-cols-3">
+        <StatCard
+          label="Para presupuestar"
+          value={<span className={readyValueClass}>{formatCurrency(data.readyToAssign)}</span>}
+          icon={PiggyBank}
+          hint={readyHint}
+          emphasis
+          className={cn(tone === "negative" && "border-amber-500/30 bg-amber-500/5")}
+        />
+        <StatCard
+          label="Gastado este mes"
+          value={formatCurrency(totals.spent)}
+          icon={Receipt}
+          hint={
+            overspentCount > 0
+              ? <span className="text-red-600 dark:text-red-400">{overspentCount} {overspentCount === 1 ? "categoría se ha pasado" : "categorías se han pasado"} del presupuesto</span>
+              : `De ${formatCurrency(totals.assigned)} asignados. Todo dentro del presupuesto.`
+          }
+        />
+        <StatCard
+          label="Objetivos"
+          value={
+            targetCount === 0 ? "—" : data.targetsShortfall > 0
+              ? <span className="text-amber-700 dark:text-amber-400">{formatCurrency(data.targetsShortfall)}</span>
+              : <span className="text-emerald-700 dark:text-emerald-400">Al día</span>
+          }
+          icon={Target}
+          hint={
+            targetCount === 0
+              ? "Pulsa ◎ junto a una categoría para ponerle un objetivo."
+              : data.targetsShortfall > 0 ? "Faltan por asignar este mes para cumplirlos." : `${targetCount} ${targetCount === 1 ? "objetivo cumplido" : "objetivos cumplidos"} este mes.`
+          }
+        />
+      </StatGrid>
 
       <div className="mt-6 space-y-6">
-        {data.groups.map((g) => (
-          <SectionCard key={g.id} title={g.name} flush>
-            <GroupTable
-              categories={g.categories}
-              month={month}
-              pendingId={pendingId}
-              onAssign={(categoryId, previous, next) => assignMut.mutate({ categoryId, assigned: next, previous })}
-            />
-          </SectionCard>
-        ))}
+        {data.groups.map((g) => {
+          const t = groupTotals(g.categories);
+          return (
+            <SectionCard
+              key={g.id}
+              title={g.name}
+              flush
+              action={
+                g.categories.length > 0 ? (
+                  <dl className="hidden items-center gap-4 text-xs sm:flex">
+                    <div className="flex items-baseline gap-1.5"><dt className="text-muted-foreground">Asignado</dt><dd className="font-medium tabular-nums text-foreground">{formatCurrency(t.assigned)}</dd></div>
+                    <div className="flex items-baseline gap-1.5"><dt className="text-muted-foreground">Gastado</dt><dd className="font-medium tabular-nums text-foreground">{formatCurrency(t.spent)}</dd></div>
+                    <div className="flex items-baseline gap-1.5">
+                      <dt className="text-muted-foreground">Disponible</dt>
+                      <dd className={cn("font-medium tabular-nums", t.available < 0 ? "text-red-600 dark:text-red-400" : "text-foreground")}>{formatCurrency(t.available)}</dd>
+                    </div>
+                  </dl>
+                ) : undefined
+              }
+            >
+              <BudgetTable
+                categories={g.categories}
+                month={month}
+                pendingId={pendingId}
+                onAssign={(categoryId, previous, next) => assignMut.mutate({ categoryId, assigned: next, previous })}
+                onEditTarget={setTargetFor}
+                onCover={setCoverFor}
+                onFund={(c) => assignMut.mutate({
+                  categoryId: c.id,
+                  previous: c.assigned,
+                  assigned: Math.round((c.assigned + (c.target?.shortfall ?? 0)) * 100) / 100,
+                })}
+              />
+            </SectionCard>
+          );
+        })}
       </div>
+
+      <TargetDialog
+        category={targetFor}
+        month={month}
+        pending={targetMut.isPending}
+        onClose={() => setTargetFor(null)}
+        onSave={(target) => targetFor && targetMut.mutate({ categoryId: targetFor.id, remove: false, target })}
+        onRemove={() => targetFor && targetMut.mutate({ categoryId: targetFor.id, remove: true })}
+      />
+      <CoverDialog
+        category={coverFor}
+        summary={data}
+        pending={coverMut.isPending}
+        onClose={() => setCoverFor(null)}
+        onConfirm={(source, amount) => coverFor && coverMut.mutate({ category: coverFor, source, amount })}
+      />
     </div>
   );
 }
