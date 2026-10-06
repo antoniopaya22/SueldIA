@@ -57,6 +57,14 @@ dashboardRouter.get("/", async (req, res, next) => {
       ? parsed.data.profileId.split(",").map(Number).filter((n) => userProfileIds.includes(n))
       : undefined;
 
+    // Se pidieron perfiles, pero ninguno es del usuario: vacío, no "todos".
+    if (requestedProfileIds && requestedProfileIds.length === 0) {
+      return res.json({
+        ...EMPTY_DASHBOARD,
+        profiles: userProfiles.map((p) => ({ id: p.id, name: p.name, color: p.color })),
+      });
+    }
+
     const { filtered, allConcepts } = await fetchDashboardData({
       userProfileIds,
       requestedProfileIds,

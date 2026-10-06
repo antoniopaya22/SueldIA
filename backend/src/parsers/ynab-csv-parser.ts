@@ -98,7 +98,9 @@ export function parseYnabCsv(content: string): YnabParseResult {
     const memo = unquote(parts[7]);
     const outflow = parseAmount(parts[8]);
     const inflow = parseAmount(parts[9]);
-    const cleared = unquote(parts[10]) === "Cleared";
+    // "Reconciled" es un paso más allá de "Cleared" en YNAB: también está liquidado.
+    const clearedStatus = unquote(parts[10]);
+    const cleared = clearedStatus === "Cleared" || clearedStatus === "Reconciled";
 
     const date = parseDate(dateRaw);
 

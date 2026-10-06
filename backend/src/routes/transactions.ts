@@ -9,6 +9,8 @@ import {
 import { eq, and, sql, desc, asc, gte, lte, ilike, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
+import { defaultCleared } from "../services/transaction-filters.js";
+import { getTodayIsoDate } from "../services/recurring-transactions.service.js";
 
 export const transactionsRouter = Router();
 transactionsRouter.param("id", validateIdParam);
@@ -229,6 +231,7 @@ transactionsRouter.post("/", async (req, res, next) => {
     if (!account) return res.status(404).json({ error: "Cuenta no encontrada" });
 
     const { targetAccountId, ...txData } = parsed.data;
+    const cleared = txData.cleared ?? defaultCleared(txData.date, getTodayIsoDate());
 
     if (txData.type !== "transfer" && txData.categoryId != null) {
       const category = await getOwnedCategory(txData.categoryId, userId);
@@ -263,7 +266,7 @@ transactionsRouter.post("/", async (req, res, next) => {
             payee: normalizeOptionalText(txData.payee),
             memo: normalizeOptionalText(txData.memo),
             flag: normalizeOptionalText(txData.flag),
-            cleared: txData.cleared ?? false,
+            cleared,
           })
           .returning();
 
@@ -277,7 +280,7 @@ transactionsRouter.post("/", async (req, res, next) => {
             date: txData.date,
             payee: `Transfer : ${account.name}`,
             memo: normalizeOptionalText(txData.memo),
-            cleared: txData.cleared ?? false,
+            cleared,
             flag: normalizeOptionalText(txData.flag),
             userId,
             transferId: outflow.id,
@@ -313,7 +316,7 @@ transactionsRouter.post("/", async (req, res, next) => {
           payee: normalizeOptionalText(txData.payee),
           memo: normalizeOptionalText(txData.memo),
           flag: normalizeOptionalText(txData.flag),
-          cleared: txData.cleared ?? false,
+          cleared,
         })
         .returning();
       res.status(201).json(tx);

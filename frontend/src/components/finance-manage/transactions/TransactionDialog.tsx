@@ -2,10 +2,11 @@ import type { Account, CategoryGroup } from "../../../lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { AccountSelect, CategorySelect, TypeToggle, amountInputClass, type TxType } from "./shared";
+import { AccountSelect, CategorySelect, TypeToggle, amountInputClass, getTodayIsoDate, type TxType } from "./shared";
 
 export interface TxForm {
   type: TxType;
@@ -16,6 +17,7 @@ export interface TxForm {
   date: string;
   payee: string;
   memo: string;
+  cleared: boolean;
 }
 
 interface Props {
@@ -112,7 +114,17 @@ export function TransactionDialog({
               )}
               <div className="space-y-1.5">
                 <Label htmlFor="tx-date">Fecha</Label>
-                <Input id="tx-date" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
+                <Input
+                  id="tx-date"
+                  type="date"
+                  value={form.date}
+                  onChange={(e) => {
+                    const date = e.target.value;
+                    // Al crear, la fecha manda sobre el estado: futura → prevista, hoy o antes → liquidada.
+                    setForm({ ...form, date, ...(editing || !date ? {} : { cleared: date <= getTodayIsoDate() }) });
+                  }}
+                  required
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="tx-payee">Beneficiario</Label>
@@ -128,6 +140,23 @@ export function TransactionDialog({
             <div className="space-y-1.5">
               <Label htmlFor="tx-memo">Nota</Label>
               <Input id="tx-memo" value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} placeholder="Opcional" />
+            </div>
+
+            <div className="flex items-start gap-2.5">
+              <Checkbox
+                id="tx-cleared"
+                checked={form.cleared}
+                onCheckedChange={(checked) => setForm({ ...form, cleared: checked === true })}
+                className="mt-0.5"
+              />
+              <div className="space-y-0.5">
+                <Label htmlFor="tx-cleared" className="cursor-pointer">Ya liquidada</Label>
+                <p className="text-xs text-muted-foreground">
+                  {form.cleared
+                    ? "Cuenta ya en tu saldo, el presupuesto y las gráficas."
+                    : "Prevista: no afecta al saldo ni a las gráficas hasta que la liquides."}
+                </p>
+              </div>
             </div>
           </div>
 

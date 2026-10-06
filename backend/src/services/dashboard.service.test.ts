@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAnnualSummaries } from "./dashboard.service.js";
+import { buildAnnualSummaries, fetchDashboardData } from "./dashboard.service.js";
 
 type AnnualPayslip = Parameters<typeof buildAnnualSummaries>[0][number];
 type AnnualConcept = Parameters<typeof buildAnnualSummaries>[1][number];
@@ -54,5 +54,13 @@ describe("buildAnnualSummaries", () => {
       extraNet: 1200,
       retentionRate: 80,
     });
+  });
+});
+describe("fetchDashboardData", () => {
+  it("sin perfiles válidos devuelve vacío en vez de las nóminas de todos los usuarios", async () => {
+    // Se pidió un perfil ajeno: tras filtrar por propiedad no queda ninguno.
+    const result = await fetchDashboardData({ userProfileIds: [1, 2], requestedProfileIds: [] });
+    expect(result.filtered).toEqual([]);
+    expect(result.allConcepts).toEqual([]);
   });
 });
