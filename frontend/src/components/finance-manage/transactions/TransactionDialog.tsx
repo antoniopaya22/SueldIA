@@ -1,4 +1,4 @@
-import type { Account, CategoryGroup } from "../../../lib/api";
+import type { Account, CategoryGroup, PayeeSuggestion } from "../../../lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,7 +6,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { AccountSelect, CategorySelect, TypeToggle, amountInputClass, getTodayIsoDate, type TxType } from "./shared";
+import {
+  AccountSelect, CategorySelect, TypeToggle, amountInputClass, getTodayIsoDate, getYesterdayIsoDate, type TxType,
+} from "./shared";
+import { PayeeAutocomplete } from "./PayeeAutocomplete";
 
 export interface TxForm {
   type: TxType;
@@ -30,11 +33,28 @@ interface Props {
   canCreateTransfers: boolean;
   pending: boolean;
   onClose: () => void;
-  onSubmit: () => void;
+  /** `addAnother`: guardar y dejar el formulario abierto para apuntar otro. */
+  onSubmit: (addAnother: boolean) => void;
   onNewCategory: () => void;
 }
 
 const TYPES = ["expense", "income", "transfer"] as const;
+
+function DateChip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={
+        "cursor-pointer rounded-md px-1.5 py-0.5 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 " +
+        (active ? "bg-primary/10 text-primary-700 dark:text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground")
+      }
+    >
+      {label}
+    </button>
+  );
+}
 
 export function TransactionDialog({
   open, editing, form, setForm, accounts, groups, canCreateTransfers, pending, onClose, onSubmit, onNewCategory,
@@ -47,10 +67,61 @@ export function TransactionDialog({
       ? "Se registran ambos lados: cargo en la cuenta de origen y abono en la de destino."
       : "Registra un gasto o un ingreso. Cámbialo a transferencia si mueves saldo entre tus cuentas.";
 
+  const today = getTodayIsoDate();
+  const yesterday = getYesterdayIsoDate();
+
+  // Al crear, la fecha manda sobre el estado: futura → prevista, hoy o antes → liquidada.
+  const setDate = (date: string) =>
+    setForm({ ...form, date, ...(editing || !date ? {} : { cleared: date <= today }) });
+
+  // Elegir un beneficiario ya usado rellena lo que aún está vacío (nunca pisa
+  // lo que el usuario ya ha elegido) con los datos de su último movimiento.
+  const pickPayee = (s: PayeeSuggestion) =>
+    setForm({
+      ...form,
+      payee: s.payee,
+      ...(editing ? {} : {
+        categoryId: form.categoryId || s.categoryId || "",
+        amount: form.amount || s.amount.toFixed(2),
+        accountId: form.accountId || s.accountId,
+      }),
+    });
+
+  const accountField = (
+    <div className="space-y-1.5">
+      <div className="flex h-5 items-center"><Label htmlFor="tx-account">{isTransfer ? "Desde" : "Cuenta"}</Label></div>
+      <AccountSelect id="tx-account" value={form.accountId} onChange={(v) => setForm({ ...form, accountId: v })} accounts={accounts} />
+    </div>
+  );
+
+  const payeeField = (
+    <div className="space-y-1.5">
+      <Label htmlFor="tx-payee">Beneficiario</Label>
+      <PayeeAutocomplete
+        id="tx-payee"
+        value={form.payee}
+        onChange={(payee) => setForm({ ...form, payee })}
+        onPick={pickPayee}
+        type={form.type === "transfer" ? null : form.type}
+        placeholder={isTransfer ? "Opcional" : form.type === "income" ? "Ej: Empresa" : "Ej: Supermercado"}
+      />
+    </div>
+  );
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="gap-0 p-0 sm:max-w-lg">
-        <form onSubmit={(e) => { e.preventDefault(); onSubmit(); }} className="flex max-h-[90vh] flex-col">
+        <form
+          onSubmit={(e) => { e.preventDefault(); onSubmit(false); }}
+          onKeyDown={(e) => {
+            // Ctrl/⌘ + Enter: guardar y seguir con el siguiente.
+            if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !editing) {
+              e.preventDefault();
+              onSubmit(true);
+            }
+          }}
+          className="flex max-h-[90vh] flex-col"
+        >
           <DialogHeader className="border-b border-border px-5 pt-5 pb-4">
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
@@ -84,57 +155,50 @@ export function TransactionDialog({
               </div>
             </div>
 
+            {/* Gasto/ingreso: importe → beneficiario → categoría (se autocompleta al elegir beneficiario). */}
+            {!isTransfer && payeeField}
+
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <div className="flex h-5 items-center"><Label htmlFor="tx-account">{isTransfer ? "Desde" : "Cuenta"}</Label></div>
-                <AccountSelect id="tx-account" value={form.accountId} onChange={(v) => setForm({ ...form, accountId: v })} accounts={accounts} />
-              </div>
               {isTransfer ? (
-                <div className="space-y-1.5">
-                  <div className="flex h-5 items-center"><Label htmlFor="tx-target">Hacia</Label></div>
-                  <AccountSelect
-                    id="tx-target"
-                    value={form.targetAccountId}
-                    onChange={(v) => setForm({ ...form, targetAccountId: v })}
-                    accounts={accounts}
-                    excludeId={form.accountId}
-                    placeholder="Cuenta de destino"
-                  />
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <div className="flex h-5 items-center justify-between gap-2">
-                    <Label htmlFor="tx-category">Categoría</Label>
-                    <button type="button" onClick={onNewCategory} className="cursor-pointer text-xs font-medium text-primary-700 hover:underline dark:text-primary">
-                      Nueva
-                    </button>
+                <>
+                  {accountField}
+                  <div className="space-y-1.5">
+                    <div className="flex h-5 items-center"><Label htmlFor="tx-target">Hacia</Label></div>
+                    <AccountSelect
+                      id="tx-target"
+                      value={form.targetAccountId}
+                      onChange={(v) => setForm({ ...form, targetAccountId: v })}
+                      accounts={accounts}
+                      excludeId={form.accountId}
+                      placeholder="Cuenta de destino"
+                    />
                   </div>
-                  <CategorySelect id="tx-category" value={form.categoryId} onChange={(v) => setForm({ ...form, categoryId: v })} groups={groups} />
-                </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    <div className="flex h-5 items-center justify-between gap-2">
+                      <Label htmlFor="tx-category">Categoría</Label>
+                      <button type="button" onClick={onNewCategory} className="cursor-pointer text-xs font-medium text-primary-700 hover:underline dark:text-primary">
+                        Nueva
+                      </button>
+                    </div>
+                    <CategorySelect id="tx-category" value={form.categoryId} onChange={(v) => setForm({ ...form, categoryId: v })} groups={groups} />
+                  </div>
+                  {accountField}
+                </>
               )}
               <div className="space-y-1.5">
-                <Label htmlFor="tx-date">Fecha</Label>
-                <Input
-                  id="tx-date"
-                  type="date"
-                  value={form.date}
-                  onChange={(e) => {
-                    const date = e.target.value;
-                    // Al crear, la fecha manda sobre el estado: futura → prevista, hoy o antes → liquidada.
-                    setForm({ ...form, date, ...(editing || !date ? {} : { cleared: date <= getTodayIsoDate() }) });
-                  }}
-                  required
-                />
+                <div className="flex h-5 items-center justify-between gap-2">
+                  <Label htmlFor="tx-date">Fecha</Label>
+                  <span className="flex items-center gap-0.5">
+                    <DateChip label="Hoy" active={form.date === today} onClick={() => setDate(today)} />
+                    <DateChip label="Ayer" active={form.date === yesterday} onClick={() => setDate(yesterday)} />
+                  </span>
+                </div>
+                <Input id="tx-date" type="date" value={form.date} onChange={(e) => setDate(e.target.value)} required />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="tx-payee">Beneficiario</Label>
-                <Input
-                  id="tx-payee"
-                  value={form.payee}
-                  onChange={(e) => setForm({ ...form, payee: e.target.value })}
-                  placeholder={isTransfer ? "Opcional" : "Ej: Supermercado"}
-                />
-              </div>
+              {isTransfer && payeeField}
             </div>
 
             <div className="space-y-1.5">
@@ -162,6 +226,17 @@ export function TransactionDialog({
 
           <DialogFooter className="mx-0 mb-0 border-t border-border px-5 py-3">
             <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
+            {!editing && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                onClick={() => onSubmit(true)}
+                title="Ctrl/⌘ + Enter"
+              >
+                Guardar y añadir otra
+              </Button>
+            )}
             <Button type="submit" disabled={pending}>
               {pending ? "Guardando…" : editing ? "Guardar cambios" : isTransfer ? "Crear movimiento" : "Crear transacción"}
             </Button>

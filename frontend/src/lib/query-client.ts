@@ -23,3 +23,10 @@ export function createAppQueryClient(): QueryClient {
 
   return queryClient;
 }
+
+/**
+ * Cliente único de las islas de /app: AppShell (diálogo global de nueva
+ * transacción) y cada página comparten el mismo módulo, así que una
+ * mutación hecha desde el shell refresca las listas de la página.
+ */
+export const appQueryClient = createAppQueryClient();

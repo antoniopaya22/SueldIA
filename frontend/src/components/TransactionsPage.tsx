@@ -6,10 +6,7 @@ import {
   AlertTriangle, PiggyBank, Wallet,
 } from "lucide-react";
 import {
-  createCategory,
-  createCategoryGroup,
   createRecurringTransaction,
-  createTransaction,
   deleteRecurringTransaction,
   deleteTransaction,
   exportTransactions,
@@ -21,7 +18,6 @@ import {
   setRecurringTransactionActive,
   toggleCleared,
   updateRecurringTransaction,
-  updateTransaction,
   type RecurringTransaction,
   type Transaction,
   type TransactionFilters,
@@ -29,6 +25,7 @@ import {
 import { Providers } from "./Providers";
 import { toast } from "sonner";
 import { formatCurrency } from "../lib/format";
+import { invalidateFinance } from "../lib/finance-cache";
 import { EmptyState } from "./ui/EmptyState";
 import { ConfirmModal } from "./ui/ConfirmModal";
 import {
@@ -48,9 +45,10 @@ import { darkBoost } from "../lib/color";
 import {
   CategorySelect, NONE, getNextMonthlyOccurrence, getTodayIsoDate, type TxType,
 } from "./finance-manage/transactions/shared";
-import { TransactionDialog, type TxForm } from "./finance-manage/transactions/TransactionDialog";
+import type { TxForm } from "./finance-manage/transactions/TransactionDialog";
+import { TransactionFormDialog } from "./finance-manage/transactions/TransactionFormDialog";
+import { useQuickCategory } from "./finance-manage/transactions/useQuickCategory";
 import { RecurringDialog, type RecurringForm } from "./finance-manage/transactions/RecurringDialog";
-import { QuickCategoryDialog } from "./finance-manage/transactions/QuickCategoryDialog";
 import { RecurringRuleCard } from "./finance-manage/transactions/RecurringRuleCard";
 import { TransactionTable, type SortDir, type SortField } from "./finance-manage/transactions/TransactionTable";
 import { cn } from "cn";
@@ -67,10 +65,6 @@ const SORT_OPTIONS: { value: string; label: string; field: SortField; dir: SortD
 ];
 
 const CLEARED_LABELS: Record<string, string> = { [NONE]: "Cualquier estado", true: "Liquidadas", false: "Pendientes" };
-
-function emptyTxForm(today: string, accountId: number | null, type: TxType = "expense"): TxForm {
-  return { type, accountId: accountId ?? "", targetAccountId: "", categoryId: "", amount: "", date: today, payee: "", memo: "", cleared: true };
-}
 
 function emptyRecurringForm(today: string, accountId: number | null): RecurringForm {
   return {
@@ -107,15 +101,11 @@ function TransactionsView() {
 
   // ─── Diálogos ────────────────────────────────────────────────
   const [txDialogOpen, setTxDialogOpen] = useState(false);
-  const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
-  const [txForm, setTxForm] = useState<TxForm>(() => emptyTxForm(today, null));
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [txInitial, setTxInitial] = useState<Partial<TxForm> | undefined>(undefined);
   const [recurringDialogOpen, setRecurringDialogOpen] = useState(false);
   const [editingRecurringId, setEditingRecurringId] = useState<number | null>(null);
   const [recurringForm, setRecurringForm] = useState<RecurringForm>(() => emptyRecurringForm(today, null));
-  const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
-  const [newGroupName, setNewGroupName] = useState("");
-  const [newCategoryGroupId, setNewCategoryGroupId] = useState<number | "">("");
-  const [newCategoryName, setNewCategoryName] = useState("");
   const [deleteTxTarget, setDeleteTxTarget] = useState<Transaction | null>(null);
   const [deleteRecurringTarget, setDeleteRecurringTarget] = useState<RecurringTransaction | null>(null);
 
@@ -172,35 +162,15 @@ function TransactionsView() {
   const canCreateTransfers = activeAccounts.length > 1;
 
   // ─── Mutaciones ──────────────────────────────────────────────
-  const invalidateTx = () => {
-    queryClient.invalidateQueries({ queryKey: ["transactions"] });
-    queryClient.invalidateQueries({ queryKey: ["accounts"] });
-    queryClient.invalidateQueries({ queryKey: ["finance-analytics"] });
-  };
+  const invalidateTx = () => invalidateFinance(queryClient);
 
-  const closeTxDialog = () => {
-    setTxDialogOpen(false);
-    setEditingTransactionId(null);
-    setTxForm(emptyTxForm(today, selectedAccountId));
-  };
+  const closeTxDialog = () => setTxDialogOpen(false);
 
   const closeRecurringDialog = () => {
     setRecurringDialogOpen(false);
     setEditingRecurringId(null);
     setRecurringForm(emptyRecurringForm(today, selectedAccountId));
   };
-
-  const createMut = useMutation({
-    mutationFn: createTransaction,
-    onSuccess: () => { invalidateTx(); closeTxDialog(); toast.success("Transacción creada"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const updateMut = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Parameters<typeof updateTransaction>[1] }) => updateTransaction(id, data),
-    onSuccess: () => { invalidateTx(); closeTxDialog(); toast.success("Transacción actualizada"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
 
   const deleteMut = useMutation({
     mutationFn: deleteTransaction,
@@ -246,50 +216,39 @@ function TransactionsView() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const createGroupMut = useMutation({
-    mutationFn: createCategoryGroup,
-    onSuccess: (group) => {
-      queryClient.invalidateQueries({ queryKey: ["categories"] });
-      setNewGroupName("");
-      setNewCategoryGroupId(group.id);
-      toast.success("Grupo creado");
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const createCategoryMut = useMutation({
-    mutationFn: createCategory,
-    onSuccess: (category) => {
-      queryClient.invalidateQueries({ queryKey: ["categories"] });
-      setNewCategoryName("");
-      setNewCategoryGroupId(category.groupId);
-      // Si hay un formulario abierto, la categoría nueva queda seleccionada.
-      if (txDialogOpen && txForm.type !== "transfer") setTxForm((f) => ({ ...f, categoryId: category.id }));
-      if (recurringDialogOpen) setRecurringForm((f) => ({ ...f, categoryId: category.id }));
-      setCategoryDialogOpen(false);
-      toast.success("Categoría creada");
-    },
-    onError: (e: Error) => toast.error(e.message),
+  // Alta rápida de categoría desde el menú "⋯" (el formulario de transacción tiene la suya).
+  const quickCategory = useQuickCategory(categoryGroups, (category) => {
+    if (recurringDialogOpen) setRecurringForm((f) => ({ ...f, categoryId: category.id }));
   });
 
   // ─── Acciones ────────────────────────────────────────────────
   const openCreateForm = (type: TxType = "expense") => {
-    setEditingTransactionId(null);
-    setTxForm(emptyTxForm(today, selectedAccountId, type));
+    setEditingTransaction(null);
+    setTxInitial({ type });
     setTxDialogOpen(true);
   };
 
-  // La acción "Nueva transacción" de la cabecera de la app enlaza aquí con
-  // ?nueva=1, y el buscador ⌘K con ?buscar=<texto> — ambos de un solo uso:
-  // se consumen y se quitan de la URL para que un refresco no los repita.
+  // Misma transacción con la fecha de hoy y sin liquidar a ciegas: útil para gastos que se repiten sin ser periódicos.
+  const openDuplicateForm = (tx: Transaction) => {
+    if (tx.type === "transfer") return;
+    setEditingTransaction(null);
+    setTxInitial({
+      type: tx.type,
+      accountId: tx.accountId,
+      categoryId: tx.categoryId ?? "",
+      amount: tx.amount.toFixed(2),
+      payee: tx.payee ?? "",
+      memo: tx.memo ?? "",
+    });
+    setTxDialogOpen(true);
+  };
+
+  // El buscador ⌘K enlaza aquí con ?buscar=<texto>: de un solo uso, se
+  // consume y se quita de la URL para que un refresco no lo repita. (La
+  // acción "Nueva transacción" ya no pasa por aquí: la gestiona el shell.)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     let changed = false;
-    if (params.has("nueva")) {
-      openCreateForm("expense");
-      params.delete("nueva");
-      changed = true;
-    }
     if (params.has("buscar")) {
       params.delete("buscar");
       changed = true;
@@ -305,48 +264,9 @@ function TransactionsView() {
       toast.info("Edita la transferencia desde el movimiento de salida");
       return;
     }
-    setEditingTransactionId(tx.id);
-    setTxForm({
-      type: tx.type,
-      accountId: tx.accountId,
-      targetAccountId: tx.type === "transfer" ? tx.targetAccountId ?? "" : "",
-      categoryId: tx.type === "transfer" ? "" : tx.categoryId ?? "",
-      amount: tx.amount.toFixed(2),
-      date: tx.date,
-      payee: tx.payee ?? "",
-      memo: tx.memo ?? "",
-      cleared: tx.cleared,
-    });
+    setEditingTransaction(tx);
+    setTxInitial(undefined);
     setTxDialogOpen(true);
-  };
-
-  const handleTransactionSubmit = () => {
-    const acctId = txForm.accountId || selectedAccountId;
-    if (!acctId || !txForm.amount) {
-      toast.error("Selecciona una cuenta e importe");
-      return;
-    }
-    if (txForm.type === "transfer" && !txForm.targetAccountId) {
-      toast.error("Selecciona una cuenta destino");
-      return;
-    }
-    if (txForm.type === "transfer" && Number(acctId) === Number(txForm.targetAccountId)) {
-      toast.error("La cuenta destino debe ser distinta de la cuenta origen");
-      return;
-    }
-    const payload = {
-      accountId: Number(acctId),
-      type: txForm.type,
-      amount: parseFloat(txForm.amount),
-      date: txForm.date,
-      payee: txForm.payee || null,
-      memo: txForm.memo || null,
-      cleared: txForm.cleared,
-      categoryId: txForm.type === "transfer" ? null : txForm.categoryId ? Number(txForm.categoryId) : null,
-      targetAccountId: txForm.type === "transfer" && txForm.targetAccountId ? Number(txForm.targetAccountId) : undefined,
-    };
-    if (editingTransactionId) updateMut.mutate({ id: editingTransactionId, data: payload });
-    else createMut.mutate(payload);
   };
 
   const openCreateRecurring = () => {
@@ -411,18 +331,6 @@ function TransactionsView() {
     };
     if (editingRecurringId) updateRecurringMut.mutate({ id: editingRecurringId, data: payload });
     else createRecurringMut.mutate(payload);
-  };
-
-  const handleCreateGroup = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newGroupName.trim()) { toast.error("Escribe un nombre de grupo"); return; }
-    createGroupMut.mutate({ name: newGroupName.trim() });
-  };
-
-  const handleCreateCategory = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCategoryGroupId || !newCategoryName.trim()) { toast.error("Selecciona un grupo y escribe un nombre"); return; }
-    createCategoryMut.mutate({ groupId: Number(newCategoryGroupId), name: newCategoryName.trim() });
   };
 
   const toggleSort = (field: SortField) => {
@@ -514,7 +422,7 @@ function TransactionsView() {
                   <Repeat className="size-4" /> Programar recurrente
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setCategoryDialogOpen(true)} className="gap-2">
+                <DropdownMenuItem onClick={quickCategory.openDialog} className="gap-2">
                   <Tag className="size-4" /> Nueva categoría
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -717,6 +625,7 @@ function TransactionsView() {
                   onEdit={openEditForm}
                   onToggleCleared={(tx) => clearMut.mutate(tx.id)}
                   onSchedule={openRecurringFromTransaction}
+                  onDuplicate={openDuplicateForm}
                   onDelete={setDeleteTxTarget}
                 />
               )}
@@ -783,18 +692,12 @@ function TransactionsView() {
         </>
       )}
 
-      <TransactionDialog
+      <TransactionFormDialog
         open={txDialogOpen}
-        editing={!!editingTransactionId}
-        form={txForm}
-        setForm={setTxForm}
-        accounts={activeAccounts}
-        groups={categoryGroups}
-        canCreateTransfers={canCreateTransfers}
-        pending={createMut.isPending || updateMut.isPending}
         onClose={closeTxDialog}
-        onSubmit={handleTransactionSubmit}
-        onNewCategory={() => setCategoryDialogOpen(true)}
+        editing={editingTransaction}
+        initial={txInitial}
+        defaultAccountId={selectedAccountId}
       />
 
       <RecurringDialog
@@ -809,21 +712,7 @@ function TransactionsView() {
         onSubmit={handleRecurringSubmit}
       />
 
-      <QuickCategoryDialog
-        open={categoryDialogOpen}
-        onClose={() => setCategoryDialogOpen(false)}
-        groups={categoryGroups}
-        newGroupName={newGroupName}
-        setNewGroupName={setNewGroupName}
-        newCategoryGroupId={newCategoryGroupId}
-        setNewCategoryGroupId={setNewCategoryGroupId}
-        newCategoryName={newCategoryName}
-        setNewCategoryName={setNewCategoryName}
-        onCreateGroup={handleCreateGroup}
-        onCreateCategory={handleCreateCategory}
-        creatingGroup={createGroupMut.isPending}
-        creatingCategory={createCategoryMut.isPending}
-      />
+      {quickCategory.dialog}
 
       <ConfirmModal
         open={!!deleteTxTarget}

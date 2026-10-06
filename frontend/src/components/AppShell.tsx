@@ -46,6 +46,11 @@ import {
 import { formatRelativeDate } from "@/lib/format";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { CommandMenu } from "@/components/app/CommandMenu";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { TransactionFormDialog } from "@/components/finance-manage/transactions/TransactionFormDialog";
+import type { TxForm } from "@/components/finance-manage/transactions/TransactionDialog";
+import { appQueryClient } from "@/lib/query-client";
+import { NEW_TRANSACTION_EVENT, openNewTransaction, type NewTransactionType } from "@/lib/new-transaction";
 import {
   HOME_ITEM,
   SETTINGS_ITEM,
@@ -437,12 +442,23 @@ function AppHeader({ currentPath, onOpenSearch }: { currentPath: string; onOpenS
           <kbd className="hidden rounded border border-border bg-muted px-1.5 py-px text-[10px] font-medium md:inline">⌘K</kbd>
         </button>
         <NotificationBell />
-        {showAction && (
+        {showAction && (action.opens === "new-transaction" ? (
+          <button
+            type="button"
+            onClick={() => openNewTransaction()}
+            className={cn(buttonVariants({ size: "sm" }), "h-8 cursor-pointer gap-1.5 px-3")}
+            aria-label={action.label}
+            title={`${action.label} (N)`}
+          >
+            <ActionIcon className="size-4" />
+            <span className="hidden sm:inline">{action.label}</span>
+          </button>
+        ) : (
           <a href={action.href} className={cn(buttonVariants({ size: "sm" }), "h-8 gap-1.5 px-3")}>
             <ActionIcon className="size-4" />
             <span className="hidden sm:inline">{action.label}</span>
           </a>
-        )}
+        ))}
       </div>
     </header>
   );
@@ -465,8 +481,47 @@ interface AppShellProps {
 export function AppShell({ currentPath, children }: AppShellProps) {
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [searchOpen, setSearchOpen] = React.useState(false);
+  // Nueva transacción global: el diálogo se monta la primera vez que se pide
+  // (así las páginas sin finanzas no cargan cuentas ni categorías de más).
+  const [txDialog, setTxDialog] = React.useState<{ open: boolean; mounted: boolean; initial?: Partial<TxForm> }>({
+    open: false,
+    mounted: false,
+  });
   React.useEffect(() => {
     setSidebarOpen(readSidebarCookie());
+  }, []);
+
+  React.useEffect(() => {
+    const open = (type: NewTransactionType = "expense") =>
+      setTxDialog({ open: true, mounted: true, initial: { type } });
+
+    const onRequest = (e: Event) => open((e as CustomEvent<{ type?: NewTransactionType }>).detail?.type);
+
+    // Atajo "N": solo si no se está escribiendo ni hay otro diálogo abierto.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "n" || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.repeat) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [role='combobox']")) return;
+      if (document.querySelector("[role='dialog'], [role='alertdialog']")) return;
+      e.preventDefault();
+      open();
+    };
+
+    // Compatibilidad con enlaces antiguos /app/transactions?nueva=1: se consume y se quita de la URL.
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("nueva")) {
+      params.delete("nueva");
+      const query = params.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+      open();
+    }
+
+    window.addEventListener(NEW_TRANSACTION_EVENT, onRequest);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener(NEW_TRANSACTION_EVENT, onRequest);
+      window.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   React.useEffect(() => {
@@ -520,6 +575,16 @@ export function AppShell({ currentPath, children }: AppShellProps) {
           </div>
         </SidebarInset>
         <CommandMenu open={searchOpen} onOpenChange={setSearchOpen} />
+        {txDialog.mounted && (
+          <QueryClientProvider client={appQueryClient}>
+            <TransactionFormDialog
+              open={txDialog.open}
+              onClose={() => setTxDialog((d) => ({ ...d, open: false }))}
+              editing={null}
+              initial={txDialog.initial}
+            />
+          </QueryClientProvider>
+        )}
       </SidebarProvider>
     </TooltipProvider>
   );
