@@ -61,7 +61,12 @@ export function buildBaseConditions(userId: number, f: TransactionFilterInput): 
   if (f.payee) conditions.push(ilike(transactions.payee, `%${escapeLike(f.payee)}%`));
   if (f.search) {
     const pattern = `%${escapeLike(f.search)}%`;
-    conditions.push(sql`(${transactions.payee} ILIKE ${pattern} OR ${transactions.memo} ILIKE ${pattern})`);
+    // Beneficiario, nota o nombre de la categoría del movimiento.
+    conditions.push(
+      sql`(${transactions.payee} ILIKE ${pattern} OR ${transactions.memo} ILIKE ${pattern} OR ${transactions.categoryId} IN (
+        SELECT ${categories.id} FROM ${categories} WHERE ${categories.name} ILIKE ${pattern}
+      ))`,
+    );
   }
   return conditions;
 }

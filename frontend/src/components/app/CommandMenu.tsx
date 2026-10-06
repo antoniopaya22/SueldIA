@@ -1,10 +1,10 @@
 import * as React from "react";
-import { CornerDownLeft, FileText, Monitor, Moon, Receipt, Search, Sun, type LucideIcon } from "lucide-react";
+import { CornerDownLeft, FileText, Monitor, Moon, Receipt, Search, Store, Sun, Tags, type LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "cn";
 import { HOME_ITEM, SETTINGS_ITEM, WORKSPACES } from "./navigation";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
-import { getPayslips, getTransactions } from "@/lib/api";
+import { getCategories, getPayeeSuggestions, getPayslips, getTransactions, type CategoryGroup } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
 import { openNewTransaction } from "@/lib/new-transaction";
 
@@ -36,7 +36,14 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
   const [query, setQuery] = React.useState("");
   const [activeIndex, setActiveIndex] = React.useState(0);
   const [searchEntries, setSearchEntries] = React.useState<CommandEntry[]>([]);
+  const [categoryGroups, setCategoryGroups] = React.useState<CategoryGroup[]>([]);
   const listRef = React.useRef<HTMLDivElement>(null);
+
+  // Las categorías se cargan una vez al abrir y se filtran en local al teclear.
+  React.useEffect(() => {
+    if (!open || categoryGroups.length > 0) return;
+    getCategories().then(setCategoryGroups).catch(() => {});
+  }, [open, categoryGroups.length]);
 
   // Búsqueda real de nóminas y transacciones (con retraso, ⌘K es su propia
   // isla sin QueryClientProvider — mismo patrón de fetch simple que la
@@ -52,7 +59,8 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
       Promise.all([
         getPayslips({ search: q, limit: 5 }).catch(() => ({ data: [] })),
         getTransactions({ search: q, limit: 5 }).catch(() => ({ data: [] })),
-      ]).then(([payslips, transactions]) => {
+        getPayeeSuggestions({ q, limit: 8 }).catch(() => []),
+      ]).then(([payslips, transactions, payees]) => {
         if (cancelled) return;
         const payslipEntries: CommandEntry[] = payslips.data.map((p) => ({
           id: `payslip:${p.id}`,
@@ -62,15 +70,39 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
           icon: FileText,
           run: go(`/app/payslips?perfil=${p.profileId}&nomina=${p.id}`),
         }));
-        const txEntries: CommandEntry[] = transactions.data.map((t) => ({
-          id: `tx:${t.id}`,
-          group: "Transacciones",
-          label: t.payee || t.memo || "Sin descripción",
-          hint: `${formatCurrency(t.amount)} · ${t.date}`,
-          icon: Receipt,
-          run: go(`/app/transactions?buscar=${encodeURIComponent(t.payee || q)}`),
-        }));
-        setSearchEntries([...payslipEntries, ...txEntries]);
+        // Un beneficiario puede salir como gasto y como ingreso: una sola entrada.
+        const seen = new Set<string>();
+        const payeeEntries: CommandEntry[] = [];
+        for (const p of payees) {
+          const key = p.payee.toLowerCase();
+          if (seen.has(key) || payeeEntries.length >= 5) continue;
+          seen.add(key);
+          payeeEntries.push({
+            id: `payee:${key}`,
+            group: "Beneficiarios",
+            label: p.payee,
+            hint: "Ver movimientos",
+            icon: Store,
+            run: go(`/app/transactions?buscar=${encodeURIComponent(p.payee)}`),
+          });
+        }
+        const nq = normalize(q);
+        const txEntries: CommandEntry[] = transactions.data.map((t) => {
+          // Si coincide por beneficiario, se abre la lista de ese beneficiario; si fue por la categoría, la de esa categoría.
+          const byPayee = t.payee && normalize(t.payee).includes(nq);
+          const href = byPayee || !t.categoryId
+            ? `/app/transactions?buscar=${encodeURIComponent(t.payee || q)}`
+            : `/app/transactions?categoria=${t.categoryId}`;
+          return {
+            id: `tx:${t.id}`,
+            group: "Transacciones",
+            label: t.payee || t.memo || "Sin descripción",
+            hint: [t.categoryName, formatCurrency(t.amount), t.date].filter(Boolean).join(" · "),
+            icon: Receipt,
+            run: go(href),
+          };
+        });
+        setSearchEntries([...payeeEntries, ...txEntries, ...payslipEntries]);
       });
     }, 250);
     return () => {
@@ -114,11 +146,28 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
     return [...actions, ...nav, theme("light", "Tema claro", Sun), theme("dark", "Tema oscuro", Moon), theme("system", "Tema del sistema", Monitor)];
   }, [setPreference]);
 
+  const categoryEntries = React.useMemo<CommandEntry[]>(() => {
+    const q = normalize(query.trim());
+    if (q.length < 2) return [];
+    return categoryGroups
+      .flatMap((g) => g.categories.map((c) => ({ c, groupName: g.name })))
+      .filter(({ c }) => normalize(c.name).includes(q))
+      .slice(0, 5)
+      .map(({ c, groupName }) => ({
+        id: `category:${c.id}`,
+        group: "Categorías",
+        label: c.name,
+        hint: groupName,
+        icon: Tags,
+        run: go(`/app/transactions?categoria=${c.id}`),
+      }));
+  }, [categoryGroups, query]);
+
   const filtered = React.useMemo(() => {
     const q = normalize(query.trim());
     const local = q ? entries.filter((e) => normalize(`${e.label} ${e.hint ?? ""} ${e.keywords ?? ""}`).includes(q)) : entries;
-    return q ? [...local, ...searchEntries] : local;
-  }, [entries, query, searchEntries]);
+    return q ? [...local, ...categoryEntries, ...searchEntries] : local;
+  }, [categoryEntries, entries, query, searchEntries]);
 
   React.useEffect(() => setActiveIndex(0), [query, searchEntries]);
   React.useEffect(() => {
@@ -163,7 +212,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="Busca una página o acción…"
+            placeholder="Busca una página, categoría, beneficiario…"
             aria-label="Buscar"
             role="combobox"
             aria-expanded="true"
