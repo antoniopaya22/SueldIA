@@ -1291,3 +1291,13 @@ export const unsplitTransaction = (id: number) =>
 /** Crea las categorías de partida (en español) que aún no existan. */
 export const seedDefaultCategories = () =>
   request<{ groups: number; categories: number }>("/categories/seed-defaults", { method: "POST" });
+
+// ─── Preferencias de interfaz ───────────────────────────────────
+/** Todas las preferencias guardadas del usuario ({ clave: valor }). */
+export const getPreferences = () => request<{ data: Record<string, unknown> }>("/preferences").then((r) => r.data);
+
+export const savePreference = (key: string, value: unknown) =>
+  request<{ ok: boolean }>(`/preferences/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ value }) });
+
+export const removePreference = (key: string) =>
+  request<{ ok: boolean }>(`/preferences/${encodeURIComponent(key)}`, { method: "DELETE" });
