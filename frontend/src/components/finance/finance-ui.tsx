@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "cn";
 import { adaptiveColor } from "../../lib/color";
+import { changeTrend } from "../../lib/analytics-compare";
 
 // ─── Colores ────────────────────────────────────────────────────
 // Mismo criterio que Inicio: ingresos en verde de marca, gastos en navy y el
@@ -238,6 +239,31 @@ export function RankedList({ items, format, className }: {
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Cambio frente al periodo anterior junto a un valor. `goodWhen` dice qué
+ * dirección es buena (en gastos, bajar); sin base de comparación → "nuevo".
+ */
+export function ChangeBadge({ change, goodWhen }: { change: number | null | undefined; goodWhen: "up" | "down" }) {
+  if (change === undefined) return null;
+  if (change === null) return <span className="rounded bg-muted px-1 text-[11px] font-medium text-muted-foreground">nuevo</span>;
+  const trend = changeTrend(change);
+  const good = trend === "flat" ? null : trend === goodWhen;
+  const arrow = trend === "up" ? "▲" : trend === "down" ? "▼" : "=";
+  return (
+    <span
+      className={cn(
+        "whitespace-nowrap rounded px-1 text-[11px] font-medium tabular-nums",
+        good === null && "bg-muted text-muted-foreground",
+        good === true && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+        good === false && "bg-red-500/10 text-red-700 dark:text-red-400",
+      )}
+      title="Frente al periodo anterior"
+    >
+      {arrow} {formatPct(Math.abs(change))}
+    </span>
   );
 }
 

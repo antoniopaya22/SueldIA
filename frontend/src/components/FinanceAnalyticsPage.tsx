@@ -7,21 +7,21 @@ import {
   PolarAngleAxis, PolarGrid, PolarRadiusAxis, Radar, RadarChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, Download, RefreshCcw, Scale, SlidersHorizontal, Wallet, X,
+  AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, Download, GitCompareArrows, RefreshCcw, Scale, SlidersHorizontal, Wallet, X,
 } from "lucide-react";
 import {
   getAccounts, getCategories, getFinanceAnalytics,
   type FinanceAnalyticsCategoryItem, type FinanceAnalyticsFilters, type FinanceAnalyticsGroupItem,
 } from "../lib/api";
 import { Providers } from "./Providers";
-import { formatCurrency, formatMonthLabel, formatPct } from "../lib/format";
+import { formatCompact, formatCurrency, formatMonthLabel, formatPct } from "../lib/format";
 import { EmptyState } from "./ui/EmptyState";
 import {
   PageHeader, StatCard, StatGrid, SectionCard, Segmented, PageHeaderSkeleton, StatCardSkeleton, ChartCardSkeleton,
   chartAxis, chartGrid, chartCursor, chartBarCursor, chartActiveDot, chartColors, type SegmentedOption,
 } from "./app";
 import {
-  AccountSelect, ChartEmpty, ChartLegend, FilterSelect, LimitSelect, PieTooltip, RankedList, SeriesTooltip,
+  AccountSelect, ChangeBadge, ChartEmpty, ChartLegend, FilterSelect, LimitSelect, PieTooltip, RankedList, SeriesTooltip,
   adaptiveColor, flowColors, paletteColor, presetRange, rangeLabel, shortenLabel,
   tickFormatter as fmtTick, valueFormatter as fmtValue, type RangePreset, type ValueMode,
 } from "./finance/finance-ui";
@@ -38,6 +38,9 @@ import { AmountsChart } from "./finance/charts/AmountsChart";
 import { SmallMultiples } from "./finance/charts/SmallMultiples";
 import { AnalyticsViewsMenu } from "./finance/AnalyticsViewsMenu";
 import { usePreference } from "../hooks/use-preference";
+import { alignPrevious, changeByKey, changeTrend, isPartialMonth, pctChange, previousRange } from "../lib/analytics-compare";
+import type { ExportTable } from "../lib/export-utils";
+import type { StatDelta } from "./app/StatCard";
 import {
   DEFAULT_PANEL_SETTINGS, normalizeLayout, normalizePanelSettings, normalizeViews,
   type AnalyticsView, type LayoutEntry, type PanelKey, type PanelSettings,
@@ -129,6 +132,21 @@ function Insight({ label, value, hint }: { label: string; value: string; hint: s
       <p className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</p>
     </div>
   );
+}
+
+/** Acumulados mes a mes (ingresos, gastos, neto y movimientos). */
+function accumulate<T extends { income: number; expenses: number; net: number; transactionCount: number }>(items: T[]) {
+  let income = 0;
+  let expenses = 0;
+  let net = 0;
+  let count = 0;
+  return items.map((item) => {
+    income += item.income;
+    expenses += item.expenses;
+    net += item.net;
+    count += item.transactionCount;
+    return { ...item, cumulativeIncome: income, cumulativeExpenses: expenses, cumulativeNet: net, cumulativeCount: count };
+  });
 }
 
 // ─── Vista ──────────────────────────────────────────────────────
@@ -240,6 +258,21 @@ function FinanceAnalyticsView() {
     queryFn: () => getFinanceAnalytics(analyticsFilters),
   });
 
+  // Comparar con el periodo anterior: el de la misma duración justo antes. Sin fechas (todo el histórico) no hay con qué comparar.
+  const [compare, setCompare] = usePreference<boolean>("analytics-compare", false);
+  const prevRange = useMemo(() => previousRange(from, to), [from, to]);
+  const compareActive = compare && prevRange !== null;
+  const prevFilters = useMemo<FinanceAnalyticsFilters>(
+    () => ({ ...analyticsFilters, from: prevRange?.from, to: prevRange?.to }),
+    [analyticsFilters, prevRange],
+  );
+  const { data: prevAnalytics, isFetching: fetchingPrev } = useQuery({
+    queryKey: ["finance-analytics", prevFilters],
+    queryFn: () => getFinanceAnalytics(prevFilters),
+    enabled: compareActive,
+  });
+  const prev = compareActive ? prevAnalytics : undefined;
+
   const flatCategories = useMemo(
     () => categoryGroups.flatMap((group) => group.categories.map((category) => ({ ...category, groupName: group.name }))),
     [categoryGroups],
@@ -277,19 +310,32 @@ function FinanceAnalyticsView() {
     netPerMovement: item.transactionCount > 0 ? item.net / item.transactionCount : 0,
   })), [analytics]);
 
-  const cumulativeChartData = useMemo(() => {
-    let income = 0;
-    let expenses = 0;
-    let net = 0;
-    let count = 0;
-    return monthlyChartData.map((item) => {
-      income += item.income;
-      expenses += item.expenses;
-      net += item.net;
-      count += item.transactionCount;
-      return { ...item, cumulativeIncome: income, cumulativeExpenses: expenses, cumulativeNet: net, cumulativeCount: count };
-    });
-  }, [monthlyChartData]);
+  const prevMonthly = useMemo(() => (prev?.monthly ?? []).map((item) => ({
+    ...item,
+    label: formatMonthLabel(item.month),
+    count: item.transactionCount,
+    savingsRate: item.income > 0 ? (item.net / item.income) * 100 : 0,
+  })), [prev]);
+
+  const cumulativeChartData = useMemo(() => accumulate(monthlyChartData), [monthlyChartData]);
+  const prevCumulative = useMemo(() => accumulate(prevMonthly), [prevMonthly]);
+
+  // Series con el periodo anterior alineado por posición (mes 1 con mes 1…). Solo con una métrica concreta: con "Todo" serían seis líneas.
+  const trendData = useMemo(
+    () => (compareActive && trendMetric !== "all"
+      // Los meses cortados por el borde del periodo anterior se dejan sin punto: compararlos con un mes entero dibujaría una caída que no existe.
+      ? alignPrevious(monthlyChartData, prevMonthly, (m) => (prevRange && isPartialMonth(m.month, prevRange) ? null : m[trendMetric]))
+      : monthlyChartData),
+    [compareActive, monthlyChartData, prevMonthly, prevRange, trendMetric],
+  );
+  const cumulativeData = useMemo(() => {
+    if (!compareActive) return cumulativeChartData;
+    const key = cumulativeMetric === "income" ? "cumulativeIncome"
+      : cumulativeMetric === "expenses" ? "cumulativeExpenses"
+        : cumulativeMetric === "count" ? "cumulativeCount"
+          : "cumulativeNet";
+    return alignPrevious(cumulativeChartData, prevCumulative, (m) => m[key]);
+  }, [compareActive, cumulativeChartData, cumulativeMetric, prevCumulative]);
 
   const distributionData = useMemo(() => {
     const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
@@ -459,6 +505,22 @@ function FinanceAnalyticsView() {
     return { months, rows };
   }, [analytics, matrixLimit, matrixMetric, matrixScope]);
 
+  // Valor de cada categoría/grupo y beneficiario en el periodo anterior, con el mismo valor (importe, nº, media) elegido en el panel.
+  const prevDistribution = useMemo(() => {
+    const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
+      distributionScope === "category" ? prev?.categories ?? [] : prev?.groups ?? [];
+    return new Map(source.filter((i) => i.type === distributionMetric).map((i) => [i.bucketKey, rankValue(i.total, i.count, distributionValue)]));
+  }, [distributionMetric, distributionScope, distributionValue, prev]);
+  const prevPayees = useMemo(
+    () => new Map((prev?.payees ?? []).filter((i) => i.type === payeeMetric).map((i) => [i.bucketKey, rankValue(i.total, i.count, payeeValue)])),
+    [payeeMetric, payeeValue, prev],
+  );
+  const distributionChange = useMemo(
+    () => (prev ? changeByKey(distributionData, prevDistribution) : null),
+    [distributionData, prev, prevDistribution],
+  );
+  const payeeChange = useMemo(() => (prev ? changeByKey(payeeData, prevPayees) : null), [payeeData, prev, prevPayees]);
+
   const topWeekday = useMemo(
     () => [...weekdayChartData].sort((a, b) => Math.abs(b.value) - Math.abs(a.value))[0],
     [weekdayChartData],
@@ -566,6 +628,19 @@ function FinanceAnalyticsView() {
   const { summary } = analytics;
   const hasTransactions = summary.transactionCount > 0;
 
+  // Variación de cada total frente al periodo anterior (solo si se está comparando y ese periodo tiene movimientos).
+  const prevSummary = prev && prev.summary.transactionCount > 0 ? prev.summary : null;
+  const kpiDelta = (current: number, previous: number | undefined, goodWhen: "up" | "down"): StatDelta | undefined => {
+    if (!compareActive || previous === undefined) return undefined;
+    const change = pctChange(current, previous);
+    if (change === null) return undefined;
+    const trend = changeTrend(change);
+    const tone = trend === "flat" ? "neutral" : trend === goodWhen ? "positive" : "negative";
+    return { value: `${change > 0 ? "+" : change < 0 ? "−" : ""}${formatPct(Math.abs(change))}`, trend, tone, label: "vs anterior" };
+  };
+  const prevHint = (value: number | undefined) =>
+    compareActive ? (prevSummary && value !== undefined ? `Antes ${formatCompact(value)}` : fetchingPrev ? "Comparando…" : "Sin datos en el periodo anterior") : null;
+
   // ─── Modos de valor ───────────────────────────────────────────
   const trendMode: ValueMode = trendMetric === "count" ? "count" : trendMetric === "savingsRate" ? "percent" : "currency";
   const cumulativeMode: ValueMode = cumulativeMetric === "count" ? "count" : "currency";
@@ -597,18 +672,23 @@ function FinanceAnalyticsView() {
       <XAxis key="x" dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={16} />,
       <YAxis key="y" {...chartAxis} tickFormatter={fmtTick(trendMode)} width={56} />,
     ];
-    const legend = all
+    const legend: Array<{ color: string; label: string; line?: boolean }> = all
       ? [
         { color: flowColors.income, label: "Ingresos" },
         { color: flowColors.expense, label: "Gastos" },
         { color: flowColors.net, label: "Flujo neto", line: trendView === "bars" },
       ]
       : [{ color: single!.color, label: single!.label, line: trendView === "line" }];
+    if (compareActive && single) legend.push({ color: single.color, label: "Periodo anterior", line: true });
+
+    const ghostLine = compareActive && single
+      ? [<Line key="previous" type="monotone" dataKey="previous" name="Periodo anterior" stroke={single.color} strokeOpacity={0.55} strokeWidth={2} strokeDasharray="5 4" dot={false} activeDot={chartActiveDot} connectNulls />]
+      : null;
 
     let chart;
     if (trendView === "line") {
       chart = (
-        <ComposedChart data={monthlyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           {axes}
           <Tooltip content={<SeriesTooltip format={format} />} cursor={chartCursor} />
           {all ? [
@@ -618,11 +698,12 @@ function FinanceAnalyticsView() {
           ] : (
             <Line type="monotone" dataKey={single!.key} name={single!.label} stroke={single!.color} strokeWidth={2} dot={false} activeDot={chartActiveDot} />
           )}
+          {ghostLine}
         </ComposedChart>
       );
     } else if (trendView === "area") {
       chart = (
-        <AreaChart data={monthlyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           {axes}
           <Tooltip content={<SeriesTooltip format={format} />} cursor={chartCursor} />
           {all ? [
@@ -632,11 +713,12 @@ function FinanceAnalyticsView() {
           ] : (
             <Area type="monotone" dataKey={single!.key} name={single!.label} stroke={single!.color} fill={single!.color} fillOpacity={0.14} strokeWidth={2} activeDot={chartActiveDot} />
           )}
-        </AreaChart>
+          {ghostLine}
+        </ComposedChart>
       );
     } else {
       chart = (
-        <ComposedChart data={monthlyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={3}>
+        <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={3}>
           {axes}
           <Tooltip content={<SeriesTooltip format={format} />} cursor={chartBarCursor} />
           {all ? [
@@ -646,6 +728,7 @@ function FinanceAnalyticsView() {
           ] : (
             <Bar dataKey={single!.key} name={single!.label} fill={single!.color} radius={[4, 4, 0, 0]} maxBarSize={32} />
           )}
+          {ghostLine}
         </ComposedChart>
       );
     }
@@ -675,19 +758,24 @@ function FinanceAnalyticsView() {
       <YAxis key="y" {...chartAxis} tickFormatter={fmtTick(cumulativeMode)} width={56} />,
       <Tooltip key="tt" content={<SeriesTooltip format={fmtValue(cumulativeMode)} />} cursor={chartCursor} />,
     ];
+    const ghost = compareActive
+      ? [<Line key="previous" type="monotone" dataKey="previous" name="Periodo anterior" stroke={color} strokeOpacity={0.55} strokeWidth={2} strokeDasharray="5 4" dot={false} activeDot={chartActiveDot} connectNulls />]
+      : null;
     return (
       <div style={{ height: chartHeight(expanded, 260) }}>
         <ResponsiveContainer width="100%" height="100%">
           {cumulativeView === "line" ? (
-            <ComposedChart data={cumulativeChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <ComposedChart data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               {common}
               <Line type="monotone" dataKey={key} name="Acumulado" stroke={color} strokeWidth={2} dot={false} activeDot={chartActiveDot} />
+              {ghost}
             </ComposedChart>
           ) : (
-            <AreaChart data={cumulativeChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <ComposedChart data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               {common}
               <Area type="monotone" dataKey={key} name="Acumulado" stroke={color} fill={color} fillOpacity={0.14} strokeWidth={2} activeDot={chartActiveDot} />
-            </AreaChart>
+              {ghost}
+            </ComposedChart>
           )}
         </ResponsiveContainer>
       </div>
@@ -703,7 +791,7 @@ function FinanceAnalyticsView() {
       return (
         <RankedList
           format={format}
-          items={distributionData.map((d) => ({ key: d.key, label: d.label, sublabel: d.parentLabel, value: d.value, color: d.color, meta: formatPct(d.share), href: d.href }))}
+          items={distributionData.map((d) => ({ key: d.key, label: d.label, sublabel: d.parentLabel, value: d.value, color: d.color, meta: <>{formatPct(d.share)}{distributionChange && <> <ChangeBadge change={distributionChange.get(d.key)} goodWhen={distributionMetric === "expense" ? "down" : "up"} /></>}</>, href: d.href }))}
         />
       );
     }
@@ -725,6 +813,7 @@ function FinanceAnalyticsView() {
             <li key={d.key} className="flex items-center gap-2 text-sm">
               <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: d.color }} />
               <a href={d.href} className="min-w-0 flex-1 truncate rounded-sm text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring/50" title={`Ver movimientos de ${d.parentLabel ? `${d.label} · ${d.parentLabel}` : d.label}`}>{d.label}</a>
+              {distributionChange && <ChangeBadge change={distributionChange.get(d.key)} goodWhen={distributionMetric === "expense" ? "down" : "up"} />}
               <span className="text-xs tabular-nums text-muted-foreground">{formatPct(d.share)}</span>
               <span className="w-24 text-right font-medium tabular-nums text-foreground">{format(d.value)}</span>
             </li>
@@ -748,7 +837,12 @@ function FinanceAnalyticsView() {
           href: p.href,
           value: p.value,
           color: i === 0 ? color : chartColors.quaternary,
-          meta: payeeValue === "count" ? undefined : `${p.count} mov.`,
+          meta: (
+            <>
+              {payeeValue === "count" ? null : `${p.count} mov.`}
+              {payeeChange && <> <ChangeBadge change={payeeChange.get(p.key)} goodWhen={payeeMetric === "expense" ? "down" : "up"} /></>}
+            </>
+          ),
         }))}
       />
     );
@@ -974,6 +1068,13 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderTrendChart,
+      exportTable: () => ({
+        headers: ["Mes", "Ingresos", "Gastos", "Flujo neto", "Movimientos", "% de ahorro", ...(compareActive ? ["Mes del periodo anterior", "Ingresos (anterior)", "Gastos (anterior)", "Flujo neto (anterior)"] : [])],
+        rows: monthlyChartData.map((m, i) => [
+          m.label, m.income, m.expenses, m.net, m.count, m.savingsRate,
+          ...(compareActive ? [prevMonthly[i]?.label ?? null, prevMonthly[i]?.income ?? null, prevMonthly[i]?.expenses ?? null, prevMonthly[i]?.net ?? null] : []),
+        ]),
+      }),
     },
     cumulative: {
       title: "Acumulado",
@@ -993,6 +1094,10 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderCumulativeChart,
+      exportTable: () => ({
+        headers: ["Mes", "Ingresos acumulados", "Gastos acumulados", "Neto acumulado", "Movimientos acumulados"],
+        rows: cumulativeChartData.map((m) => [m.label, m.cumulativeIncome, m.cumulativeExpenses, m.cumulativeNet, m.cumulativeCount]),
+      }),
     },
     efficiency: {
       title: "Eficiencia mensual",
@@ -1006,6 +1111,10 @@ function FinanceAnalyticsView() {
         ]} />
       ),
       render: renderEfficiencyChart,
+      exportTable: () => ({
+        headers: ["Mes", "% de ahorro", "Media por movimiento", "Neto por movimiento", "Movimientos"],
+        rows: efficiencyChartData.map((m) => [m.label, m.savingsRate, m.avgMovement, m.netPerMovement, m.count]),
+      }),
     },
     distribution: {
       title: "Distribución",
@@ -1023,6 +1132,13 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderDistributionChart,
+      exportTable: () => ({
+        headers: [distributionScope === "category" ? "Categoría" : "Grupo", ...(distributionScope === "category" ? ["Grupo"] : []), RANK_VALUE_LABEL[distributionValue], "Movimientos", "% del total", ...(distributionChange ? ["Cambio vs anterior (%)"] : [])],
+        rows: distributionData.map((d) => [
+          d.label, ...(distributionScope === "category" ? [d.parentLabel ?? ""] : []), d.value, d.count, d.share,
+          ...(distributionChange ? [distributionChange.get(d.key) ?? null] : []),
+        ]),
+      }),
     },
     payees: {
       title: payeeMetric === "expense" ? "Beneficiarios principales" : "Orígenes principales",
@@ -1035,6 +1151,10 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderPayeesChart,
+      exportTable: () => ({
+        headers: ["Beneficiario", RANK_VALUE_LABEL[payeeValue], "Movimientos", ...(payeeChange ? ["Cambio vs anterior (%)"] : [])],
+        rows: payeeData.map((p) => [p.label, p.value, p.count, ...(payeeChange ? [payeeChange.get(p.key) ?? null] : [])]),
+      }),
     },
     compare: {
       title: "Ingresos frente a gastos",
@@ -1050,6 +1170,10 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderCompareChart,
+      exportTable: () => ({
+        headers: [compareScope === "category" ? "Categoría" : "Grupo", `Ingresos (${RANK_VALUE_LABEL[compareValue].toLowerCase()})`, `Gastos (${RANK_VALUE_LABEL[compareValue].toLowerCase()})`],
+        rows: compareData.map((d) => [d.label, d.incomeValue, d.expenseValue]),
+      }),
     },
     weekday: {
       title: "Ritmo semanal",
@@ -1074,6 +1198,10 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderWeekdayChart,
+      exportTable: () => ({
+        headers: ["Día de la semana", weekdayMetric === "count" ? "Movimientos" : "Importe"],
+        rows: weekdayChartData.map((d) => [d.label, d.value]),
+      }),
     },
     stack: {
       title: stackGrouping === "category" ? "Tendencia por categoría" : "Tendencia por grupo",
@@ -1090,6 +1218,10 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderStackChart,
+      exportTable: () => ({
+        headers: ["Mes", ...stackTrend.series.map((s) => s.label)],
+        rows: stackTrend.data.map((row) => [String(row.label), ...stackTrend.series.map((s) => Number(row[s.key] ?? 0))]),
+      }),
     },
     matrix: {
       title: "Matriz temporal",
@@ -1102,6 +1234,10 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderMatrixChart,
+      exportTable: () => ({
+        headers: [matrixScope === "category" ? "Categoría" : "Grupo", "Total", ...matrixData.months.map((m) => m.label)],
+        rows: matrixData.rows.map((r) => [r.label, r.total, ...r.values.map((v) => v.value)]),
+      }),
     },
     accounts: {
       title: "Peso por cuenta",
@@ -1128,6 +1264,10 @@ function FinanceAnalyticsView() {
         </>
       ),
       render: renderAccountsChart,
+      exportTable: () => ({
+        headers: ["Cuenta", { balance: "Saldo", income: "Ingresos", expenses: "Gastos", net: "Neto", count: "Movimientos" }[accountMetric], "Movimientos"],
+        rows: accountChartData.map((a) => [a.label, a.value, a.transactionCount]),
+      }),
     },
 
     // ─── Gráficos nuevos ─────────────────────────────────────────
@@ -1141,6 +1281,10 @@ function FinanceAnalyticsView() {
       description: "Cada bloque es una categoría, agrupadas por grupo: cuanto más grande, más dinero.",
       controls: <Segmented aria-label="Tipo de flujo" value={treemapMetric} onChange={setTreemapMetric} options={FLOW_OPTIONS} />,
       render: (expanded) => <TreemapChart categories={analytics?.categories ?? []} metric={treemapMetric} expanded={expanded} />,
+      exportTable: () => ({
+        headers: ["Grupo", "Categoría", "Importe", "Movimientos"],
+        rows: (analytics?.categories ?? []).filter((c) => c.type === treemapMetric).map((c) => [c.groupName, c.categoryName, c.total, c.count]),
+      }),
     },
     waterfall: {
       title: "De ingresos a ahorro",
@@ -1154,6 +1298,14 @@ function FinanceAnalyticsView() {
           expanded={expanded}
         />
       ),
+      exportTable: () => ({
+        headers: ["Concepto", "Importe"],
+        rows: [
+          ["Ingresos", summary.incomeTotal],
+          ...(analytics?.groups ?? []).filter((g) => g.type === "expense").map((g): [string, number] => [`Gasto: ${g.groupName}`, g.total]),
+          ["Resultado (ingresos − gastos)", summary.netTotal],
+        ],
+      }),
     },
     sankey: {
       title: "Flujo del dinero",
@@ -1167,6 +1319,14 @@ function FinanceAnalyticsView() {
           expanded={expanded}
         />
       ),
+      exportTable: () => ({
+        headers: ["Concepto", "Importe"],
+        rows: [
+          ["Ingresos", summary.incomeTotal],
+          ...(analytics?.groups ?? []).filter((g) => g.type === "expense").map((g): [string, number] => [`Gasto: ${g.groupName}`, g.total]),
+          ["Resultado (ingresos − gastos)", summary.netTotal],
+        ],
+      }),
     },
     calendar: {
       title: "Calendario de calor",
@@ -1236,7 +1396,7 @@ function FinanceAnalyticsView() {
   };
 
   const panel = (key: ChartPanelKey, className?: string) => (
-    <AnalyticsPanel panel={panels[key]} onExpand={() => setExpandedPanel(key)} className={className} />
+    <AnalyticsPanel panel={panels[key]} onExpand={() => setExpandedPanel(key)} className={className} exportNote={exportNote} />
   );
 
   // ─── Cabecera y filtros ───────────────────────────────────────
@@ -1245,6 +1405,8 @@ function FinanceAnalyticsView() {
     selectedGroup?.name,
     selectedCategory?.name,
   ].filter(Boolean).join(" · ");
+  // Pie de las descargas: qué periodo y qué filtros muestra el gráfico.
+  const exportNote = `${scopeLabel} · ${rangeLabel(from, to)}${compareActive && prevRange ? ` · frente a ${rangeLabel(prevRange.from, prevRange.to)}` : ""}`;
 
   const categoryOptionGroups = (groupId ? categoryGroups.filter((g) => g.id === groupId) : categoryGroups).map((g) => ({
     label: g.name,
@@ -1256,7 +1418,9 @@ function FinanceAnalyticsView() {
       eyebrow={
         <span className="inline-flex items-center gap-1.5">
           <CalendarRange className="size-3.5" />
-          {isFetching ? "Actualizando…" : `${rangeLabel(from, to)} · ${summary.visibleMonths} meses · ${summary.transactionCount} movimientos`}
+          {isFetching
+            ? "Actualizando…"
+            : `${rangeLabel(from, to)} · ${summary.visibleMonths} meses · ${summary.transactionCount} movimientos${compareActive && prevRange ? ` · frente a ${rangeLabel(prevRange.from, prevRange.to)}` : ""}`}
         </span>
       }
       title="Analítica"
@@ -1265,6 +1429,19 @@ function FinanceAnalyticsView() {
       actions={
         <>
           <Segmented aria-label="Periodo" value={periodPreset} onChange={applyPreset} options={PRESET_OPTIONS} />
+          <Button
+            variant={compareActive ? "secondary" : "outline"}
+            size="sm"
+            className="gap-1.5 bg-card"
+            aria-pressed={compareActive}
+            disabled={!prevRange}
+            onClick={() => setCompare(!compare)}
+            title={prevRange
+              ? `Comparar con el periodo anterior de la misma duración (${rangeLabel(prevRange.from, prevRange.to)})`
+              : "Elige un rango de fechas concreto para poder comparar"}
+          >
+            <GitCompareArrows className="size-3.5" aria-hidden="true" /> Comparar
+          </Button>
           <AnalyticsViewsMenu
             views={views}
             defaultViewId={defaultViewId}
@@ -1373,7 +1550,8 @@ function FinanceAnalyticsView() {
           label="Ingresos"
           value={formatCurrency(summary.incomeTotal)}
           icon={ArrowUpRight}
-          hint={`Media ${formatCurrency(summary.monthlyAverageIncome)}/mes`}
+          delta={kpiDelta(summary.incomeTotal, prevSummary?.incomeTotal, "up")}
+          hint={prevHint(prevSummary?.incomeTotal) ?? `Media ${formatCurrency(summary.monthlyAverageIncome)}/mes`}
           sparkline={monthlyChartData.length > 2 ? monthlyChartData.map((m) => m.income) : undefined}
           sparklineColor={flowColors.income}
         />
@@ -1381,7 +1559,8 @@ function FinanceAnalyticsView() {
           label="Gastos"
           value={formatCurrency(summary.expenseTotal)}
           icon={ArrowDownRight}
-          hint={`Media ${formatCurrency(summary.monthlyAverageExpenses)}/mes`}
+          delta={kpiDelta(summary.expenseTotal, prevSummary?.expenseTotal, "down")}
+          hint={prevHint(prevSummary?.expenseTotal) ?? `Media ${formatCurrency(summary.monthlyAverageExpenses)}/mes`}
           sparkline={monthlyChartData.length > 2 ? monthlyChartData.map((m) => m.expenses) : undefined}
           sparklineColor={flowColors.expense}
         />
@@ -1389,8 +1568,11 @@ function FinanceAnalyticsView() {
           label="Flujo neto"
           value={formatCurrency(summary.netTotal)}
           icon={Scale}
+          hint={compareActive ? prevHint(prevSummary?.netTotal) : undefined}
           delta={
-            summary.incomeTotal > 0
+            compareActive
+              ? kpiDelta(summary.netTotal, prevSummary?.netTotal, "up")
+              : summary.incomeTotal > 0
               ? {
                 value: formatPct(summary.savingsRate),
                 trend: summary.savingsRate > 0 ? "up" : summary.savingsRate < 0 ? "down" : "flat",
@@ -1429,7 +1611,7 @@ function FinanceAnalyticsView() {
         </>
       )}
 
-      <ExpandedPanelDialog panel={expandedPanel ? panels[expandedPanel] : null} onClose={() => setExpandedPanel(null)} />
+      <ExpandedPanelDialog panel={expandedPanel ? panels[expandedPanel] : null} onClose={() => setExpandedPanel(null)} exportNote={exportNote} />
       <AnalyticsCustomizeSheet
         open={customizeOpen}
         onOpenChange={setCustomizeOpen}
