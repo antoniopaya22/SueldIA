@@ -106,8 +106,9 @@ transactionsRouter.get("/", async (req, res, next) => {
     const whereClause = and(...conditions);
 
     // Totales con exactamente los mismos filtros que la lista (los traspasos no son ingreso ni gasto),
-    // más los pendientes de esa selección y cuántos movimientos tiene el usuario sin categoría en total.
-    const [[{ count }], [totals], [{ pending }], [{ uncategorizedTotal }]] = await Promise.all([
+    // más los pendientes de esa selección y cuántos GASTOS tiene el usuario sin categoría en total
+    // (un ingreso sin categoría es lo normal: el presupuesto lo cuenta entero, no necesita una).
+    const [[{ count }], [totals], [{ pending }], [{ uncategorizedExpenses }]] = await Promise.all([
       db.select({ count: sql<number>`count(*)::int` }).from(transactions).where(whereClause),
       db
         .select({
@@ -121,9 +122,9 @@ transactionsRouter.get("/", async (req, res, next) => {
         .from(transactions)
         .where(and(...base, eq(transactions.cleared, false))),
       db
-        .select({ uncategorizedTotal: sql<number>`count(*)::int` })
+        .select({ uncategorizedExpenses: sql<number>`count(*)::int` })
         .from(transactions)
-        .where(and(eq(transactions.userId, userId), isNull(transactions.categoryId), sql`${transactions.type} != 'transfer'`)),
+        .where(and(eq(transactions.userId, userId), isNull(transactions.categoryId), eq(transactions.type, "expense"))),
     ]);
     const income = Math.round(Number(totals.income) * 100) / 100;
     const expense = Math.round(Number(totals.expense) * 100) / 100;
@@ -196,7 +197,7 @@ transactionsRouter.get("/", async (req, res, next) => {
       total: count,
       page,
       limit,
-      summary: { income, expense, net: Math.round((income - expense) * 100) / 100, pending, uncategorizedTotal },
+      summary: { income, expense, net: Math.round((income - expense) * 100) / 100, pending, uncategorizedExpenses },
     });
   } catch (err) {
     next(err);
