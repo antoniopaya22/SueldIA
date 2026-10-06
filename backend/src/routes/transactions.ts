@@ -10,8 +10,11 @@ import { eq, and, sql, desc, asc, gte, lte, ilike, inArray, isNull } from "drizz
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { defaultCleared } from "../services/transaction-filters.js";
-import { suggestPayees, escapeLike } from "../services/payee-suggestions.service.js";
+import { suggestPayees } from "../services/payee-suggestions.service.js";
 import { applyBatch, batchSchema } from "../services/transaction-batch.service.js";
+import {
+  amountRangeValid, amountRangeIssue, buildBaseConditions, buildConditions, transactionFilterFields,
+} from "../services/transaction-query.js";
 import { getTodayIsoDate } from "../services/recurring-transactions.service.js";
 
 export const transactionsRouter = Router();
@@ -31,28 +34,15 @@ const transactionSchema = z.object({
   targetAccountId: z.number().int().positive().optional(),
 });
 
-const filtersSchema = z.object({
-  accountId: z.coerce.number().int().positive().optional(),
-  categoryId: z.coerce.number().int().positive().optional(),
-  groupId: z.coerce.number().int().positive().optional(),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  type: z.enum(["expense", "income", "transfer"]).optional(),
-  cleared: z.enum(["true", "false"]).optional(),
-  payee: z.string().optional(),
-  search: z.string().optional(),
-  // Movimientos de gasto/ingreso sin categoría (los traspasos nunca tienen).
-  uncategorized: z.enum(["true"]).optional(),
-  minAmount: z.coerce.number().nonnegative().optional(),
-  maxAmount: z.coerce.number().nonnegative().optional(),
-  sortBy: z.enum(["date", "payee", "category", "amount", "type"]).default("date"),
-  sortDir: z.enum(["asc", "desc"]).default("desc"),
-  page: z.coerce.number().int().positive().default(1),
-  limit: z.coerce.number().int().min(1).max(10000).default(50),
-}).refine((d) => d.minAmount === undefined || d.maxAmount === undefined || d.minAmount <= d.maxAmount, {
-  message: "El importe máximo debe ser mayor o igual que el mínimo",
-  path: ["maxAmount"],
-});
+const filtersSchema = z
+  .object({
+    ...transactionFilterFields,
+    sortBy: z.enum(["date", "payee", "category", "amount", "type"]).default("date"),
+    sortDir: z.enum(["asc", "desc"]).default("desc"),
+    page: z.coerce.number().int().positive().default(1),
+    limit: z.coerce.number().int().min(1).max(10000).default(50),
+  })
+  .refine(amountRangeValid, amountRangeIssue);
 
 const updateTransactionSchema = transactionSchema.partial();
 
@@ -105,40 +95,13 @@ transactionsRouter.get("/", async (req, res, next) => {
       });
     }
 
-    const {
-      accountId, categoryId, groupId, from, to, type, cleared, payee, search, uncategorized,
-      minAmount, maxAmount, sortBy, sortDir, page, limit,
-    } = parsed.data;
+    const { sortBy, sortDir, page, limit, ...filters } = parsed.data;
     const offset = (page - 1) * limit;
 
     // `base` = todos los filtros salvo el de estado: sirve para contar los
     // pendientes de la selección aunque se esté filtrando por "liquidadas".
-    const base = [eq(transactions.userId, userId)];
-    if (accountId) base.push(eq(transactions.accountId, accountId));
-    if (categoryId) base.push(eq(transactions.categoryId, categoryId));
-    if (uncategorized) base.push(isNull(transactions.categoryId), sql`${transactions.type} != 'transfer'`);
-    if (groupId) {
-      base.push(
-        sql`${transactions.categoryId} IN (
-          SELECT ${categories.id} FROM ${categories}
-          WHERE ${categories.groupId} = ${groupId}
-        )`,
-      );
-    }
-    if (from) base.push(gte(transactions.date, from));
-    if (to) base.push(lte(transactions.date, to));
-    if (type) base.push(eq(transactions.type, type));
-    if (minAmount !== undefined) base.push(gte(transactions.amount, minAmount));
-    if (maxAmount !== undefined) base.push(lte(transactions.amount, maxAmount));
-    if (payee) base.push(ilike(transactions.payee, `%${escapeLike(payee)}%`));
-    if (search) {
-      const pattern = `%${escapeLike(search)}%`;
-      base.push(sql`(${transactions.payee} ILIKE ${pattern} OR ${transactions.memo} ILIKE ${pattern})`);
-    }
-
-    const conditions = [...base];
-    if (cleared === "true") conditions.push(eq(transactions.cleared, true));
-    if (cleared === "false") conditions.push(eq(transactions.cleared, false));
+    const base = buildBaseConditions(userId, filters);
+    const conditions = buildConditions(userId, filters);
 
     const whereClause = and(...conditions);
 
