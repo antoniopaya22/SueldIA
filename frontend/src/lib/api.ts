@@ -1093,6 +1093,119 @@ export const importYnab = async (file: File, dryRun = false): Promise<ImportResu
   return res.json();
 };
 
+// ─── Informes, saldo histórico y previsión ──────────────────────
+export interface ReportCategory {
+  categoryId: number | null;
+  name: string;
+  groupName: string;
+  spent: number;
+  previous: number;
+  /** Media mensual de los meses anteriores con datos. */
+  average: number;
+  diff: number;
+  /** null si no había media con la que comparar. */
+  diffPct: number | null;
+}
+
+export interface MonthTotals {
+  income: number;
+  expense: number;
+  net: number;
+  savingsRate: number | null;
+}
+
+export interface MonthReport {
+  month: string;
+  previousMonth: string;
+  /** El mes no ha terminado: no se listan bajadas ni conviene mostrar variaciones. */
+  partial: boolean;
+  totals: MonthTotals;
+  previousTotals: MonthTotals;
+  categories: ReportCategory[];
+  increases: ReportCategory[];
+  decreases: ReportCategory[];
+  unusual: Array<{
+    id: number; date: string; payee: string; amount: number;
+    categoryId: number | null; categoryName: string; typical: number; ratio: number;
+  }>;
+  newPayees: Array<{ payee: string; total: number; count: number; firstDate: string }>;
+  /** Meses anteriores con gasto usados para la media (0 = no hay con qué comparar). */
+  historyMonths: number;
+}
+
+export const getMonthReport = (month?: string) =>
+  request<MonthReport>(`/finance/report${month ? `?month=${month}` : ""}`);
+
+export interface BalanceHistory {
+  months: string[];
+  accounts: Array<{ id: number; name: string; color: string; type: string; archived: boolean; series: number[] }>;
+  /** Suma de las cuentas no archivadas. */
+  total: number[];
+}
+
+export const getBalanceHistory = (months = 12) => request<BalanceHistory>(`/finance/balance-history?months=${months}`);
+
+export interface ForecastItem {
+  date: string;
+  /** Con signo: ingreso +, gasto −. */
+  amount: number;
+  payee: string;
+  source: "pending" | "recurring";
+  overdue: boolean;
+}
+
+export interface Forecast {
+  startBalance: number;
+  today: string;
+  days: number;
+  points: Array<{ date: string; balance: number }>;
+  upcoming: ForecastItem[];
+  endOfMonth: { date: string; balance: number };
+  lowest: { date: string; balance: number };
+  firstNegative: string | null;
+}
+
+export const getForecast = (days = 90) => request<Forecast>(`/finance/forecast?days=${days}`);
+
+export interface SubscriptionSuggestion {
+  payee: string;
+  amount: number;
+  occurrences: number;
+  lastDate: string;
+  nextDate: string;
+  categoryId: number | null;
+  accountId: number;
+}
+
+export const getSubscriptionSuggestions = () =>
+  request<{ data: SubscriptionSuggestion[] }>("/recurring-transactions/suggestions").then((r) => r.data);
+
+// ─── Reglas de categorización ───────────────────────────────────
+export interface CategoryRule {
+  id: number;
+  /** Texto que debe contener el beneficiario (guardado en minúsculas y sin tildes). */
+  match: string;
+  categoryId: number;
+  categoryName: string;
+  groupName: string;
+  createdAt: string;
+}
+
+export const getCategoryRules = () => request<{ data: CategoryRule[] }>("/category-rules").then((r) => r.data);
+
+export const createCategoryRule = (data: { match: string; categoryId: number }) =>
+  request<{ id: number }>("/category-rules", { method: "POST", body: JSON.stringify(data) });
+
+export const deleteCategoryRule = (id: number) =>
+  request<{ ok: boolean }>(`/category-rules/${id}`, { method: "DELETE" });
+
+/** Categoriza movimientos sin categoría con las reglas y el historial. Sin `ids`, todos los gastos sin categoría. */
+export const applyCategorySuggestions = (ids?: number[]) =>
+  request<{ updated: number; skipped: number; byRule: number; byHistory: number }>("/category-rules/apply", {
+    method: "POST",
+    body: JSON.stringify(ids ? { ids } : {}),
+  });
+
 // ─── Budgets ────────────────────────────────────────────────────
 export type BudgetTargetType = "monthly" | "by_date";
 

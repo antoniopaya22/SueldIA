@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { CheckCircle2, Circle, Tag, Trash2, X } from "lucide-react";
+import { CheckCircle2, Circle, Sparkles, Tag, Trash2, X } from "lucide-react";
 import type { CategoryGroup } from "../../../lib/api";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -12,21 +13,27 @@ interface Props {
   count: number;
   groups: CategoryGroup[];
   busy: boolean;
-  onCategorize: (categoryId: number | null) => void;
+  /** Beneficiario que comparten todos los seleccionados (si es uno solo): permite recordarlo como regla. */
+  commonPayee: string | null;
+  /** Categoriza con las reglas y el historial de cada beneficiario. */
+  onSuggest: () => void;
+  onCategorize: (categoryId: number | null, rememberPayee: boolean) => void;
   onSetCleared: (cleared: boolean) => void;
   onDelete: () => void;
   onClear: () => void;
 }
 
 /** Barra flotante con las acciones sobre los movimientos seleccionados. */
-export function BulkActionBar({ count, groups, busy, onCategorize, onSetCleared, onDelete, onClear }: Props) {
+export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onCategorize, onSetCleared, onDelete, onClear }: Props) {
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [categoryId, setCategoryId] = useState<number | "">("");
+  const [remember, setRemember] = useState(false);
 
   const apply = () => {
-    onCategorize(categoryId === "" ? null : categoryId);
+    onCategorize(categoryId === "" ? null : categoryId, remember && categoryId !== "");
     setCategoryOpen(false);
     setCategoryId("");
+    setRemember(false);
   };
 
   return (
@@ -41,6 +48,9 @@ export function BulkActionBar({ count, groups, busy, onCategorize, onSetCleared,
           <span className="sr-only sm:not-sr-only"> {count === 1 ? "seleccionada" : "seleccionadas"}</span>
         </span>
         <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />
+        <Button variant="ghost" size="sm" disabled={busy} onClick={onSuggest} className="gap-1.5" aria-label="Sugerir categorías" title="Categoriza con tus reglas y con lo que ya has hecho con cada beneficiario">
+          <Sparkles className="size-4" /> <span className="hidden sm:inline">Sugerir</span>
+        </Button>
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => setCategoryOpen(true)} className="gap-1.5" aria-label="Categorizar" title="Categorizar">
           <Tag className="size-4" /> <span className="hidden sm:inline">Categorizar</span>
         </Button>
@@ -70,6 +80,15 @@ export function BulkActionBar({ count, groups, busy, onCategorize, onSetCleared,
           <div className="space-y-1.5 px-5 py-5">
             <Label htmlFor="bulk-category">Categoría</Label>
             <CategorySelect id="bulk-category" value={categoryId} onChange={setCategoryId} groups={groups} noneLabel="Elige una categoría o déjalo vacío para quitarla" />
+            {commonPayee && categoryId !== "" && (
+              <div className="flex items-start gap-2.5 pt-3">
+                <Checkbox id="bulk-remember" checked={remember} onCheckedChange={(c) => setRemember(c === true)} className="mt-0.5" />
+                <div className="space-y-0.5">
+                  <Label htmlFor="bulk-remember" className="cursor-pointer">Recordarlo para «{commonPayee}»</Label>
+                  <p className="text-xs text-muted-foreground">Crea una regla: los próximos movimientos de ese beneficiario se categorizarán solos.</p>
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter className="mx-0 mb-0 border-t border-border px-5 py-3">
             <Button type="button" variant="outline" onClick={() => setCategoryOpen(false)}>Cancelar</Button>

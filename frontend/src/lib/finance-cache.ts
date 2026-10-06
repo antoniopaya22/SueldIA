@@ -13,6 +13,10 @@ const FINANCE_QUERY_KEYS = [
   "finance-dashboard",
   "budgets",
   "payee-suggestions",
+  "recurring-suggestions",
+  "finance-report",
+  "balance-history",
+  "forecast",
   "payslip-link-suggestions",
 ] as const;
 

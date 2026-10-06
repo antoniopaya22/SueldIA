@@ -43,6 +43,13 @@
       "when": 1791278599500,
       "tag": "0005_budget_targets_and_category_index",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791279502101,
+      "tag": "0006_category_rules",
+      "breakpoints": true
     }
   ]
 }

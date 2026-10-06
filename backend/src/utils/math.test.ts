@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { avg, round, stdDev, linearSlope, calculateTrend } from "./math.js";
+import { avg, round, stdDev, linearSlope, calculateTrend, median } from "./math.js";
 
 describe("avg", () => {
   it("returns 0 for empty array", () => {
@@ -65,5 +65,23 @@ describe("calculateTrend", () => {
   it("detects stable values", () => {
     const result = calculateTrend([100, 100, 100, 100]);
     expect(result.direction).toBe("stable");
+  });
+});
+
+describe("median", () => {
+  it("devuelve 0 para una lista vacía", () => {
+    expect(median([])).toBe(0);
+  });
+
+  it("toma el valor central (sin depender del orden)", () => {
+    expect(median([9, 1, 5])).toBe(5);
+  });
+
+  it("promedia los dos centrales si hay un número par", () => {
+    expect(median([1, 2, 3, 10])).toBe(2.5);
+  });
+
+  it("no se deja arrastrar por un valor extremo", () => {
+    expect(median([10, 11, 12, 13, 5000])).toBe(12);
   });
 });

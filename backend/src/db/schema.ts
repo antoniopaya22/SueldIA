@@ -340,3 +340,25 @@ export const categoryTargets = pgTable(
     userIdx: index("category_targets_user_idx").on(table.userId),
   }),
 );
+
+// ─── Reglas de categorización automática ────────────────────────
+// "Si el beneficiario contiene `match`, la categoría es `categoryId`".
+// `match` se guarda normalizado (minúsculas, sin tildes) — ver utils/text.ts.
+export const categoryRules = pgTable(
+  "category_rules",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    match: text("match").notNull(),
+    categoryId: integer("category_id")
+      .notNull()
+      .references(() => categories.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    // Una regla por texto y usuario: volver a crearla solo cambia su categoría.
+    userMatchIdx: uniqueIndex("category_rules_user_match_idx").on(table.userId, table.match),
+  }),
+);

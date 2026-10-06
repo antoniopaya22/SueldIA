@@ -1,6 +1,6 @@
 import {
   Home, Wallet, ChartColumn, Landmark, Tags, Receipt, ArrowDownToLine,
-  FileText, Upload, Users, Settings, PieChart, Plus, Bell, PiggyBank, type LucideIcon,
+  FileText, Upload, Users, Settings, PieChart, Plus, Bell, PiggyBank, FileChartColumn, type LucideIcon,
 } from "lucide-react";
 
 // Única fuente de verdad de la navegación de /app/*: sidebar, breadcrumbs,
@@ -50,6 +50,7 @@ export const WORKSPACES: WorkspaceMeta[] = [
     items: [
       { href: "/app/finance", label: "Dashboard", icon: Wallet, exact: true, keywords: "finanzas resumen" },
       { href: "/app/finance/analytics", label: "Analítica", icon: PieChart, keywords: "finanzas gráficos gastos" },
+      { href: "/app/finance/report", label: "Informe del mes", icon: FileChartColumn, keywords: "informe resumen mes comparar media inusual" },
       { href: "/app/accounts", label: "Cuentas", icon: Landmark, keywords: "banco tarjeta saldo" },
       { href: "/app/categories", label: "Categorías", icon: Tags, keywords: "grupos" },
       { href: "/app/budget", label: "Presupuesto", icon: PiggyBank, keywords: "presupuesto categorías asignar" },
