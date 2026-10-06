@@ -6,11 +6,12 @@ import {
   categories,
   categoryGroups,
 } from "../db/schema.js";
-import { eq, and, sql, desc, asc, gte, lte, ilike, inArray } from "drizzle-orm";
+import { eq, and, sql, desc, asc, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { defaultCleared } from "../services/transaction-filters.js";
-import { suggestPayees } from "../services/payee-suggestions.service.js";
+import { suggestPayees, escapeLike } from "../services/payee-suggestions.service.js";
+import { applyBatch, batchSchema } from "../services/transaction-batch.service.js";
 import { getTodayIsoDate } from "../services/recurring-transactions.service.js";
 
 export const transactionsRouter = Router();
@@ -40,10 +41,17 @@ const filtersSchema = z.object({
   cleared: z.enum(["true", "false"]).optional(),
   payee: z.string().optional(),
   search: z.string().optional(),
+  // Movimientos de gasto/ingreso sin categoría (los traspasos nunca tienen).
+  uncategorized: z.enum(["true"]).optional(),
+  minAmount: z.coerce.number().nonnegative().optional(),
+  maxAmount: z.coerce.number().nonnegative().optional(),
   sortBy: z.enum(["date", "payee", "category", "amount", "type"]).default("date"),
   sortDir: z.enum(["asc", "desc"]).default("desc"),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().min(1).max(10000).default(50),
+}).refine((d) => d.minAmount === undefined || d.maxAmount === undefined || d.minAmount <= d.maxAmount, {
+  message: "El importe máximo debe ser mayor o igual que el mínimo",
+  path: ["maxAmount"],
 });
 
 const updateTransactionSchema = transactionSchema.partial();
@@ -97,39 +105,65 @@ transactionsRouter.get("/", async (req, res, next) => {
       });
     }
 
-    const { accountId, categoryId, groupId, from, to, type, cleared, payee, search, sortBy, sortDir, page, limit } =
-      parsed.data;
+    const {
+      accountId, categoryId, groupId, from, to, type, cleared, payee, search, uncategorized,
+      minAmount, maxAmount, sortBy, sortDir, page, limit,
+    } = parsed.data;
     const offset = (page - 1) * limit;
 
-    const conditions = [eq(transactions.userId, userId)];
-    if (accountId) conditions.push(eq(transactions.accountId, accountId));
-    if (categoryId) conditions.push(eq(transactions.categoryId, categoryId));
-    if (cleared === "true") conditions.push(eq(transactions.cleared, true));
-    if (cleared === "false") conditions.push(eq(transactions.cleared, false));
+    // `base` = todos los filtros salvo el de estado: sirve para contar los
+    // pendientes de la selección aunque se esté filtrando por "liquidadas".
+    const base = [eq(transactions.userId, userId)];
+    if (accountId) base.push(eq(transactions.accountId, accountId));
+    if (categoryId) base.push(eq(transactions.categoryId, categoryId));
+    if (uncategorized) base.push(isNull(transactions.categoryId), sql`${transactions.type} != 'transfer'`);
     if (groupId) {
-      conditions.push(
+      base.push(
         sql`${transactions.categoryId} IN (
           SELECT ${categories.id} FROM ${categories}
           WHERE ${categories.groupId} = ${groupId}
         )`,
       );
     }
-    if (from) conditions.push(gte(transactions.date, from));
-    if (to) conditions.push(lte(transactions.date, to));
-    if (type) conditions.push(eq(transactions.type, type));
-    if (payee) conditions.push(ilike(transactions.payee, `%${payee}%`));
+    if (from) base.push(gte(transactions.date, from));
+    if (to) base.push(lte(transactions.date, to));
+    if (type) base.push(eq(transactions.type, type));
+    if (minAmount !== undefined) base.push(gte(transactions.amount, minAmount));
+    if (maxAmount !== undefined) base.push(lte(transactions.amount, maxAmount));
+    if (payee) base.push(ilike(transactions.payee, `%${escapeLike(payee)}%`));
     if (search) {
-      conditions.push(
-        sql`(${transactions.payee} ILIKE ${"%" + search + "%"} OR ${transactions.memo} ILIKE ${"%" + search + "%"})`,
-      );
+      const pattern = `%${escapeLike(search)}%`;
+      base.push(sql`(${transactions.payee} ILIKE ${pattern} OR ${transactions.memo} ILIKE ${pattern})`);
     }
+
+    const conditions = [...base];
+    if (cleared === "true") conditions.push(eq(transactions.cleared, true));
+    if (cleared === "false") conditions.push(eq(transactions.cleared, false));
 
     const whereClause = and(...conditions);
 
-    const [{ count }] = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(transactions)
-      .where(whereClause);
+    // Totales con exactamente los mismos filtros que la lista (los traspasos no son ingreso ni gasto),
+    // más los pendientes de esa selección y cuántos movimientos tiene el usuario sin categoría en total.
+    const [[{ count }], [totals], [{ pending }], [{ uncategorizedTotal }]] = await Promise.all([
+      db.select({ count: sql<number>`count(*)::int` }).from(transactions).where(whereClause),
+      db
+        .select({
+          income: sql<number>`coalesce(sum(case when ${transactions.type} = 'income' then ${transactions.amount} else 0 end), 0)`,
+          expense: sql<number>`coalesce(sum(case when ${transactions.type} = 'expense' then ${transactions.amount} else 0 end), 0)`,
+        })
+        .from(transactions)
+        .where(whereClause),
+      db
+        .select({ pending: sql<number>`count(*)::int` })
+        .from(transactions)
+        .where(and(...base, eq(transactions.cleared, false))),
+      db
+        .select({ uncategorizedTotal: sql<number>`count(*)::int` })
+        .from(transactions)
+        .where(and(eq(transactions.userId, userId), isNull(transactions.categoryId), sql`${transactions.type} != 'transfer'`)),
+    ]);
+    const income = Math.round(Number(totals.income) * 100) / 100;
+    const expense = Math.round(Number(totals.expense) * 100) / 100;
 
     const rows = await db
       .select({
@@ -194,7 +228,32 @@ transactionsRouter.get("/", async (req, res, next) => {
       .limit(limit)
       .offset(offset);
 
-    res.json({ data: rows, total: count, page, limit });
+    res.json({
+      data: rows,
+      total: count,
+      page,
+      limit,
+      summary: { income, expense, net: Math.round((income - expense) * 100) / 100, pending, uncategorizedTotal },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Categorizar, liquidar o borrar varios movimientos a la vez.
+transactionsRouter.post("/batch", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = batchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        error: "Operación inválida",
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+    const result = await applyBatch(userId, parsed.data);
+    if (!result.ok) return res.status(result.status).json({ error: result.error });
+    res.json({ updated: result.updated, skipped: result.skipped });
   } catch (err) {
     next(err);
   }
