@@ -129,7 +129,10 @@ export const alertRules = pgTable("alert_rules", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   type: text("type", {
-    enum: ["salary_drop", "missing_payslip", "concept_change", "custom_threshold"],
+    enum: [
+      "salary_drop", "missing_payslip", "concept_change", "custom_threshold",
+      "category_overspent", "low_balance", "overdue_pending",
+    ],
   }).notNull(),
   config: text("config").notNull().default("{}"), // JSON config
   enabled: boolean("enabled").notNull().default(true),
@@ -253,6 +256,8 @@ export const transactions = pgTable(
       .on(table.recurringTransactionId, table.scheduledFor),
     // Una nómina no puede quedar enlazada a más de una transacción a la vez.
     payslipIdx: uniqueIndex("transactions_payslip_idx").on(table.payslipId),
+    // Presupuesto (actividad por categoría) y filtros por categoría.
+    categoryIdx: index("transactions_category_idx").on(table.categoryId),
   }),
 );
 
@@ -307,5 +312,31 @@ export const budgets = pgTable(
     // Como mucho una asignación por categoría y mes — la mutación es upsert.
     categoryMonthIdx: uniqueIndex("budgets_category_month_idx").on(table.categoryId, table.month),
     userMonthIdx: index("budgets_user_month_idx").on(table.userId, table.month),
+  }),
+);
+
+// ─── Objetivos por categoría (presupuesto) ──────────────────────
+// Una categoría tiene como mucho un objetivo:
+//  - monthly: asignar `amount` cada mes.
+//  - by_date: tener `amount` disponible antes de `targetMonth` ("YYYY-MM"),
+//    repartido en los meses que quedan.
+export const categoryTargets = pgTable(
+  "category_targets",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    categoryId: integer("category_id")
+      .notNull()
+      .references(() => categories.id, { onDelete: "cascade" }),
+    type: text("type", { enum: ["monthly", "by_date"] }).notNull(),
+    amount: doublePrecision("amount").notNull(),
+    targetMonth: text("target_month"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    categoryIdx: uniqueIndex("category_targets_category_idx").on(table.categoryId),
+    userIdx: index("category_targets_user_idx").on(table.userId),
   }),
 );

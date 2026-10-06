@@ -3,6 +3,9 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { alertHistory, alertRules, payslipConcepts, payslips, profiles } from "../db/schema.js";
 import { logger } from "../logger.js";
+import {
+  evalCategoryOverspent, evalLowBalance, evalOverduePending, financeAlertConfigSchemas,
+} from "./finance-alerts.service.js";
 
 /* ───────── Config por tipo de regla ─────────────────────────────
  * Cada tipo de `alert_rules.type` tiene su propia forma de `config`.
@@ -30,6 +33,8 @@ export const alertConfigSchemas = {
     comparator: z.enum(["below", "above"]),
     value: z.number().nonnegative(),
   }),
+  // Alertas de finanzas (ver finance-alerts.service.ts)
+  ...financeAlertConfigSchemas,
 } as const;
 
 export type AlertRuleType = keyof typeof alertConfigSchemas;
@@ -225,6 +230,12 @@ async function evaluateRule(rule: Rule): Promise<Candidate[]> {
       return evalConceptChange(rule, parsed.data as z.infer<typeof alertConfigSchemas.concept_change>);
     case "custom_threshold":
       return evalCustomThreshold(rule, parsed.data as z.infer<typeof alertConfigSchemas.custom_threshold>);
+    case "category_overspent":
+      return evalCategoryOverspent(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.category_overspent>);
+    case "low_balance":
+      return evalLowBalance(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.low_balance>);
+    case "overdue_pending":
+      return evalOverduePending(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.overdue_pending>);
     default:
       return [];
   }

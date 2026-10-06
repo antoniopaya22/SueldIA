@@ -36,6 +36,13 @@
       "when": 1790757655931,
       "tag": "0004_payslip_link_and_budgets",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791278599500,
+      "tag": "0005_budget_targets_and_category_index",
+      "breakpoints": true
     }
   ]
 }
