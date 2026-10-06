@@ -1,8 +1,11 @@
-import { Fragment, type ReactNode } from "react";
-import { Maximize2 } from "lucide-react";
+import { Fragment, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Download, FileSpreadsheet, ImageDown, Maximize2 } from "lucide-react";
+import { toast } from "sonner";
 import { SectionCard } from "../app";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { downloadBlob, downloadCsv, fileSlug, findChartSvg, svgToPng, type ExportTable } from "../../lib/export-utils";
 import { formatCompact, formatCurrency } from "../../lib/format";
 import { ChartEmpty, tint } from "./finance-ui";
 import { cn } from "cn";
@@ -12,6 +15,8 @@ export interface PanelConfig {
   description: string;
   controls?: ReactNode;
   render: (expanded: boolean) => ReactNode;
+  /** Datos del panel tal y como se ven, para descargarlos en CSV. Sin él, el panel no ofrece CSV. */
+  exportTable?: () => ExportTable | null;
 }
 
 // En pantallas estrechas un Segmented de muchas opciones no cabe: que haga
@@ -19,27 +24,86 @@ export interface PanelConfig {
 const CONTROLS_CLASS =
   "flex flex-wrap items-center gap-2 [&_[role=radiogroup]]:max-w-full [&_[role=radiogroup]]:overflow-x-auto [&_[role=radio]]:shrink-0 [&_[role=radio]]:whitespace-nowrap";
 
-/** Card de la analítica: cabecera, fila de controles y botón para ampliar. */
-export function AnalyticsPanel({ panel, onExpand, className }: { panel: PanelConfig; onExpand: () => void; className?: string }) {
+/**
+ * Menú de descarga de un panel: imagen PNG (si tiene un gráfico de Recharts) y
+ * datos CSV (si el panel los expone). `rootRef` apunta al contenido ya pintado.
+ */
+function PanelExportMenu({ panel, rootRef, note }: { panel: PanelConfig; rootRef: RefObject<HTMLDivElement | null>; note?: string }) {
+  const [canImage, setCanImage] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const hasCsv = Boolean(panel.exportTable);
+
+  const downloadImage = async () => {
+    const svg = findChartSvg(rootRef.current);
+    if (!svg) {
+      toast.error("Este panel no tiene un gráfico que descargar como imagen");
+      return;
+    }
+    setBusy(true);
+    try {
+      const blob = await svgToPng(svg, { title: panel.title, subtitle: note });
+      downloadBlob(blob, `${fileSlug(panel.title)}.png`);
+    } catch {
+      toast.error("No se pudo generar la imagen");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const downloadData = () => {
+    const table = panel.exportTable?.();
+    if (!table || table.rows.length === 0) {
+      toast.error("No hay datos que descargar con esta configuración");
+      return;
+    }
+    downloadCsv(table, `${fileSlug(panel.title)}.csv`);
+  };
+
+  return (
+    <DropdownMenu onOpenChange={(open) => { if (open) setCanImage(findChartSvg(rootRef.current) !== null); }}>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon-sm" disabled={busy} aria-label={`Descargar «${panel.title}»`} title="Descargar" />}
+      >
+        <Download className="size-4 text-muted-foreground" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem disabled={!canImage} onClick={downloadImage}>
+          <ImageDown aria-hidden="true" /> Imagen (PNG)
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={!hasCsv} onClick={downloadData}>
+          <FileSpreadsheet aria-hidden="true" /> Datos (CSV)
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Card de la analítica: cabecera, fila de controles, descarga y botón para ampliar. */
+export function AnalyticsPanel({ panel, onExpand, className, exportNote }: { panel: PanelConfig; onExpand: () => void; className?: string; exportNote?: string }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
   return (
     <SectionCard
       className={className}
       title={panel.title}
       description={panel.description}
       action={
-        <Button variant="ghost" size="icon-sm" onClick={onExpand} aria-label={`Ampliar «${panel.title}»`} title="Ampliar">
-          <Maximize2 className="size-4 text-muted-foreground" />
-        </Button>
+        <div className="flex items-center">
+          <PanelExportMenu panel={panel} rootRef={bodyRef} note={exportNote} />
+          <Button variant="ghost" size="icon-sm" onClick={onExpand} aria-label={`Ampliar «${panel.title}»`} title="Ampliar">
+            <Maximize2 className="size-4 text-muted-foreground" />
+          </Button>
+        </div>
       }
     >
       {panel.controls && <div className={cn("mb-5", CONTROLS_CLASS)}>{panel.controls}</div>}
-      {panel.render(false)}
+      <div ref={bodyRef}>{panel.render(false)}</div>
     </SectionCard>
   );
 }
 
 /** Vista ampliada de un panel, con los mismos controles. */
-export function ExpandedPanelDialog({ panel, onClose }: { panel: PanelConfig | null; onClose: () => void }) {
+export function ExpandedPanelDialog({ panel, onClose, exportNote }: { panel: PanelConfig | null; onClose: () => void; exportNote?: string }) {
+  const bodyRef = useRef<HTMLDivElement>(null);
   return (
     <Dialog open={panel !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-6xl">
@@ -48,9 +112,12 @@ export function ExpandedPanelDialog({ panel, onClose }: { panel: PanelConfig | n
             <div className="border-b border-border px-6 py-5 pr-14">
               <DialogTitle className="text-lg font-semibold">{panel.title}</DialogTitle>
               <DialogDescription className="mt-1">{panel.description}</DialogDescription>
-              {panel.controls && <div className={cn("mt-4", CONTROLS_CLASS)}>{panel.controls}</div>}
+              <div className={cn("mt-4", CONTROLS_CLASS)}>
+                {panel.controls}
+                <span className="ml-auto"><PanelExportMenu panel={panel} rootRef={bodyRef} note={exportNote} /></span>
+              </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto px-6 py-5">{panel.render(true)}</div>
+            <div className="min-h-0 flex-1 overflow-auto px-6 py-5"><div ref={bodyRef}>{panel.render(true)}</div></div>
           </>
         )}
       </DialogContent>
