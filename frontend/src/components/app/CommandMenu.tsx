@@ -203,7 +203,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
   let lastGroup = "";
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false} className="top-[18%] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-lg">
+      <DialogContent showCloseButton={false} mobileSheet={false} className="top-[18%] max-sm:top-[calc(env(safe-area-inset-top)+1rem)] translate-y-0 gap-0 overflow-hidden p-0 sm:max-w-lg">
         <DialogTitle className="sr-only">Buscar en SueldIA</DialogTitle>
         <div className="flex items-center gap-2.5 border-b border-border px-4">
           <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

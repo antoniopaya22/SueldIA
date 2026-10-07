@@ -269,6 +269,17 @@
   --sidebar-accent-foreground: #f1f5f3;
   --sidebar-border: rgb(255 255 255 / 0.06);
 }
+/* Altura de la barra de pestañas inferior en móvil (ver app/MobileTabBar.tsx):
+   lo que va fijo abajo (toasts, barra de selección) se coloca por encima. */
+.app-root {
+  --mobile-nav-h: calc(4rem + env(safe-area-inset-bottom));
+  -webkit-tap-highlight-color: transparent;
+}
+@media (min-width: 768px) {
+  .app-root {
+    --mobile-nav-h: 0px;
+  }
+}
 /* Importes: cifras tabulares de Geist en vez de Fira Code (sin tocar las
    82 clases font-mono existentes). Sin capa para ganar a las utilidades. */
 .app-root .font-mono {

@@ -122,6 +122,7 @@ Tailwind v4 (config vía `@theme`/`@config` en `src/styles/global.css`, no solo 
 
 - `src/layouts/Layout.astro` — la app (`/app/*`): renderiza `<AppShell client:load currentPath>` con la página como `children`.
 - `src/components/AppShell.tsx` — sidebar de shadcn en variante `inset` (colapsable a iconos, cookie `sidebar_state`, sheet en móvil), selector de espacio Finanzas/Nóminas, menú de usuario en el pie (avatar de Google, Ajustes, tema, cerrar sesión), cabecera fija translúcida con breadcrumbs, buscador ⌘K (`app/CommandMenu.tsx`) y acción principal contextual. El contenido va en un contenedor `max-w-7xl` con fade-in (`.app-page`).
+- `src/components/app/MobileTabBar.tsx` — en móvil (< `md`) barra de pestañas inferior: las tres `mobileTabs` del espacio (`navigation.ts`), la acción principal en el centro y "Más" (abre el sidebar). Lo que vaya fijo abajo debe sumar `var(--mobile-nav-h)` (0 en escritorio) para no quedar tapado. En móvil la cabecera no lleva botón de menú ni acción principal, `PageHeader` oculta la descripción, `StatGrid` va a dos columnas y `DialogContent` sale como hoja desde abajo (`mobileSheet={false}` para dejarlo centrado).
 - `src/components/app/navigation.ts` — **única fuente de verdad** de rutas, iconos, espacios y acción principal de cada espacio. Una página nueva de la app se añade aquí (y aparece sola en sidebar, breadcrumbs y ⌘K).
 - `src/layouts/MarketingLayout.astro` — páginas públicas: header con nav a Características/Precios + CTA a `/login`, footer simple.
 
