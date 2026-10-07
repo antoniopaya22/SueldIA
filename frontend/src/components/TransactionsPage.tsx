@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Receipt, Plus, Search, ArrowLeftRight, Repeat, Download, ChevronLeft, ChevronRight,
   MoreHorizontal, Tag, TrendingUp, TrendingDown, Scale, ListChecks, X, CalendarRange,
-  AlertTriangle, PiggyBank, Wallet, SlidersHorizontal,
+  AlertTriangle, PiggyBank, Wallet, SlidersHorizontal, CheckCheck, Clock,
 } from "lucide-react";
 import {
   applyCategorySuggestions,
@@ -580,9 +580,39 @@ function TransactionsView() {
 
       {tab === "movements" ? (
         <>
+          {selectedAccount ? (
+            // Con una cuenta elegida: sus saldos al estilo YNAB (liquidado + sin liquidar = saldo de trabajo).
+            <StatGrid className="sm:grid-cols-3 xl:grid-cols-3">
+              <StatCard
+                label="Saldo liquidado"
+                value={<span className={selectedAccount.balance < 0 ? "text-red-600 dark:text-red-400" : undefined}>{formatCurrency(selectedAccount.balance)}</span>}
+                icon={CheckCheck}
+                hint="Lo que ya refleja el banco"
+              />
+              <StatCard
+                label="Sin liquidar"
+                value={
+                  <span className={selectedAccount.unclearedBalance < 0 ? "text-red-600 dark:text-red-400" : undefined}>
+                    {selectedAccount.unclearedBalance > 0 ? "+" : ""}{formatCurrency(selectedAccount.unclearedBalance)}
+                  </span>
+                }
+                icon={Clock}
+                hint={selectedAccount.unclearedCount === 0
+                  ? "Todo liquidado"
+                  : `${selectedAccount.unclearedCount} ${selectedAccount.unclearedCount === 1 ? "movimiento pendiente" : "movimientos pendientes"}`}
+              />
+              <StatCard
+                label="Saldo de trabajo"
+                value={<span className={selectedAccount.workingBalance < 0 ? "text-red-600 dark:text-red-400" : undefined}>{formatCurrency(selectedAccount.workingBalance)}</span>}
+                icon={Wallet}
+                hint="Liquidado + sin liquidar"
+                emphasis
+              />
+            </StatGrid>
+          ) : (
           <StatGrid className="grid-cols-2">
             <StatCard label="Ingresos" value={summary ? formatCurrency(summary.income) : "—"} icon={TrendingUp} hint={activeFilterCount ? "Con los filtros actuales" : "Todo el histórico"} />
-            <StatCard label="Gastos" value={summary ? formatCurrency(summary.expense) : "—"} icon={TrendingDown} hint={selectedAccount ? selectedAccount.name : "Todas las cuentas"} />
+            <StatCard label="Gastos" value={summary ? formatCurrency(summary.expense) : "—"} icon={TrendingDown} hint="Todas las cuentas" />
             <StatCard
               label="Balance"
               value={summary ? <span className={summary.net < 0 ? "text-red-600 dark:text-red-400" : undefined}>{summary.net > 0 ? "+" : ""}{formatCurrency(summary.net)}</span> : "—"}
@@ -596,6 +626,7 @@ function TransactionsView() {
               hint={activeFilterCount ? `De ${totalCount} con los filtros actuales` : `De ${totalCount} movimientos`}
             />
           </StatGrid>
+          )}
 
           <div className="mt-6 overflow-clip rounded-xl border border-border bg-card shadow-[0_1px_2px_rgb(0_0_0/0.03)]">
             {/* Aviso: movimientos sin categoría (no cuentan en el presupuesto) */}

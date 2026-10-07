@@ -559,7 +559,13 @@ export interface Account {
   color: string;
   icon: string | null;
   archived: boolean;
+  /** Saldo liquidado (lo que ya refleja el banco). */
   balance: number;
+  /** Movimientos sin liquidar hasta hoy, con signo. */
+  unclearedBalance: number;
+  unclearedCount: number;
+  /** Liquidado + sin liquidar. */
+  workingBalance: number;
   createdAt: string;
 }
 
