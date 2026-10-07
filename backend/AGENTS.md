@@ -73,6 +73,6 @@ Variables de entorno validadas con Zod en `src/config.ts`:
 - `PORT` (default 3001, solo desarrollo local — Vercel lo ignora)
 - `DATABASE_URL` (connection string de Postgres/Supabase — Transaction Pooler, puerto 6543; default apunta a un Postgres local para que los tests no necesiten configuración)
 - `SUPABASE_URL` (URL del proyecto, para verificar los JWT de Supabase Auth — no confundir con `DATABASE_URL`)
-- `NODE_ENV`, `CORS_ORIGIN` (lista de orígenes permitidos separados por comas — el frontend en producción llama en el mismo origen vía rewrite, así que esto solo protege frente a otros orígenes)
+- `NODE_ENV`, `CORS_ORIGIN` (orígenes **extra** permitidos, separados por comas, p. ej. el frontend en local). El mismo origen se acepta siempre (`middleware/cors.ts`): el frontend de producción llama a `/api` en su propio dominio vía rewrite y no hace falta configurar nada en Vercel
 - `CRON_SECRET` (opcional — protege `/api/cron/daily`; sin ella esa ruta responde 503)
 - `SUPABASE_SERVICE_ROLE_KEY` (opcional — solo para borrar la identidad de Supabase Auth al eliminar una cuenta, `DELETE /api/auth/me`)
