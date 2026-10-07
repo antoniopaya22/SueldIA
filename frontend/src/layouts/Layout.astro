@@ -15,7 +15,7 @@ const currentPath = Astro.url.pathname;
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="robots" content="noindex, nofollow" />
     <title>{title} | SueldIA</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -39,6 +39,8 @@ const currentPath = Astro.url.pathname;
         var stored = localStorage.getItem("theme");
         var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
         document.documentElement.classList.toggle("dark", dark);
+        // Barra de estado del móvil del mismo color que la cabecera (ver use-theme.ts).
+        document.querySelector('meta[name="theme-color"]').setAttribute("content", dark ? "#0f141a" : "#faf9f6");
       } catch (e) {}
     </script>
   </head>

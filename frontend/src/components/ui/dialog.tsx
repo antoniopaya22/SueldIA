@@ -37,13 +37,22 @@ function DialogOverlay({
   )
 }
 
+// En móvil (por debajo de `sm`) el diálogo sale como hoja desde abajo, a todo
+// el ancho y con margen para la barra de inicio del sistema: queda al alcance
+// del pulgar. `mobileSheet={false}` lo deja centrado (p. ej. el buscador,
+// que necesita estar arriba para no quedar bajo el teclado).
+const MOBILE_SHEET_CLASS =
+  "max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:max-h-[92svh] max-sm:max-w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:overflow-y-auto max-sm:rounded-b-none max-sm:pb-[calc(1rem+env(safe-area-inset-bottom))] max-sm:data-open:zoom-in-100 max-sm:data-open:slide-in-from-bottom-10 max-sm:data-closed:zoom-out-100 max-sm:data-closed:slide-out-to-bottom-10"
+
 function DialogContent({
   className,
   children,
   showCloseButton = true,
+  mobileSheet = true,
   ...props
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
+  mobileSheet?: boolean
 }) {
   return (
     <DialogPortal>
@@ -52,6 +61,7 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          mobileSheet && MOBILE_SHEET_CLASS,
           className
         )}
         {...props}

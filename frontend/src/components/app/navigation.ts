@@ -13,6 +13,8 @@ export interface NavItem {
   exact?: boolean;
   /** Palabras extra para la búsqueda de la paleta de comandos. */
   keywords?: string;
+  /** Etiqueta corta para la barra inferior en móvil (si la normal no cabe). */
+  shortLabel?: string;
   /** Los elementos con sección van agrupados bajo su etiqueta (p. ej. "Configurar"); sin sección, bajo el nombre del espacio. */
   section?: string;
 }
@@ -36,6 +38,11 @@ export interface WorkspaceMeta {
   items: NavItem[];
   /** Acción principal que muestra la cabecera dentro de este espacio. */
   primaryAction: QuickAction;
+  /**
+   * Pestañas de la barra inferior en móvil (hrefs de `items`): dos a la
+   * izquierda y una a la derecha de la acción principal; el resto, en "Más".
+   */
+  mobileTabs: [string, string, string];
 }
 
 export const HOME_ITEM: NavItem = { href: "/app", label: "Inicio", icon: Home, exact: true, keywords: "resumen dashboard" };
@@ -49,9 +56,10 @@ export const WORKSPACES: WorkspaceMeta[] = [
     icon: Wallet,
     href: "/app/finance",
     primaryAction: { label: "Nueva transacción", href: "/app/transactions?nueva=1", icon: Plus, opens: "new-transaction" },
+    mobileTabs: ["/app/finance", "/app/transactions", "/app/budget"],
     items: [
       { href: "/app/finance", label: "Resumen", icon: Wallet, exact: true, keywords: "finanzas resumen dashboard" },
-      { href: "/app/transactions", label: "Transacciones", icon: Receipt, keywords: "movimientos gastos ingresos apuntar" },
+      { href: "/app/transactions", label: "Transacciones", shortLabel: "Movimientos", icon: Receipt, keywords: "movimientos gastos ingresos apuntar" },
       { href: "/app/budget", label: "Presupuesto", icon: PiggyBank, keywords: "presupuesto categorías asignar objetivos" },
       { href: "/app/finance/report", label: "Informe del mes", icon: FileChartColumn, keywords: "informe resumen mes comparar media inusual" },
       { href: "/app/finance/analytics", label: "Analítica", icon: PieChart, keywords: "finanzas gráficos gastos" },
@@ -67,16 +75,24 @@ export const WORKSPACES: WorkspaceMeta[] = [
     icon: FileText,
     href: "/app/payroll",
     primaryAction: { label: "Subir nómina", href: "/app/upload", icon: Upload },
+    mobileTabs: ["/app/payroll", "/app/payslips", "/app/analytics"],
     items: [
-      { href: "/app/payroll", label: "Dashboard", icon: ChartColumn, keywords: "nóminas resumen salario" },
+      { href: "/app/payroll", label: "Dashboard", shortLabel: "Resumen", icon: ChartColumn, keywords: "nóminas resumen salario" },
       { href: "/app/upload", label: "Subir nóminas", icon: Upload, keywords: "pdf" },
-      { href: "/app/payslips", label: "Mis nóminas", icon: FileText, keywords: "listado pdf" },
+      { href: "/app/payslips", label: "Mis nóminas", shortLabel: "Nóminas", icon: FileText, keywords: "listado pdf" },
       { href: "/app/analytics", label: "Analítica", icon: PieChart, keywords: "nóminas tendencias predicción" },
       { href: "/app/profiles", label: "Perfiles", icon: Users, keywords: "personas" },
       { href: "/app/alerts", label: "Alertas", icon: Bell, keywords: "notificaciones avisos reglas" },
     ],
   },
 ];
+
+/** Pestañas de la barra inferior de un espacio, como elementos de navegación. */
+export function getMobileTabs(ws: WorkspaceMeta): NavItem[] {
+  return ws.mobileTabs
+    .map((href) => ws.items.find((item) => item.href === href))
+    .filter((item): item is NavItem => Boolean(item));
+}
 
 export function normalizePath(path: string): string {
   return path !== "/app" && path.endsWith("/") ? path.slice(0, -1) : path;

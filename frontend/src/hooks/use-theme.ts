@@ -24,6 +24,10 @@ function systemPrefersDark() {
 function applyTheme(preference: ThemePreference) {
   const dark = preference === "dark" || (preference === "system" && systemPrefersDark());
   document.documentElement.classList.toggle("dark", dark);
+  // En la app (y la PWA instalada) la barra de estado sigue al tema; mismos colores que --background de .app-root.
+  if (document.body.classList.contains("app-root")) {
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0f141a" : "#faf9f6");
+  }
 }
 
 export function useTheme() {

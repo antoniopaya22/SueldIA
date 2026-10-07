@@ -41,7 +41,7 @@ export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onC
       <div
         role="toolbar"
         aria-label="Acciones sobre la selección"
-        className="fixed inset-x-3 bottom-4 z-30 mx-auto flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-1.5 overflow-x-auto rounded-xl border border-border bg-card px-3 py-2 shadow-lg"
+        className="fixed inset-x-3 bottom-[calc(var(--mobile-nav-h,0px)+1rem)] z-30 mx-auto flex w-fit max-w-[calc(100vw-1.5rem)] items-center gap-1.5 overflow-x-auto rounded-xl border border-border bg-card px-3 py-2 shadow-lg"
       >
         <span className="px-1 text-sm font-medium whitespace-nowrap text-foreground tabular-nums" aria-live="polite">
           {count}

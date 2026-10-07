@@ -52,19 +52,20 @@ export function DeltaBadge({ delta }: { delta: StatDelta }) {
 
 export function StatCard({ label, value, icon: Icon, delta, hint, sparkline, sparklineColor, emphasis, className }: StatCardProps) {
   return (
-    <div className={cn("relative flex flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-[0_1px_2px_rgb(0_0_0/0.03)]", className)}>
+    // En móvil van de dos en dos (la destacada ocupa la fila entera): más compactas y sin minigráfico salvo en la destacada.
+    <div className={cn("relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card p-4 shadow-[0_1px_2px_rgb(0_0_0/0.03)] sm:p-5", emphasis && "col-span-2 sm:col-span-1", className)}>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[13px] font-medium text-muted-foreground">{label}</p>
+        <p className="truncate text-xs font-medium text-muted-foreground sm:text-[13px]">{label}</p>
         {Icon && <Icon className="size-4 text-muted-foreground/70" aria-hidden="true" />}
       </div>
-      <p className={cn("mt-2 font-semibold tracking-tight text-foreground tabular-nums", emphasis ? "text-3xl" : "text-2xl")}>{value}</p>
-      <div className="mt-auto flex items-end justify-between gap-3 pt-3">
+      <p className={cn("mt-1.5 font-semibold tracking-tight text-foreground tabular-nums sm:mt-2", emphasis ? "text-2xl sm:text-3xl" : "text-lg sm:text-2xl")}>{value}</p>
+      <div className="mt-auto flex items-end justify-between gap-3 pt-2 sm:pt-3">
         <div className="min-w-0 space-y-1">
           {delta && <DeltaBadge delta={delta} />}
-          {hint && <p className="truncate text-xs text-muted-foreground">{hint}</p>}
+          {hint && <p className="line-clamp-2 text-xs text-muted-foreground sm:line-clamp-none sm:truncate">{hint}</p>}
         </div>
         {sparkline && sparkline.length > 1 && (
-          <Sparkline values={sparkline} color={sparklineColor} className="h-9 w-20 shrink-0" />
+          <Sparkline values={sparkline} color={sparklineColor} className={cn("h-9 w-20 shrink-0", !emphasis && "hidden sm:block")} />
         )}
       </div>
     </div>
@@ -72,5 +73,5 @@ export function StatCard({ label, value, icon: Icon, delta, hint, sparkline, spa
 }
 
 export function StatGrid({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4", className)}>{children}</div>;
+  return <div className={cn("grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4", className)}>{children}</div>;
 }

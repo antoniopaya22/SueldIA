@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Receipt, Plus, Search, ArrowLeftRight, Repeat, Download, ChevronLeft, ChevronRight,
   MoreHorizontal, Tag, TrendingUp, TrendingDown, Scale, ListChecks, X, CalendarRange,
-  AlertTriangle, PiggyBank, Wallet,
+  AlertTriangle, PiggyBank, Wallet, SlidersHorizontal,
 } from "lucide-react";
 import {
   applyCategorySuggestions,
@@ -435,6 +435,12 @@ function TransactionsView() {
     filterType, filterCategoryId, urlFilters.groupId, filterFrom || filterTo, filterCleared, searchQuery,
     urlFilters.uncategorized, urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined,
   ].filter(Boolean).length;
+  // Filtros que en móvil quedan plegados tras "Filtros" (búsqueda y tipo siempre están a la vista).
+  const foldedFilterCount = [
+    filterCategoryId, urlFilters.groupId, filterFrom || filterTo, filterCleared, urlFilters.uncategorized,
+    urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined,
+  ].filter(Boolean).length;
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const transactions = txData?.data ?? [];
   // Si todos los seleccionados comparten beneficiario, se ofrece recordarlo como regla.
   const commonPayee = useMemo(() => {
@@ -509,7 +515,8 @@ function TransactionsView() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <Button onClick={() => openCreateForm("expense")} className="gap-1.5">
+            {/* En móvil está el botón central de la barra inferior. */}
+            <Button onClick={() => openCreateForm("expense")} className="hidden gap-1.5 md:inline-flex">
               <Plus className="size-4" /> Nueva transacción
             </Button>
           </>
@@ -637,6 +644,30 @@ function TransactionsView() {
                   className="self-start overflow-x-auto lg:self-auto"
                 />
               </div>
+              {/* Móvil: el resto de filtros, plegado; la selección múltiple, siempre a mano. */}
+              <div className="flex items-center gap-2 sm:hidden">
+                <Button
+                  variant={mobileFiltersOpen ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => setMobileFiltersOpen((o) => !o)}
+                  aria-expanded={mobileFiltersOpen}
+                  aria-controls="transaction-filters-more"
+                  className="gap-1.5"
+                >
+                  <SlidersHorizontal className="size-3.5" aria-hidden="true" />
+                  Filtros{foldedFilterCount > 0 && <span className="tabular-nums text-muted-foreground">· {foldedFilterCount}</span>}
+                </Button>
+                <Button
+                  variant={selectionMode ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => { setSelectionMode((m) => !m); setSelectedIds(new Set()); }}
+                  aria-pressed={selectionMode}
+                  className="ml-auto gap-1.5"
+                >
+                  <ListChecks className="size-4" aria-hidden="true" /> {selectionMode ? "Salir" : "Seleccionar"}
+                </Button>
+              </div>
+              <div id="transaction-filters-more" className={cn("flex-col gap-3 sm:flex", mobileFiltersOpen ? "flex" : "hidden")}>
               <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                 <CategorySelect
                   value={filterCategoryId}
@@ -729,10 +760,11 @@ function TransactionsView() {
                   size="sm"
                   onClick={() => { setSelectionMode((m) => !m); setSelectedIds(new Set()); }}
                   aria-pressed={selectionMode}
-                  className="ml-auto gap-1.5"
+                  className="ml-auto hidden gap-1.5 sm:inline-flex"
                 >
                   <ListChecks className="size-4" aria-hidden="true" /> {selectionMode ? "Salir de la selección" : "Seleccionar"}
                 </Button>
+              </div>
               </div>
             </div>
 

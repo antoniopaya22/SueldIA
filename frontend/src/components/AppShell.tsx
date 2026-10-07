@@ -47,6 +47,7 @@ import { formatRelativeDate } from "@/lib/format";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { CommandMenu } from "@/components/app/CommandMenu";
 import { PreferencesBoot } from "@/components/app/PreferencesBoot";
+import { MobileTabBar } from "@/components/app/MobileTabBar";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TransactionFormDialog } from "@/components/finance-manage/transactions/TransactionFormDialog";
 import type { TxForm } from "@/components/finance-manage/transactions/TransactionDialog";
@@ -406,9 +407,10 @@ function AppHeader({ currentPath, onOpenSearch }: { currentPath: string; onOpenS
   const ActionIcon = action.icon;
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b border-border/70 bg-background/80 px-3 backdrop-blur-md supports-backdrop-filter:bg-background/65 sm:px-5">
-      <SidebarTrigger className="-ml-1 text-muted-foreground hover:text-foreground" />
-      <div aria-hidden="true" className="mr-1 h-4 w-px shrink-0 bg-border" />
+    <header className="sticky top-0 z-20 flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-border/70 bg-background/80 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md supports-backdrop-filter:bg-background/65 sm:px-5">
+      {/* En móvil el panel se abre desde "Más" en la barra inferior. */}
+      <SidebarTrigger className="-ml-1 hidden text-muted-foreground hover:text-foreground md:inline-flex" />
+      <div aria-hidden="true" className="mr-1 hidden h-4 w-px shrink-0 bg-border md:block" />
       <a href={HOME_ITEM.href} className="md:hidden" aria-label="Inicio">
         <BrandMark className="size-6" />
       </a>
@@ -436,7 +438,7 @@ function AppHeader({ currentPath, onOpenSearch }: { currentPath: string; onOpenS
         <button
           type="button"
           onClick={onOpenSearch}
-          className="flex h-8 cursor-pointer items-center gap-2 rounded-lg border border-border bg-card/70 px-2.5 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-card hover:text-foreground md:w-56"
+          className="flex size-9 cursor-pointer items-center justify-center gap-2 rounded-lg border border-border bg-card/70 text-sm text-muted-foreground shadow-xs transition-colors hover:bg-card hover:text-foreground md:h-8 md:w-56 md:justify-start md:px-2.5"
           aria-label="Buscar (Ctrl+K)"
         >
           <Search className="size-4" />
@@ -448,7 +450,7 @@ function AppHeader({ currentPath, onOpenSearch }: { currentPath: string; onOpenS
           <button
             type="button"
             onClick={() => openNewTransaction()}
-            className={cn(buttonVariants({ size: "sm" }), "h-8 cursor-pointer gap-1.5 px-3")}
+            className={cn(buttonVariants({ size: "sm" }), "hidden h-8 cursor-pointer gap-1.5 px-3 md:inline-flex")}
             aria-label={action.label}
             title={`${action.label} (N)`}
           >
@@ -456,7 +458,7 @@ function AppHeader({ currentPath, onOpenSearch }: { currentPath: string; onOpenS
             <span className="hidden sm:inline">{action.label}</span>
           </button>
         ) : (
-          <a href={action.href} className={cn(buttonVariants({ size: "sm" }), "h-8 gap-1.5 px-3")}>
+          <a href={action.href} className={cn(buttonVariants({ size: "sm" }), "hidden h-8 gap-1.5 px-3 md:inline-flex")}>
             <ActionIcon className="size-4" />
             <span className="hidden sm:inline">{action.label}</span>
           </a>
@@ -575,9 +577,10 @@ export function AppShell({ currentPath, children }: AppShellProps) {
         <SidebarInset className="md:h-[calc(100svh-1rem)] md:overflow-hidden md:ring-1 md:ring-black/[0.04] dark:md:ring-white/[0.06]">
           <div className="flex min-h-0 flex-1 flex-col md:overflow-y-auto">
             <AppHeader currentPath={currentPath} onOpenSearch={() => setSearchOpen(true)} />
-            <div className="app-page mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-10 lg:py-9">{children}</div>
+            <div className="app-page mx-auto w-full max-w-7xl flex-1 px-4 pt-5 pb-[calc(var(--mobile-nav-h)+1.5rem)] sm:px-6 sm:pt-6 md:pb-6 lg:px-10 lg:py-9">{children}</div>
           </div>
         </SidebarInset>
+        <MobileTabBar workspace={activeWorkspace} currentPath={currentPath} />
         <CommandMenu open={searchOpen} onOpenChange={setSearchOpen} />
         <QueryClientProvider client={appQueryClient}>
           <PreferencesBoot />

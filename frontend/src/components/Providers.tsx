@@ -11,7 +11,7 @@ export function Providers({ children }: { children: ReactNode }) {
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
           {children}
-          <Toaster position="bottom-right" />
+          <Toaster position="bottom-right" offset={{ bottom: "calc(var(--mobile-nav-h, 0px) + 24px)" }} mobileOffset={{ bottom: "calc(var(--mobile-nav-h, 0px) + 12px)" }} />
         </AuthProvider>
       </QueryClientProvider>
     </ErrorBoundary>
