@@ -2,6 +2,7 @@ import { db } from "../db/index.js";
 import { accounts, transactions, categories, categoryGroups } from "../db/schema.js";
 import { eq, and, sql, gte, lte, asc } from "drizzle-orm";
 import { effectiveTransaction } from "./transaction-filters.js";
+import { getTodayIsoDate } from "./recurring-transactions.service.js";
 
 type FinanceFlowType = "income" | "expense";
 
@@ -25,7 +26,14 @@ export interface AccountWithBalance {
   color: string;
   icon: string | null;
   archived: boolean;
+  /** Saldo liquidado: saldo inicial + movimientos liquidados (lo que ya refleja el banco). */
   balance: number;
+  /** Suma con signo de los movimientos sin liquidar con fecha de hoy o anterior. */
+  unclearedBalance: number;
+  /** Cuántos movimientos sin liquidar hay (hasta hoy). */
+  unclearedCount: number;
+  /** Saldo de trabajo: liquidado + sin liquidar. Lo programado a futuro no cuenta todavía. */
+  workingBalance: number;
   createdAt: string;
 }
 
@@ -286,20 +294,25 @@ export async function getAccountsWithBalance(userId: number): Promise<AccountWit
 
   // Una sola consulta agregada en vez de una por cuenta (N+1): Postgres
   // suma el importe con signo (misma regla que antes para transferencias —
-  // la pata con el id más bajo del par es la entrada) agrupado por cuenta,
-  // en vez de traerse cada movimiento conciliado a memoria para sumarlo aquí.
-  const netByAccount = await db
+  // la pata con el id más bajo del par es la entrada) agrupado por cuenta.
+  // El saldo liquidado sigue el criterio de effectiveTransaction(); aparte se
+  // suma lo sin liquidar hasta hoy (lo programado a futuro, p. ej. las
+  // recurrentes ya generadas, aún no ha ocurrido y no entra en el saldo de trabajo).
+  const today = getTodayIsoDate();
+  const sums = await db
     .select({
       accountId: transactions.accountId,
       // sum() sobre doublePrecision devuelve double precision (número), no
       // numeric (que sí llegaría como string) — ver la nota de schema.ts.
-      net: sql<number>`sum(${signedAmountSql})`.as("net"),
+      cleared: sql<number>`coalesce(sum(${signedAmountSql}) filter (where ${effectiveTransaction()}), 0)`.as("cleared"),
+      uncleared: sql<number>`coalesce(sum(${signedAmountSql}) filter (where not ${transactions.cleared} and ${transactions.date} <= ${today}), 0)`.as("uncleared"),
+      unclearedCount: sql<number>`count(*) filter (where not ${transactions.cleared} and ${transactions.date} <= ${today})::int`.as("uncleared_count"),
     })
     .from(transactions)
-    .where(and(eq(transactions.userId, userId), effectiveTransaction()))
+    .where(eq(transactions.userId, userId))
     .groupBy(transactions.accountId);
 
-  const netMap = new Map(netByAccount.map((row) => [row.accountId, Number(row.net)]));
+  const sumMap = new Map(sums.map((row) => [row.accountId, row]));
 
   return userAccounts.map((acc) => ({
     id: acc.id,
@@ -310,7 +323,10 @@ export async function getAccountsWithBalance(userId: number): Promise<AccountWit
     color: acc.color,
     icon: acc.icon,
     archived: acc.archived ?? false,
-    balance: roundValue(acc.initialBalance + (netMap.get(acc.id) ?? 0)),
+    balance: roundValue(acc.initialBalance + Number(sumMap.get(acc.id)?.cleared ?? 0)),
+    unclearedBalance: roundValue(Number(sumMap.get(acc.id)?.uncleared ?? 0)),
+    unclearedCount: Number(sumMap.get(acc.id)?.unclearedCount ?? 0),
+    workingBalance: roundValue(acc.initialBalance + Number(sumMap.get(acc.id)?.cleared ?? 0) + Number(sumMap.get(acc.id)?.uncleared ?? 0)),
     createdAt: acc.createdAt.toISOString(),
   }));
 }
