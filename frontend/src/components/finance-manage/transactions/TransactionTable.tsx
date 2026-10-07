@@ -1,4 +1,4 @@
-import { Fragment, useMemo } from "react";
+import { Fragment, useMemo, useRef, type MouseEvent } from "react";
 import {
   CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock,
 } from "lucide-react";
@@ -57,9 +57,44 @@ function dayNet(txs: Transaction[]) {
   return txs.reduce((s, t) => s + (t.type === "income" ? t.amount : t.type === "expense" ? -t.amount : 0), 0);
 }
 
+// La pata de entrada de una transferencia se edita desde la de salida.
+const canEditTx = (tx: Transaction) => tx.type !== "transfer" || tx.transferDirection !== "inflow";
+
+// Controles dentro de la fila: pulsarlos no cuenta para el doble clic.
+const INTERACTIVE = "button, a, input, select, textarea, label, [role='checkbox'], [role='menu'], [role='menuitem']";
+
+/**
+ * Doble clic (o doble toque en móvil) sobre una fila → editar. Se detecta a
+ * mano con el tiempo entre dos clics en la misma fila en vez de con
+ * `dblclick`, que en móvil no es fiable (el doble toque suele hacer zoom).
+ */
+function useDoubleActivate(onActivate: (tx: Transaction) => void) {
+  const last = useRef<{ id: number; at: number } | null>(null);
+  return (tx: Transaction) => ({
+    onClick: (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest(INTERACTIVE)) {
+        last.current = null;
+        return;
+      }
+      const prev = last.current;
+      // detail === 2: el navegador ya lo marca como segundo clic (ratón); el tiempo cubre el doble toque.
+      if (e.detail === 2 || (prev && prev.id === tx.id && e.timeStamp - prev.at < 400)) {
+        last.current = null;
+        if (canEditTx(tx)) onActivate(tx);
+      } else {
+        last.current = { id: tx.id, at: e.timeStamp };
+      }
+    },
+    // Sin esto, el doble clic selecciona el texto de la fila.
+    onMouseDown: (e: MouseEvent) => {
+      if (e.detail > 1 && !(e.target as HTMLElement).closest(INTERACTIVE)) e.preventDefault();
+    },
+  });
+}
+
 function useRowActions(props: Props) {
   return (tx: Transaction): RowAction[] => {
-    const canEdit = tx.type !== "transfer" || tx.transferDirection !== "inflow";
+    const canEdit = canEditTx(tx);
     const canSchedule = tx.type !== "transfer" && !tx.recurringTransactionId;
     const actions: RowAction[] = [];
     if (canEdit) actions.push({ label: "Editar", icon: Pencil, onSelect: () => props.onEdit(tx) });
@@ -150,6 +185,7 @@ export function TransactionTable(props: Props) {
   const { transactions, accountsById, showAccount, sortBy, sortDir, onSort, today, onToggleCleared, selection } = props;
   const allSelected = !!selection && transactions.length > 0 && transactions.every((t) => selection.ids.has(t.id));
   const actionsFor = useRowActions(props);
+  const rowActivate = useDoubleActivate(props.onEdit);
   const grouped = sortBy === "date";
 
   const groups = useMemo(() => {
@@ -219,7 +255,12 @@ export function TransactionTable(props: Props) {
                   const cat = categoryLabel(tx);
                   const account = accountsById.get(tx.accountId);
                   return (
-                    <tr key={tx.id} className={cn("group/row border-b border-border last:border-0 transition-colors hover:bg-muted/40", selection?.ids.has(tx.id) && "bg-primary/5 hover:bg-primary/10")}>
+                    <tr
+                      key={tx.id}
+                      {...rowActivate(tx)}
+                      title={canEditTx(tx) ? "Doble clic para editar" : undefined}
+                      className={cn("group/row border-b border-border last:border-0 transition-colors hover:bg-muted/40", selection?.ids.has(tx.id) && "bg-primary/5 hover:bg-primary/10")}
+                    >
                       {selection && (
                         <td className="py-2 pl-4 align-middle">
                           <Checkbox
@@ -306,7 +347,12 @@ export function TransactionTable(props: Props) {
                 const amt = signedAmount(tx);
                 const cat = categoryLabel(tx);
                 return (
-                  <li key={tx.id} className={cn("flex items-center gap-3 px-4 py-3", selection?.ids.has(tx.id) && "bg-primary/5")}>
+                  <li
+                    key={tx.id}
+                    {...rowActivate(tx)}
+                    // touch-manipulation: sin zoom por doble toque, así los dos toques llegan como clics.
+                    className={cn("flex touch-manipulation items-center gap-3 px-4 py-3", selection?.ids.has(tx.id) && "bg-primary/5")}
+                  >
                     {selection && (
                       <Checkbox
                         checked={selection.ids.has(tx.id)}
