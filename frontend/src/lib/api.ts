@@ -559,6 +559,8 @@ export interface Account {
   color: string;
   icon: string | null;
   archived: boolean;
+  /** Posición elegida por el usuario (a igualdad, por nombre). */
+  sortOrder: number;
   /** Saldo liquidado (lo que ya refleja el banco). */
   balance: number;
   /** Movimientos sin liquidar hasta hoy, con signo. */
@@ -571,6 +573,10 @@ export interface Account {
 
 export const getAccounts = () =>
   request<{ data: Account[] }>("/accounts").then((r) => r.data);
+
+/** Guarda el orden de las cuentas: `ids` en el orden deseado. */
+export const reorderAccounts = (ids: number[]) =>
+  request<{ ok: boolean }>("/accounts/order", { method: "PUT", body: JSON.stringify({ ids }) });
 
 export const createAccount = (data: {
   name: string;

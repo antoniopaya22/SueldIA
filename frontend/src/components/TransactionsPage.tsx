@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Receipt, Plus, Search, ArrowLeftRight, Repeat, Download, ChevronLeft, ChevronRight,
   MoreHorizontal, Tag, TrendingUp, TrendingDown, Scale, ListChecks, X, CalendarRange,
-  AlertTriangle, PiggyBank, Wallet, SlidersHorizontal, CheckCheck, Clock,
+  AlertTriangle, PiggyBank, Wallet, SlidersHorizontal, CheckCheck, Clock, ArrowUpDown,
 } from "lucide-react";
 import {
   applyCategorySuggestions,
@@ -66,6 +66,7 @@ import { describeApply } from "./categories/CategoryRulesCard";
 import { RecurringRuleCard } from "./finance-manage/transactions/RecurringRuleCard";
 import { SubscriptionSuggestions } from "./finance-manage/transactions/SubscriptionSuggestions";
 import { TransactionTable, type SortDir, type SortField } from "./finance-manage/transactions/TransactionTable";
+import { AccountOrderDialog } from "./finance-manage/AccountOrderDialog";
 import { cn } from "cn";
 
 const PAGE_SIZE = 50;
@@ -441,6 +442,7 @@ function TransactionsView() {
     urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined,
   ].filter(Boolean).length;
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  const [orderOpen, setOrderOpen] = useState(false);
   const transactions = txData?.data ?? [];
   // Si todos los seleccionados comparten beneficiario, se ofrece recordarlo como regla.
   const commonPayee = useMemo(() => {
@@ -515,10 +517,6 @@ function TransactionsView() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            {/* En móvil está el botón central de la barra inferior. */}
-            <Button onClick={() => openCreateForm("expense")} className="hidden gap-1.5 md:inline-flex">
-              <Plus className="size-4" /> Nueva transacción
-            </Button>
           </>
         }
       />
@@ -526,7 +524,8 @@ function TransactionsView() {
       {/* Cuentas */}
       {activeAccounts.length > 0 && (
         <div className="-mx-4 mb-6 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
-          <div role="radiogroup" aria-label="Filtrar por cuenta" className="flex w-max gap-2">
+          <div className="flex w-max gap-2">
+          <div role="radiogroup" aria-label="Filtrar por cuenta" className="flex gap-2">
             {[{ id: null as number | null, name: "Todas las cuentas", balance: totalBalance, color: null as string | null }, ...activeAccounts]
               .map((a) => {
                 const selected = selectedAccountId === a.id;
@@ -557,8 +556,21 @@ function TransactionsView() {
                 );
               })}
           </div>
+            {activeAccounts.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setOrderOpen(true)}
+                className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-border px-3.5 py-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                title="Cambiar el orden de las cuentas"
+              >
+                <ArrowUpDown className="size-4" aria-hidden="true" />
+                Ordenar
+              </button>
+            )}
+          </div>
         </div>
       )}
+      <AccountOrderDialog open={orderOpen} onClose={() => setOrderOpen(false)} accounts={accounts} />
 
       <div className="mb-6 flex items-center justify-between gap-3">
         <Segmented

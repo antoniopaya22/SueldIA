@@ -182,6 +182,8 @@ export const accounts = pgTable("accounts", {
   color: text("color").notNull().default("#6366f1"),
   icon: text("icon"),
   archived: boolean("archived").notNull().default(false),
+  // Orden elegido por el usuario (Transacciones → Ordenar); a igualdad, por nombre.
+  sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

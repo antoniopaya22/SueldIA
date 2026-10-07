@@ -26,6 +26,7 @@ export interface AccountWithBalance {
   color: string;
   icon: string | null;
   archived: boolean;
+  sortOrder: number;
   /** Saldo liquidado: saldo inicial + movimientos liquidados (lo que ya refleja el banco). */
   balance: number;
   /** Suma con signo de los movimientos sin liquidar con fecha de hoy o anterior. */
@@ -290,7 +291,7 @@ export async function getAccountsWithBalance(userId: number): Promise<AccountWit
     .select()
     .from(accounts)
     .where(eq(accounts.userId, userId))
-    .orderBy(accounts.name);
+    .orderBy(asc(accounts.sortOrder), asc(accounts.name));
 
   // Una sola consulta agregada en vez de una por cuenta (N+1): Postgres
   // suma el importe con signo (misma regla que antes para transferencias —
@@ -323,6 +324,7 @@ export async function getAccountsWithBalance(userId: number): Promise<AccountWit
     color: acc.color,
     icon: acc.icon,
     archived: acc.archived ?? false,
+    sortOrder: acc.sortOrder,
     balance: roundValue(acc.initialBalance + Number(sumMap.get(acc.id)?.cleared ?? 0)),
     unclearedBalance: roundValue(Number(sumMap.get(acc.id)?.uncleared ?? 0)),
     unclearedCount: Number(sumMap.get(acc.id)?.unclearedCount ?? 0),
