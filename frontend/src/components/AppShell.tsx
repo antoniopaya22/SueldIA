@@ -401,9 +401,12 @@ function NotificationBell() {
 // ─── Cabecera ───────────────────────────────────────────────────
 function AppHeader({ currentPath, onOpenSearch }: { currentPath: string; onOpenSearch: () => void }) {
   const crumbs = getBreadcrumbTrail(currentPath);
-  // En Inicio/Ajustes la acción rápida es subir nómina; nunca se muestra en su propia página.
+  // En Inicio/Ajustes la acción rápida es subir nómina. Si abre un diálogo
+  // (nueva transacción) se muestra siempre, también en Transacciones: la
+  // cabecera es fija y así no se pierde al hacer scroll. Si navega (subir
+  // nómina), no se muestra en su propia página.
   const action = (findWorkspace(currentPath) ?? DEFAULT_WORKSPACE).primaryAction;
-  const showAction = !isActivePath(currentPath, action.href.split("?")[0]);
+  const showAction = action.opens === "new-transaction" || !isActivePath(currentPath, action.href.split("?")[0]);
   const ActionIcon = action.icon;
 
   return (
