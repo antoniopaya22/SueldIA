@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { transactionsHref } from "../lib/transaction-filters";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart,
@@ -253,9 +253,12 @@ function FinanceAnalyticsView() {
     categoryId,
   }), [from, to, accountId, groupId, categoryId]);
 
-  const { data: analytics, isLoading: loadingAnalytics, isFetching, error: analyticsError, refetch } = useQuery({
+  const { data: analytics, isLoading: loadingAnalytics, isFetching, isPlaceholderData: isPlaceholder, error: analyticsError, refetch } = useQuery({
     queryKey: ["finance-analytics", analyticsFilters],
     queryFn: () => getFinanceAnalytics(analyticsFilters),
+    // Al cambiar de filtro se sigue viendo lo anterior (atenuado) en vez de
+    // sustituir la página entera, cabecera y filtros incluidos, por el esqueleto.
+    placeholderData: keepPreviousData,
   });
 
   // Comparar con el periodo anterior: el de la misma duración justo antes. Sin fechas (todo el histórico) no hay con qué comparar.
@@ -1596,7 +1599,7 @@ function FinanceAnalyticsView() {
         </EmptyState>
       ) : (
         <>
-          <div className="mt-8 grid gap-6 xl:grid-cols-2">
+          <div className={cn("mt-8 grid gap-6 transition-opacity xl:grid-cols-2", isPlaceholder && "opacity-60")} aria-busy={isPlaceholder}>
             {layout.filter((entry) => entry.visible).map((entry) => (
               <div key={entry.key} className={cn("min-w-0", entry.span === "full" && "xl:col-span-2")}>
                 {entry.key === "insights" ? insightsCard : panel(entry.key)}

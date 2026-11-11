@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, CircleDollarSign, PiggyBank, RefreshCcw,
   Scale, Sparkles, Store, TrendingDown, TrendingUp,
@@ -289,9 +289,12 @@ function ReportView() {
     window.history.replaceState(window.history.state, "", url);
   };
 
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, isPlaceholderData, error, refetch } = useQuery({
     queryKey: ["finance-report", month],
     queryFn: () => getMonthReport(month),
+    // Al cambiar de filtro se sigue viendo lo anterior (atenuado) en vez de
+    // sustituir la página entera, cabecera y filtros incluidos, por el esqueleto.
+    placeholderData: keepPreviousData,
   });
 
   const switcher = (
@@ -349,7 +352,9 @@ function ReportView() {
           actionHref="/app/transactions"
         />
       ) : (
-        <ReportBody report={data} month={month} />
+        <div className={cn("transition-opacity", isPlaceholderData && "opacity-60")} aria-busy={isPlaceholderData}>
+          <ReportBody report={data} month={data.month} />
+        </div>
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Bar, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -80,6 +80,9 @@ function FinanceDashboardView() {
   const { data: analytics, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: ["finance-dashboard", filters],
     queryFn: () => getFinanceAnalytics(filters),
+    // Al cambiar de filtro se sigue viendo lo anterior (atenuado) en vez de
+    // sustituir la página entera, cabecera y filtros incluidos, por el esqueleto.
+    placeholderData: keepPreviousData,
   });
 
   const derived = useMemo(() => {

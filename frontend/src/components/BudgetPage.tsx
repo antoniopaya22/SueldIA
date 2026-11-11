@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bell, ChevronLeft, ChevronRight, PiggyBank, Receipt, Tags, Target } from "lucide-react";
 import { toast } from "sonner";
 import { Providers } from "./Providers";
@@ -53,9 +53,12 @@ function BudgetView() {
   const [targetFor, setTargetFor] = useState<CategoryBudget | null>(null);
   const [coverFor, setCoverFor] = useState<CategoryBudget | null>(null);
 
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, isPlaceholderData, error, refetch } = useQuery({
     queryKey: ["budgets", month],
     queryFn: () => getBudgetSummary(month),
+    // Al cambiar de filtro se sigue viendo lo anterior (atenuado) en vez de
+    // sustituir la página entera, cabecera y filtros incluidos, por el esqueleto.
+    placeholderData: keepPreviousData,
   });
 
   const refresh = () => invalidateFinance(queryClient);
@@ -211,13 +214,16 @@ function BudgetView() {
               <Bell className="size-4" aria-hidden="true" />
               <span className="hidden sm:inline">Avisarme si me paso</span>
             </a>
-            <QuickAssignMenu onRun={(mode) => autoMut.mutate(mode)} busy={autoMut.isPending} hasTargets={targetCount > 0} />
+            <QuickAssignMenu onRun={(mode) => autoMut.mutate(mode)} busy={autoMut.isPending || isPlaceholderData} hasTargets={targetCount > 0} />
           </>
         }
       >
         {monthSwitcher}
       </PageHeader>
 
+      {/* Mientras llega el mes nuevo se ve el anterior atenuado y sin poder
+          editarse: si no, se asignaría dinero al mes equivocado. */}
+      <div className={cn("transition-opacity", isPlaceholderData && "opacity-60")} inert={isPlaceholderData || undefined} aria-busy={isPlaceholderData}>
       <StatGrid className="sm:grid-cols-3 xl:grid-cols-3">
         <StatCard
           label="Para presupuestar"
@@ -290,6 +296,7 @@ function BudgetView() {
             </SectionCard>
           );
         })}
+      </div>
       </div>
 
       <TargetDialog
