@@ -30,7 +30,8 @@ const envSchema = z.object({
   // contacto para los servicios de push (mailto: o https:).
   VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
-  VAPID_SUBJECT: z.string().default("mailto:avisos@sueldia.invalid"),
+  // Vacía (como en .env.example) cuenta como sin definir.
+  VAPID_SUBJECT: z.string().optional().transform((v) => v || "mailto:avisos@sueldia.invalid"),
 });
 
 export const env = envSchema.parse(process.env);
