@@ -160,6 +160,12 @@ La app es instalable: `public/manifest.webmanifest` (nombre, colores, iconos en 
 - Avisar de cambios sin guardar con `useLeaveGuard` (`hooks/use-leave-guard.ts`): `beforeunload` solo no basta, una navegación interna no lo dispara.
 - Lo que dependa de `<html>` (clase `dark`) se reaplica en `astro:after-swap` (ver el script de tema de `Layout.astro`).
 
+## OCR en el navegador (nóminas escaneadas)
+
+Un PDF sin texto (escaneo o foto) se lee en el propio navegador: `lib/ocr.ts` (cargado a demanda) pinta cada página con `pdfjs-dist` y la pasa por `tesseract.js` (WebAssembly, español). Solo el texto va al backend (`POST /payslips/:id/ocr-text`); el PDF no sale del dispositivo. `components/payroll/OcrButton.tsx` lo ofrece en la subida (con el fichero recién elegido) y en el detalle (pidiendo el PDF otra vez: no se guarda).
+- El worker, los núcleos WASM y el idioma se sirven desde `/ocr/` (nunca desde un CDN): `scripts/copy-ocr-assets.mjs` los copia de `node_modules` a `public/ocr/` en cada `dev`/`build` (carpeta en `.gitignore`).
+- Los `.mjs` deben servirse como JavaScript (el worker de pdfjs es un módulo): si un servidor los manda como `application/octet-stream`, el OCR falla.
+
 ## Seguridad (CSP)
 
 `npm run build` = `astro build` + `scripts/csp.mjs`, que añade a cada HTML una `Content-Security-Policy` con el hash de cada `<script>` en línea. Consecuencias:

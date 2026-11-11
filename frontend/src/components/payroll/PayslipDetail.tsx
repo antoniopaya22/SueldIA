@@ -35,6 +35,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { cn } from "cn";
+import { OcrButton } from "./OcrButton";
 
 // El backend devuelve la fila completa (incluido el texto extraído), aunque
 // el tipo compartido no lo declare.
@@ -993,7 +994,13 @@ export function PayslipDetail({
                 </pre>
               </details>
             ) : (
-              <p className="mt-3 text-xs text-muted-foreground">El PDF original no se guarda: solo los datos extraídos.</p>
+              <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+                <p>
+                  No se pudo extraer texto de este PDF: probablemente sea un escaneo o una foto. Puedes leerlo con OCR en tu
+                  navegador (el PDF no sale de tu dispositivo); como no lo guardamos, tendrás que elegirlo otra vez.
+                </p>
+                <OcrButton payslipId={payslip.id} />
+              </div>
             )}
           </SectionCard>
         </div>

@@ -254,6 +254,10 @@ export const getPayslips = (filters: PayslipFilters = {}) => {
   return request<Paginated<Payslip>>(`/payslips?${params}`);
 };
 
+/** Texto leído con OCR en el navegador (nómina escaneada, sin texto). */
+export const submitOcrText = (id: number, text: string) =>
+  request<Payslip & { concepts: PayslipConcept[] }>(`/payslips/${id}/ocr-text`, { method: "POST", body: JSON.stringify({ text }) });
+
 export const getPayslip = (id: number) =>
   request<Payslip & { concepts: PayslipConcept[] }>(`/payslips/${id}`);
 

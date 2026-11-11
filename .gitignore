@@ -31,3 +31,4 @@ examples/*
 
 # Worktrees de agentes de Claude Code
 .claude/
+frontend/public/ocr/

@@ -84,10 +84,9 @@ export async function extractTextFromPdfBuffer(data: Uint8Array): Promise<string
   // técnicamente un Uint8Array ("Please provide binary data as Uint8Array,
   // rather than Buffer") — Buffer.isBuffer detecta ese caso concreto.
   const safeData = Buffer.isBuffer(data) ? new Uint8Array(data) : data;
-  // isEvalSupported: false — defensa adicional (desde pdfjs 4.2 ya no hace
-  // falta contra CVE-2024-4367): el PDF lo sube cualquier usuario y se procesa
-  // en el mismo proceso que tiene DATABASE_URL. No cambia el texto extraído.
-  const loadingTask = pdfjs.getDocument({ data: safeData, useSystemFonts: true, isEvalSupported: false } as never);
+  // (isEvalSupported, la mitigación de CVE-2024-4367 en pdfjs ≤ 4.1, ya no
+  // existe en la v6: el fallo está corregido en la propia librería.)
+  const loadingTask = pdfjs.getDocument({ data: safeData, useSystemFonts: true });
   try {
     const doc = await loadingTask.promise;
     const allLines: string[] = [];

@@ -18,6 +18,7 @@ import { StatusBadge, ExtraBadge, formatPeriod } from "./payroll/shared";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "cn";
+import { OcrButton } from "./payroll/OcrButton";
 
 // Debe coincidir con el límite del backend (middleware/upload.ts) — Vercel
 // Functions rechaza cualquier petición de más de 4.5MB de cuerpo.
@@ -43,10 +44,12 @@ function formatFileSize(bytes: number): string {
 }
 
 // ─── Fila de la cola ────────────────────────────────────────────
-function QueueRow({ item, onRemove, onRetry, disabled }: {
+function QueueRow({ item, onRemove, onRetry, onOcr, disabled }: {
   item: QueueItem;
   onRemove: () => void;
   onRetry: () => void;
+  /** El OCR del navegador ha completado la nómina escaneada. */
+  onOcr: (payslip: Payslip) => void;
   disabled: boolean;
 }) {
   const r = item.result;
@@ -97,6 +100,13 @@ function QueueRow({ item, onRemove, onRetry, disabled }: {
               <a href={`/app/payslips?nomina=${r.duplicateOfId}`} className="font-medium whitespace-nowrap underline underline-offset-2">Ver la anterior</a>
             </span>
           </p>
+        )}
+        {item.state === "done" && r && !r.alreadyUploaded && !r.rawText?.trim() && r.parsingStatus !== "parsed" && (
+          // PDF escaneado: no trae texto. El OCR se hace aquí, con el fichero que acabas de elegir.
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Parece escaneada (sin texto).</span>
+            <OcrButton payslipId={r.id} file={item.file} onDone={onOcr} />
+          </div>
         )}
         {item.state === "uploading" && (
           <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
@@ -394,6 +404,7 @@ function UploadManager() {
                     disabled={busy}
                     onRemove={() => setQueue((q) => q.filter((i) => i.id !== item.id))}
                     onRetry={() => uploadMut.mutate([item])}
+                    onOcr={(payslip) => setQueue((q) => q.map((i) => (i.id === item.id ? { ...i, result: { ...i.result!, ...payslip } } : i)))}
                   />
                 ))}
               </ul>
