@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "cn";
 import { useUrlEnumParam, useUrlParam } from "../lib/url-state";
+import { TaxSummaryCard } from "./payroll/TaxSummaryCard";
 
 type Range = "12" | "24" | "all";
 const RANGES: readonly Range[] = ["12", "24", "all"];
@@ -540,6 +541,12 @@ function AnalyticsView() {
           )}
         </SectionCard>
       </div>
+
+      {selectedProfile && years.length > 0 && (
+        <div className="mt-6">
+          <TaxSummaryCard profileId={selectedProfile} years={years} />
+        </div>
+      )}
     </div>
   );
 }

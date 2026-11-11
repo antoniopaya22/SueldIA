@@ -8,6 +8,7 @@ import { parsePayslip } from "../parsers/parser-engine.js";
 import { matchConcepts, detectPayslipType, type ParsedPayslip } from "../parsers/concept-matcher.js";
 import { createHash } from "node:crypto";
 import { classifyConcept } from "../parsers/concept-classifier.js";
+import { buildTaxSummary, diffConcepts } from "../services/payslip-compare.service.js";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { logger } from "../logger.js";
@@ -230,6 +231,82 @@ payslipsRouter.get("/", async (req, res, next) => {
 });
 
 // Get single payslip with concepts
+// Resumen fiscal de un año y perfil (para cotejar con el certificado de
+// retenciones de la empresa al hacer la Renta).
+const taxSummaryQuery = z.object({
+  profileId: z.coerce.number().int().positive().max(2_147_483_647),
+  year: z.coerce.number().int().min(1990).max(2100),
+});
+payslipsRouter.get("/tax-summary", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = taxSummaryQuery.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: "Parámetros inválidos", details: parsed.error.flatten().fieldErrors });
+    const userProfileIds = await getUserProfileIds(userId);
+    if (!userProfileIds.includes(parsed.data.profileId)) return res.status(404).json({ error: "Perfil no encontrado" });
+    const rows = await db
+      .select({ id: payslips.id, grossSalary: payslips.grossSalary, netSalary: payslips.netSalary, periodMonth: payslips.periodMonth, payslipType: payslips.payslipType })
+      .from(payslips)
+      .where(and(
+        eq(payslips.profileId, parsed.data.profileId),
+        eq(payslips.periodYear, parsed.data.year),
+        ne(payslips.parsingStatus, "error"),
+      ));
+    const concepts = rows.length
+      ? await db.select().from(payslipConcepts).where(inArray(payslipConcepts.payslipId, rows.map((r) => r.id)))
+      : [];
+    res.json(buildTaxSummary(parsed.data.year, rows, concepts));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Comparar una nómina con la del mes anterior y con la del mismo mes del año
+// pasado (mismo perfil y tipo), concepto a concepto; y la anterior/siguiente
+// para navegar entre nóminas desde el detalle.
+payslipsRouter.get("/:id/compare", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const userProfileIds = await getUserProfileIds(userId);
+    const id = Number(req.params.id);
+    const [p] = await db.select().from(payslips).where(eq(payslips.id, id));
+    if (!p || !userProfileIds.includes(p.profileId)) return res.status(404).json({ error: "Nómina no encontrada" });
+    if (!p.periodYear || !p.periodMonth) return res.json({ previous: null, lastYear: null, prevId: null, nextId: null });
+
+    const siblings = await db
+      .select({ id: payslips.id, periodYear: payslips.periodYear, periodMonth: payslips.periodMonth, grossSalary: payslips.grossSalary, netSalary: payslips.netSalary })
+      .from(payslips)
+      .where(and(eq(payslips.profileId, p.profileId), eq(payslips.payslipType, p.payslipType), ne(payslips.parsingStatus, "error")))
+      .orderBy(asc(payslips.periodYear), asc(payslips.periodMonth), asc(payslips.id));
+    const withPeriod = siblings.filter((s) => s.periodYear && s.periodMonth);
+    const idx = withPeriod.findIndex((s) => s.id === id);
+    const value = (s: { periodYear: number | null; periodMonth: number | null }) => s.periodYear! * 12 + s.periodMonth!;
+    const previous = idx > 0 ? withPeriod[idx - 1] : null;
+    const lastYear = withPeriod.find((s) => value(s) === value(p) - 12) ?? null;
+
+    const ids = [id, previous?.id, lastYear?.id].filter((x): x is number => !!x);
+    const concepts = await db.select().from(payslipConcepts).where(inArray(payslipConcepts.payslipId, ids));
+    const of = (pid: number) => concepts.filter((c) => c.payslipId === pid);
+    const compareWith = (other: typeof previous) =>
+      other && {
+        id: other.id,
+        periodYear: other.periodYear,
+        periodMonth: other.periodMonth,
+        grossSalary: other.grossSalary,
+        netSalary: other.netSalary,
+        concepts: diffConcepts(of(id), of(other.id)),
+      };
+    res.json({
+      previous: compareWith(previous),
+      lastYear: compareWith(lastYear),
+      prevId: previous?.id ?? null,
+      nextId: idx >= 0 && idx < withPeriod.length - 1 ? withPeriod[idx + 1].id : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 payslipsRouter.get("/:id", async (req, res, next) => {
   try {
     const { userId } = req.user!;

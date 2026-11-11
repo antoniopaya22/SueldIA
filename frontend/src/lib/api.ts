@@ -1543,3 +1543,45 @@ export const importBankCsv = (file: File, accountId: number, headerIndex: number
   form.append("mapping", JSON.stringify(mapping));
   return postForm<BankCsvResult>(`/import/csv${dryRun ? "?dryRun=true" : ""}`, form);
 };
+
+// ─── Comparar nóminas y resumen para la Renta ───────────────────
+export interface ConceptDiff {
+  name: string;
+  category: "devengo" | "deduccion" | "otros";
+  current: number | null;
+  other: number | null;
+  change: number | null;
+}
+
+export interface PayslipComparison {
+  id: number;
+  periodYear: number;
+  periodMonth: number;
+  grossSalary: number | null;
+  netSalary: number | null;
+  concepts: ConceptDiff[];
+}
+
+export interface PayslipCompareResponse {
+  previous: PayslipComparison | null;
+  lastYear: PayslipComparison | null;
+  prevId: number | null;
+  nextId: number | null;
+}
+
+export const getPayslipComparison = (id: number) => request<PayslipCompareResponse>(`/payslips/${id}/compare`);
+
+export interface TaxSummary {
+  year: number;
+  payslips: number;
+  grossTotal: number;
+  irpfWithheld: number;
+  socialSecurity: number;
+  netTotal: number;
+  inKind: number;
+  effectiveIrpfRate: number | null;
+  missingMonths: number[];
+}
+
+export const getTaxSummary = (profileId: number, year: number) =>
+  request<TaxSummary>(`/payslips/tax-summary?profileId=${profileId}&year=${year}`);

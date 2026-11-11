@@ -133,6 +133,8 @@ describeDb("autorización entre usuarios (integración)", () => {
     ["PUT", `/profiles/${ids.profile}`, { name: "hack" }],
     ["DELETE", `/profiles/${ids.profile}`],
     ["GET", `/payslips/${ids.payslip}`],
+    ["GET", `/payslips/${ids.payslip}/compare`],
+    ["GET", `/payslips/tax-summary?profileId=${ids.profile}&year=2026`],
     ["PUT", `/payslips/${ids.payslip}/concepts`, { concepts: [] }],
     ["POST", `/payslips/${ids.payslip}/reprocess`],
     ["GET", `/payslips/${ids.payslip}/link-suggestions`],

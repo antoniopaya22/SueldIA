@@ -1,18 +1,19 @@
 import { useMemo, useState } from "react";
 import { useLeaveGuard } from "../../hooks/use-leave-guard";
 import { deferWithUndo } from "../../lib/undo";
+import { ComparisonCard } from "./ComparisonCard";
 import { setUrlParams } from "../../lib/url-state";
 import { irpfAmount, socialSecurityAmount } from "../../lib/payslip-concepts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowRightLeft, Check, ArrowLeft, Building2, ChevronDown, FileText, Gift, Link2, Loader2, MoreHorizontal,
+  AlertTriangle, ArrowRightLeft, Check, ChevronLeft, ChevronRight, ArrowLeft, Building2, ChevronDown, FileText, Gift, Link2, Loader2, MoreHorizontal,
   NotebookPen, Pencil, Plus, RefreshCw, Save, Search, Tag as TagIcon, Trash2, Unlink, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   assignTag, createNote, createTag, deleteNote, getNotes, getPayslipTags, getTags, removeTag,
   getPayslipLinkSuggestions, getTransactions, linkPayslipTransaction,
-  updatePayslipConcepts, updatePayslipType, markPayslipReviewed, movePayslipToProfile,
+  updatePayslipConcepts, updatePayslipType, markPayslipReviewed, movePayslipToProfile, getPayslipComparison,
   type Payslip, type PayslipConcept, type PayslipLinkCandidate,
 } from "../../lib/api";
 import { formatCurrency, formatPct } from "../../lib/format";
@@ -541,8 +542,10 @@ function LinkIncomeCard({
 
 // ─── Detalle ────────────────────────────────────────────────────
 export function PayslipDetail({
-  payslip, profileName, profiles = [], onBack, onDelete, onReprocess, isReprocessing, onEditingChange,
+  payslip, profileName, profiles = [], onBack, onDelete, onReprocess, isReprocessing, onEditingChange, onOpen,
 }: {
+  /** Abrir otra nómina (anterior/siguiente). */
+  onOpen?: (id: number) => void;
   payslip: PayslipWithConcepts;
   profileName?: string;
   /** Perfiles del usuario, para «Mover a otro perfil». */
@@ -576,6 +579,7 @@ export function PayslipDetail({
   }>(initialMeta);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [confirmReprocess, setConfirmReprocess] = useState(false);
+  const { data: neighbors } = useQuery({ queryKey: ["payslip-compare", payslip.id], queryFn: () => getPayslipComparison(payslip.id) });
 
   // Un clic en el menú con una edición a medias la perdía sin avisar.
   useLeaveGuard(editing, "Tienes cambios sin guardar en esta nómina. ¿Salir sin guardarlos?");
@@ -718,13 +722,26 @@ export function PayslipDetail({
 
   return (
     <div>
+      <div className="mb-4 flex items-center justify-between gap-2">
       <button
         type="button"
         onClick={onBack}
-        className="mb-4 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 -ml-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 -ml-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
         <ArrowLeft className="size-4" /> Mis nóminas
       </button>
+        {/* Anterior / siguiente nómina del mismo perfil y tipo. */}
+        {(neighbors?.prevId || neighbors?.nextId) && !editing && (
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon-sm" disabled={!neighbors?.prevId} onClick={() => neighbors?.prevId && onOpen?.(neighbors.prevId)} aria-label="Nómina anterior" title="Nómina anterior">
+              <ChevronLeft className="size-4" />
+            </Button>
+            <Button variant="ghost" size="icon-sm" disabled={!neighbors?.nextId} onClick={() => neighbors?.nextId && onOpen?.(neighbors.nextId)} aria-label="Nómina siguiente" title="Nómina siguiente">
+              <ChevronRight className="size-4" />
+            </Button>
+          </div>
+        )}
+      </div>
 
       <PageHeader
         eyebrow={
@@ -903,6 +920,7 @@ export function PayslipDetail({
             </SectionCard>
           )}
           {!editing && gross > 0 && <BreakdownCard payslip={payslip} />}
+          {!editing && <ComparisonCard payslipId={payslip.id} netSalary={payslip.netSalary} grossSalary={payslip.grossSalary} />}
           <LinkIncomeCard payslipId={payslip.id} linkedTransaction={payslip.linkedTransaction} netSalary={payslip.netSalary} />
           <TagsCard payslipId={payslip.id} />
           <SectionCard title="Archivo" icon={FileText}>

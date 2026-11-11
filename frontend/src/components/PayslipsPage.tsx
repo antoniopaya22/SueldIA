@@ -299,6 +299,7 @@ function PayslipsList() {
             onReprocess={() => reprocessMut.mutate(detail.id)}
             isReprocessing={reprocessMut.isPending}
             onEditingChange={setEditingDetail}
+            onOpen={(id) => setUrlParams({ nomina: id })}
           />
         )}
         <ConfirmModal
