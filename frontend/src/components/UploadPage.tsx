@@ -418,7 +418,7 @@ function UploadManager() {
           <SectionCard title="Qué puedes subir">
             <ul className="space-y-4">
               {[
-                { icon: FileText, title: "PDF digital", text: "El que descargas del portal del empleado o te envía la empresa." },
+                { icon: FileText, title: "PDF digital o escaneado", text: "El que descargas del portal del empleado; si es un escaneo, lo leemos con OCR en tu navegador." },
                 { icon: Building2, title: "Empresa privada y organismos públicos", text: "Reconocemos los dos formatos más habituales en España." },
                 { icon: ScanLine, title: "Sin fotos ni escaneos", text: "Leemos el texto del PDF directamente, sin OCR." },
               ].map(({ icon: Icon, title, text }) => (
