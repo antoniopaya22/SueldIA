@@ -141,6 +141,8 @@ export interface Payslip {
   netSalary: number | null;
   parsingStatus: string;
   payslipType: "ordinal" | "extra";
+  /** true si se corrigió a mano: el reprocesado masivo no la toca. */
+  manuallyEdited?: boolean;
   createdAt: string;
   rawText?: string | null;
   concepts?: PayslipConcept[];
@@ -243,11 +245,12 @@ export const updatePayslipConcepts = (
       amount: number;
       isPercentage?: boolean;
     }>;
-    grossSalary?: number;
-    netSalary?: number;
+    /** null = vacío (desconocido), no 0. */
+    grossSalary?: number | null;
+    netSalary?: number | null;
     periodMonth?: number;
     periodYear?: number;
-    company?: string;
+    company?: string | null;
   }
 ) =>
   request<{ ok: boolean }>(`/payslips/${id}/concepts`, {

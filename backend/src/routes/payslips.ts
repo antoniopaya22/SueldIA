@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { payslips, payslipConcepts, profiles, transactions, accounts } from "../db/schema.js";
-import { eq, and, asc, desc, ilike, or, ne, isNull } from "drizzle-orm";
+import { eq, and, asc, desc, ilike, or, ne, isNull, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { upload, validatePdfMagicBytes, fixFilenameEncoding } from "../middleware/upload.js";
 import { parsePayslip } from "../parsers/parser-engine.js";
@@ -256,20 +256,24 @@ payslipsRouter.get("/:id", async (req, res, next) => {
 });
 
 // Update concepts manually
+const money = z.number().finite().min(-10_000_000).max(10_000_000);
 const conceptSchema = z.object({
-  concepts: z.array(
-    z.object({
-      category: z.enum(["devengo", "deduccion", "otros"]),
-      name: z.string().min(1),
-      amount: z.number(),
-      isPercentage: z.boolean().optional(),
-    })
-  ),
-  grossSalary: z.number().optional(),
-  netSalary: z.number().optional(),
-  periodMonth: z.number().min(1).max(12).optional(),
-  periodYear: z.number().min(1900).max(2100).optional(),
-  company: z.string().optional(),
+  concepts: z
+    .array(
+      z.object({
+        category: z.enum(["devengo", "deduccion", "otros"]),
+        name: z.string().trim().min(1).max(200),
+        amount: money,
+        isPercentage: z.boolean().optional(),
+      }),
+    )
+    .max(200),
+  // null = "no lo sé": se guarda vacío en vez de un 0 que contaría en medias y totales.
+  grossSalary: money.nullable().optional(),
+  netSalary: money.nullable().optional(),
+  periodMonth: z.number().int().min(1).max(12).nullable().optional(),
+  periodYear: z.number().int().min(1900).max(2100).nullable().optional(),
+  company: z.string().trim().max(200).nullable().optional(),
 });
 
 payslipsRouter.put("/:id/concepts", async (req, res, next) => {
@@ -285,16 +289,20 @@ payslipsRouter.put("/:id/concepts", async (req, res, next) => {
 
     const parsed = conceptSchema.safeParse(req.body);
     if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
+      return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
 
     const { concepts, ...meta } = parsed.data;
+    // Sin periodo la nómina no se puede situar en ninguna serie: queda "para revisar".
+    const periodMonth = meta.periodMonth === undefined ? existing.periodMonth : meta.periodMonth;
+    const periodYear = meta.periodYear === undefined ? existing.periodYear : meta.periodYear;
+    const parsingStatus = periodMonth && periodYear ? "parsed" : "review";
 
     // Igual que applyParsedResult: sustituir los conceptos es un delete +
     // insert, y a medias dejaba la nómina sin un solo concepto.
     await db.transaction(async (tx) => {
       await tx
         .update(payslips)
-        .set({ ...meta, parsingStatus: "parsed" })
+        .set({ ...meta, company: meta.company || null, parsingStatus, manuallyEdited: true })
         .where(eq(payslips.id, id));
 
       await tx.delete(payslipConcepts).where(eq(payslipConcepts.payslipId, id));
@@ -494,18 +502,22 @@ payslipsRouter.post("/reparse", async (req, res, next) => {
     const { userId } = req.user!;
     const userProfileIds = await getUserProfileIds(userId);
     if (userProfileIds.length === 0)
-      return res.json({ ok: true, reparsed: 0, errors: 0 });
+      return res.json({ ok: true, reparsed: 0, errors: 0, skippedEdited: 0 });
 
+    // ?force=true reprocesa también las corregidas a mano (pisando esas correcciones).
+    const force = req.query.force === "true";
     const allPayslips = await db
-      .select()
+      .select({ id: payslips.id, rawText: payslips.rawText, manuallyEdited: payslips.manuallyEdited })
       .from(payslips)
-      .where(sql`${payslips.profileId} IN (${sql.join(userProfileIds.map((id) => sql`${id}`), sql`, `)})`);
+      .where(inArray(payslips.profileId, userProfileIds));
+    const toReparse = allPayslips.filter((p) => p.rawText && (force || !p.manuallyEdited));
+    const skippedEdited = allPayslips.filter((p) => p.rawText && !force && p.manuallyEdited).length;
     let success = 0;
     let errors = 0;
 
     const BATCH_SIZE = 5;
-    for (let i = 0; i < allPayslips.length; i += BATCH_SIZE) {
-      const batch = allPayslips.filter((p) => p.rawText).slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < toReparse.length; i += BATCH_SIZE) {
+      const batch = toReparse.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map((p) => applyParsedResult(p.id, matchConcepts(p.rawText!))),
       );
@@ -515,7 +527,7 @@ payslipsRouter.post("/reparse", async (req, res, next) => {
       }
     }
 
-    res.json({ ok: true, reparsed: success, errors });
+    res.json({ ok: true, reparsed: success, errors, skippedEdited });
   } catch (err) {
     next(err);
   }
@@ -535,7 +547,10 @@ async function applyParsedResult(payslipId: number, result: ReturnType<typeof ma
         periodMonth: result.periodMonth,
         periodYear: result.periodYear,
         company: result.company,
-        parsingStatus: result.concepts.length > 0 ? "parsed" : "review",
+        // Sin conceptos o sin periodo, la nómina necesita que el usuario la mire.
+        parsingStatus:
+          result.concepts.length > 0 && result.periodMonth && result.periodYear ? "parsed" : "review",
+        manuallyEdited: false,
       })
       .where(eq(payslips.id, payslipId));
 

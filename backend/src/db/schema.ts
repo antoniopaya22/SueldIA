@@ -55,6 +55,10 @@ export const payslips = pgTable(
     })
       .notNull()
       .default("ordinal"),
+    // true en cuanto el usuario corrige la nómina a mano (PUT /:id/concepts).
+    // El reprocesado masivo se la salta para no pisar esas correcciones;
+    // reprocesarla una a una (con confirmación) lo vuelve a poner a false.
+    manuallyEdited: boolean("manually_edited").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

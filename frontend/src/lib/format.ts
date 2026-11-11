@@ -53,3 +53,26 @@ export function formatRelativeDate(iso: string): string {
   const sameYear = date.getFullYear() === new Date().getFullYear();
   return date.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: sameYear ? undefined : "numeric" });
 }
+
+/**
+ * Lee un número tecleado a la española o a la inglesa: "1.234,56", "1234,56",
+ * "1234.56", "12,5" → número; vacío → null; cualquier otra cosa → NaN.
+ * Con coma, los puntos se toman como separador de miles; sin coma, un único
+ * punto seguido de 1-2 cifras es el decimal ("12.50") y si no, de miles ("1.234").
+ */
+export function parseDecimal(raw: string): number | null {
+  const s = raw.trim().replace(/\s|€/g, "");
+  if (s === "") return null;
+  let normalized: string;
+  if (s.includes(",")) normalized = s.replace(/\./g, "").replace(",", ".");
+  else if (/^-?\d+\.\d{1,2}$/.test(s)) normalized = s;
+  else normalized = s.replace(/\./g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(normalized)) return Number.NaN;
+  return Number(normalized);
+}
+
+/** Número para un campo editable: "1234,5" (coma decimal, sin miles). */
+export function formatDecimalInput(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return "";
+  return String(Math.round(n * 100) / 100).replace(".", ",");
+}

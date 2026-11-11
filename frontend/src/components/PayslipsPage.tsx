@@ -160,14 +160,19 @@ function PayslipsList() {
     enabled: !!profileId,
   });
 
-  const { data: detail, isLoading: detailLoading, dataUpdatedAt } = useQuery({
+  const [editingDetail, setEditingDetail] = useState(false);
+  const { data: detail, isLoading: detailLoading, error: detailError, refetch: refetchDetail } = useQuery({
     queryKey: ["payslip", selectedPayslip],
     queryFn: () => getPayslip(selectedPayslip!) as Promise<PayslipWithConcepts>,
     enabled: !!selectedPayslip,
+    // Mientras se edita no se refresca al volver a la pestaña: quien edita
+    // suele ir a mirar el PDF original a otra ventana.
+    refetchOnWindowFocus: !editingDetail,
   });
 
   const openPayslip = (id: number | null) => {
     setSelectedPayslip(id);
+    setEditingDetail(false);
     setIntParam("nomina", id);
     document.querySelector("main")?.scrollTo?.({ top: 0 });
     window.scrollTo({ top: 0 });
@@ -234,7 +239,18 @@ function PayslipsList() {
   if (selectedPayslip) {
     return (
       <>
-        {detailLoading || !detail ? (
+        {detailError && !detail ? (
+          <EmptyState
+            icon={AlertTriangle}
+            title="No encontramos esta nómina"
+            description="Puede que se haya eliminado o que el enlace no sea correcto."
+          >
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant="outline" onClick={() => refetchDetail()}>Reintentar</Button>
+              <Button onClick={() => openPayslip(null)}>Volver a mis nóminas</Button>
+            </div>
+          </EmptyState>
+        ) : detailLoading || !detail ? (
           <div>
             <PageHeaderSkeleton />
             <StatGrid>{Array.from({ length: 4 }).map((_, i) => <StatCardSkeleton key={i} />)}</StatGrid>
@@ -245,15 +261,16 @@ function PayslipsList() {
           </div>
         ) : (
           <PayslipDetail
-            // Remonta al recargar los datos (p.ej. tras reprocesar), si no el
-            // estado local de conceptos seguía mostrando los anteriores.
-            key={`${detail.id}-${dataUpdatedAt}`}
+            // Solo se remonta al cambiar de nómina: con la marca de tiempo de
+            // la query, un refresco al volver a la pestaña tiraba la edición.
+            key={detail.id}
             payslip={detail}
             profileName={profiles.find((p) => p.id === detail.profileId)?.name}
             onBack={() => openPayslip(null)}
             onDelete={() => setDeleteTarget({ id: detail.id, label: formatPeriod(detail.periodMonth, detail.periodYear, true) })}
             onReprocess={() => reprocessMut.mutate(detail.id)}
             isReprocessing={reprocessMut.isPending}
+            onEditingChange={setEditingDetail}
           />
         )}
         <ConfirmModal

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Building2, ChevronDown, FileText, Gift, Link2, Loader2, MoreHorizontal,
@@ -12,7 +12,8 @@ import {
   type Payslip, type PayslipConcept, type PayslipLinkCandidate,
 } from "../../lib/api";
 import { formatCurrency, formatPct } from "../../lib/format";
-import { PageHeader, SectionCard, StatCard, StatGrid } from "../app";
+import { DecimalInput, PageHeader, SectionCard, StatCard, StatGrid } from "../app";
+import { ConfirmModal } from "../ui/ConfirmModal";
 import { StatusBadge, ExtraBadge, MONTHS_FULL, formatPeriod } from "./shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,7 +43,7 @@ function capitalize(s: string) {
 
 // ─── Conceptos ──────────────────────────────────────────────────
 function ConceptTable({
-  title, tone, concepts, allConcepts, editing, onChange, onRemove, onAdd,
+  title, tone, concepts, allConcepts, editing, onChange, onRemove, onAdd, invalidAmounts,
 }: {
   title: string;
   tone: "devengo" | "deduccion";
@@ -50,10 +51,11 @@ function ConceptTable({
   allConcepts: PayslipConcept[];
   editing: boolean;
   onChange: (index: number, field: "name" | "amount", value: string | number) => void;
+  invalidAmounts?: boolean;
   onRemove: (index: number) => void;
   onAdd: () => void;
 }) {
-  const total = concepts.reduce((s, c) => s + (c.isPercentage ? 0 : c.amount), 0);
+  const total = concepts.reduce((s, c) => s + (c.isPercentage || !Number.isFinite(c.amount) ? 0 : c.amount), 0);
   const sorted = editing ? concepts : [...concepts].sort((a, b) => b.amount - a.amount);
   return (
     <SectionCard
@@ -93,12 +95,12 @@ function ConceptTable({
                       aria-label="Nombre del concepto"
                       className="h-8 flex-1"
                     />
-                    <Input
-                      type="number"
-                      step="0.01"
+                    <DecimalInput
                       value={c.amount}
-                      onChange={(e) => onChange(realIndex, "amount", Number(e.target.value))}
+                      // Vacío o no numérico → NaN: el formulario lo marca al guardar.
+                      onValueChange={(v) => onChange(realIndex, "amount", v ?? Number.NaN)}
                       aria-label={`Importe de ${c.name || "concepto"}`}
+                      aria-invalid={invalidAmounts && !Number.isFinite(c.amount) ? true : undefined}
                       className="h-8 w-24 shrink-0 text-right tabular-nums"
                     />
                     <Button variant="ghost" size="icon-sm" onClick={() => onRemove(realIndex)} aria-label="Quitar concepto" className="text-muted-foreground hover:text-destructive">
@@ -477,7 +479,7 @@ function LinkIncomeCard({
 
 // ─── Detalle ────────────────────────────────────────────────────
 export function PayslipDetail({
-  payslip, profileName, onBack, onDelete, onReprocess, isReprocessing,
+  payslip, profileName, onBack, onDelete, onReprocess, isReprocessing, onEditingChange,
 }: {
   payslip: PayslipWithConcepts;
   profileName?: string;
@@ -485,17 +487,61 @@ export function PayslipDetail({
   onDelete: () => void;
   onReprocess: () => void;
   isReprocessing: boolean;
+  /** Avisa al padre de que hay una edición en curso (para no refrescar los datos debajo). */
+  onEditingChange?: (editing: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [concepts, setConcepts] = useState(payslip.concepts);
-  const [meta, setMeta] = useState({
-    grossSalary: payslip.grossSalary ?? 0,
-    netSalary: payslip.netSalary ?? 0,
-    periodMonth: payslip.periodMonth ?? new Date().getMonth() + 1,
-    periodYear: payslip.periodYear ?? new Date().getFullYear(),
+  // Lo que no se sabe se queda vacío (null): antes se rellenaba con 0 € y con
+  // el mes actual, y al guardar esos valores inventados entraban en medias,
+  // totales y series como si fueran reales.
+  const initialMeta = () => ({
+    grossSalary: payslip.grossSalary,
+    netSalary: payslip.netSalary,
+    periodMonth: payslip.periodMonth,
+    periodYear: payslip.periodYear,
     company: payslip.company ?? "",
   });
+  const [meta, setMeta] = useState<{
+    grossSalary: number | null;
+    netSalary: number | null;
+    periodMonth: number | null;
+    periodYear: number | null;
+    company: string;
+  }>(initialMeta);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [confirmReprocess, setConfirmReprocess] = useState(false);
+
+  // Cada página de la app es una carga completa: un clic en el menú con una
+  // edición a medias la perdía sin avisar.
+  useEffect(() => {
+    if (!editing) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [editing]);
+
+  const validate = (): Record<string, string> => {
+    const e: Record<string, string> = {};
+    if (meta.periodMonth == null) e.periodMonth = "Elige el mes";
+    if (meta.periodYear == null || !Number.isInteger(meta.periodYear) || meta.periodYear < 1990 || meta.periodYear > 2100)
+      e.periodYear = "Año entre 1990 y 2100";
+    if (meta.grossSalary != null && !Number.isFinite(meta.grossSalary)) e.grossSalary = "Importe no válido";
+    if (meta.netSalary != null && !Number.isFinite(meta.netSalary)) e.netSalary = "Importe no válido";
+    if (concepts.some((c) => c.name.trim() && !Number.isFinite(c.amount))) e.concepts = "Hay conceptos sin un importe válido";
+    return e;
+  };
+
+  const save = () => {
+    const e = validate();
+    setErrors(e);
+    if (Object.keys(e).length > 0) {
+      toast.error("Revisa los campos marcados");
+      return;
+    }
+    saveMut.mutate();
+  };
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["payslip", payslip.id] });
@@ -511,16 +557,17 @@ export function PayslipDetail({
           .map((c) => ({ category: c.category, name: c.name.trim(), amount: c.amount, isPercentage: c.isPercentage })),
         grossSalary: meta.grossSalary,
         netSalary: meta.netSalary,
-        periodMonth: meta.periodMonth,
-        periodYear: meta.periodYear,
-        company: meta.company.trim() || undefined,
+        periodMonth: meta.periodMonth ?? undefined,
+        periodYear: meta.periodYear ?? undefined,
+        company: meta.company.trim() || null,
       }),
     onSuccess: () => {
       setEditing(false);
+      onEditingChange?.(false);
       invalidate();
       toast.success("Nómina actualizada");
     },
-    onError: () => toast.error("No se pudieron guardar los cambios"),
+    onError: (e: Error) => toast.error(e.message || "No se pudieron guardar los cambios"),
   });
 
   const typeMut = useMutation({
@@ -532,8 +579,9 @@ export function PayslipDetail({
     onError: () => toast.error("No se pudo cambiar el tipo"),
   });
 
-  const devengos = concepts.filter((c) => c.category === "devengo");
-  const deducciones = concepts.filter((c) => c.category === "deduccion");
+  const shownConcepts = editing ? concepts : payslip.concepts;
+  const devengos = shownConcepts.filter((c) => c.category === "devengo");
+  const deducciones = shownConcepts.filter((c) => c.category === "deduccion");
   const gross = payslip.grossSalary ?? 0;
   const net = payslip.netSalary ?? 0;
   const irpf = useMemo(
@@ -547,16 +595,23 @@ export function PayslipDetail({
     setConcepts((cs) => [...cs, { id: 0, payslipId: payslip.id, category, name: "", amount: 0, isPercentage: false }]);
   const removeConcept = (index: number) => setConcepts((cs) => cs.filter((_, i) => i !== index));
 
+  // La edición parte siempre de los datos actuales del servidor; fuera de
+  // edición se muestra directamente `payslip`, así un refresco (tras guardar o
+  // reprocesar) se ve sin tener que remontar el componente.
+  const startEdit = () => {
+    setConcepts(payslip.concepts);
+    setMeta(initialMeta());
+    setErrors({});
+    setEditing(true);
+    onEditingChange?.(true);
+  };
+
   const cancelEdit = () => {
     setEditing(false);
+    onEditingChange?.(false);
+    setErrors({});
     setConcepts(payslip.concepts);
-    setMeta({
-      grossSalary: payslip.grossSalary ?? 0,
-      netSalary: payslip.netSalary ?? 0,
-      periodMonth: payslip.periodMonth ?? new Date().getMonth() + 1,
-      periodYear: payslip.periodYear ?? new Date().getFullYear(),
-      company: payslip.company ?? "",
-    });
+    setMeta(initialMeta());
   };
 
   const period = payslip.periodMonth && payslip.periodYear
@@ -591,17 +646,17 @@ export function PayslipDetail({
           editing ? (
             <>
               <Button variant="outline" onClick={cancelEdit} disabled={saveMut.isPending}>Cancelar</Button>
-              <Button onClick={() => saveMut.mutate()} disabled={saveMut.isPending} className="gap-1.5">
+              <Button onClick={save} disabled={saveMut.isPending} className="gap-1.5">
                 {saveMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
                 Guardar cambios
               </Button>
             </>
           ) : (
             <>
-              <Button variant="outline" onClick={() => setEditing(true)} className="gap-1.5">
+              <Button variant="outline" onClick={startEdit} className="gap-1.5">
                 <Pencil className="size-4" /> Editar
               </Button>
-              <Button variant="outline" onClick={onReprocess} disabled={isReprocessing} className="gap-1.5">
+              <Button variant="outline" onClick={() => setConfirmReprocess(true)} disabled={isReprocessing} className="gap-1.5">
                 <RefreshCw className={cn("size-4", isReprocessing && "animate-spin")} />
                 {isReprocessing ? "Reprocesando…" : "Reprocesar"}
               </Button>
@@ -639,29 +694,34 @@ export function PayslipDetail({
               <Input id="edit-company" value={meta.company} onChange={(e) => setMeta((m) => ({ ...m, company: e.target.value }))} />
             </div>
             <div className="space-y-1.5">
-              <Label>Mes</Label>
-              <Select value={String(meta.periodMonth)} onValueChange={(v) => v && setMeta((m) => ({ ...m, periodMonth: Number(v) }))}>
-                <SelectTrigger className="w-full">
-                  <SelectValue>{(v: string) => capitalize(MONTHS_FULL[Number(v) - 1] ?? "")}</SelectValue>
+              <Label htmlFor="edit-month">Mes</Label>
+              <Select value={meta.periodMonth == null ? "" : String(meta.periodMonth)} onValueChange={(v) => v && setMeta((m) => ({ ...m, periodMonth: Number(v) }))}>
+                <SelectTrigger id="edit-month" className="w-full" aria-invalid={errors.periodMonth ? true : undefined} aria-describedby={errors.periodMonth ? "edit-month-error" : undefined}>
+                  <SelectValue placeholder="Elige el mes">{(v: string) => (v ? capitalize(MONTHS_FULL[Number(v) - 1] ?? "") : "Elige el mes")}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {MONTHS_FULL.map((m, i) => <SelectItem key={m} value={String(i + 1)}>{capitalize(m)}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <FieldError id="edit-month-error" message={errors.periodMonth} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="edit-year">Año</Label>
-              <Input id="edit-year" type="number" min={1990} max={2100} value={meta.periodYear} onChange={(e) => setMeta((m) => ({ ...m, periodYear: Number(e.target.value) }))} />
+              <DecimalInput id="edit-year" value={meta.periodYear} onValueChange={(v) => setMeta((m) => ({ ...m, periodYear: v }))} placeholder="AAAA" aria-invalid={errors.periodYear ? true : undefined} aria-describedby={errors.periodYear ? "edit-year-error" : undefined} />
+              <FieldError id="edit-year-error" message={errors.periodYear} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="edit-gross">Bruto (€)</Label>
-              <Input id="edit-gross" type="number" step="0.01" value={meta.grossSalary} onChange={(e) => setMeta((m) => ({ ...m, grossSalary: Number(e.target.value) }))} className="tabular-nums" />
+              <DecimalInput id="edit-gross" value={meta.grossSalary} onValueChange={(v) => setMeta((m) => ({ ...m, grossSalary: v }))} placeholder="Sin dato" className="tabular-nums" aria-invalid={errors.grossSalary ? true : undefined} aria-describedby={errors.grossSalary ? "edit-gross-error" : undefined} />
+              <FieldError id="edit-gross-error" message={errors.grossSalary} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="edit-net">Neto (€)</Label>
-              <Input id="edit-net" type="number" step="0.01" value={meta.netSalary} onChange={(e) => setMeta((m) => ({ ...m, netSalary: Number(e.target.value) }))} className="tabular-nums" />
+              <DecimalInput id="edit-net" value={meta.netSalary} onValueChange={(v) => setMeta((m) => ({ ...m, netSalary: v }))} placeholder="Sin dato" className="tabular-nums" aria-invalid={errors.netSalary ? true : undefined} aria-describedby={errors.netSalary ? "edit-net-error" : undefined} />
+              <FieldError id="edit-net-error" message={errors.netSalary} />
             </div>
           </div>
+          {errors.concepts && <p role="alert" className="mt-3 text-sm text-destructive">{errors.concepts}</p>}
         </SectionCard>
       ) : (
         <StatGrid className="mb-6">
@@ -679,21 +739,23 @@ export function PayslipDetail({
             title="Devengos"
             tone="devengo"
             concepts={devengos}
-            allConcepts={concepts}
+            allConcepts={shownConcepts}
             editing={editing}
             onChange={updateConcept}
             onRemove={removeConcept}
             onAdd={() => addConcept("devengo")}
+            invalidAmounts={!!errors.concepts}
           />
           <ConceptTable
             title="Deducciones"
             tone="deduccion"
             concepts={deducciones}
-            allConcepts={concepts}
+            allConcepts={shownConcepts}
             editing={editing}
             onChange={updateConcept}
             onRemove={removeConcept}
             onAdd={() => addConcept("deduccion")}
+            invalidAmounts={!!errors.concepts}
           />
         </div>
         <NotesCard payslipId={payslip.id} />
@@ -730,6 +792,28 @@ export function PayslipDetail({
           </SectionCard>
         </div>
       </div>
+
+      <ConfirmModal
+        open={confirmReprocess}
+        title="¿Reprocesar esta nómina?"
+        message={
+          payslip.manuallyEdited
+            ? "Se volverán a leer los datos del texto extraído y se sustituirán los conceptos actuales. Perderás las correcciones que hiciste a mano."
+            : "Se volverán a leer los datos del texto extraído y se sustituirán los conceptos actuales."
+        }
+        confirmLabel="Reprocesar"
+        variant="warning"
+        onConfirm={() => {
+          setConfirmReprocess(false);
+          onReprocess();
+        }}
+        onCancel={() => setConfirmReprocess(false)}
+      />
     </div>
   );
+}
+
+function FieldError({ id, message }: { id: string; message?: string }) {
+  if (!message) return null;
+  return <p id={id} role="alert" className="text-xs text-destructive">{message}</p>;
 }

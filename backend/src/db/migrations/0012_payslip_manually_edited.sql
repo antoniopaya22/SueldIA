@@ -1,0 +1,1 @@
+ALTER TABLE "payslips" ADD COLUMN "manually_edited" boolean DEFAULT false NOT NULL;

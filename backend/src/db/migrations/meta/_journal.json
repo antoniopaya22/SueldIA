@@ -85,6 +85,13 @@
       "when": 1794386386004,
       "tag": "0011_enable_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794386843892,
+      "tag": "0012_payslip_manually_edited",
+      "breakpoints": true
     }
   ]
 }
