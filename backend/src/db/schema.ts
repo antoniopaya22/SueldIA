@@ -453,6 +453,13 @@ export const categoryRules = pgTable(
     categoryId: integer("category_id")
       .notNull()
       .references(() => categories.id, { onDelete: "cascade" }),
+    // Condiciones opcionales (todas deben cumplirse). Sin ellas, la regla es
+    // la de siempre: "el beneficiario contiene `match`".
+    matchField: text("match_field", { enum: ["payee", "memo", "any"] }).notNull().default("payee"),
+    transactionType: text("transaction_type", { enum: ["expense", "income"] }),
+    minAmount: doublePrecision("min_amount"),
+    maxAmount: doublePrecision("max_amount"),
+    accountId: integer("account_id").references(() => accounts.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

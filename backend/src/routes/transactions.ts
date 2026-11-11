@@ -5,8 +5,9 @@ import {
   accounts,
   categories,
   categoryGroups,
+  recurringTransactions,
 } from "../db/schema.js";
-import { eq, and, sql, desc, asc, isNull } from "drizzle-orm";
+import { eq, and, sql, desc, asc, isNull, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { defaultCleared } from "../services/transaction-filters.js";
@@ -278,6 +279,63 @@ const payeeSuggestionsSchema = z.object({
 
 // Beneficiarios ya usados, con categoría/cuenta/importe de su último movimiento
 // (autocompletado del formulario). Antes de /:id: si no, "payees" se leería como id.
+// Beneficiarios del usuario con cuántos movimientos y cuánto suman (para
+// renombrar o fusionar variantes: "MERCADONA 1234" y "Mercadona").
+transactionsRouter.get("/payees/summary", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const rows = await db
+      .select({
+        payee: transactions.payee,
+        count: sql<number>`count(*)::int`,
+        expense: sql<number>`coalesce(sum(${transactions.amount}) filter (where ${transactions.type} = 'expense'), 0)`,
+        income: sql<number>`coalesce(sum(${transactions.amount}) filter (where ${transactions.type} = 'income'), 0)`,
+        lastDate: sql<string>`max(${transactions.date})`,
+      })
+      .from(transactions)
+      .where(and(eq(transactions.userId, userId), sql`${transactions.type} != 'transfer'`, sql`${transactions.payee} is not null and ${transactions.payee} <> ''`))
+      .groupBy(transactions.payee)
+      .orderBy(sql`count(*) desc`)
+      .limit(1000);
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const renamePayeesSchema = z.object({
+  from: z.array(z.string().min(1).max(200)).min(1).max(100),
+  to: z.string().trim().min(1, "Escribe el nombre").max(200),
+});
+
+// Renombrar uno o varios beneficiarios a uno solo (fusionar variantes), en
+// movimientos y en programaciones recurrentes.
+transactionsRouter.post("/payees/rename", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = renamePayeesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
+    }
+    const { from, to } = parsed.data;
+    const updated = await db.transaction(async (tx) => {
+      const rows = await tx
+        .update(transactions)
+        .set({ payee: to })
+        .where(and(eq(transactions.userId, userId), inArray(transactions.payee, from)))
+        .returning({ id: transactions.id });
+      await tx
+        .update(recurringTransactions)
+        .set({ payee: to })
+        .where(and(eq(recurringTransactions.userId, userId), inArray(recurringTransactions.payee, from)));
+      return rows.length;
+    });
+    res.json({ ok: true, updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
 transactionsRouter.get("/payees", async (req, res, next) => {
   try {
     const { userId } = req.user!;
@@ -331,7 +389,7 @@ transactionsRouter.post("/", async (req, res, next) => {
 
     // Sin categoría, una regla automática del usuario puede ponerla según el beneficiario.
     if (txData.type !== "transfer" && txData.categoryId == null) {
-      const ruleCategoryId = await ruleCategoryFor(userId, txData.payee);
+      const ruleCategoryId = await ruleCategoryFor(userId, { payee: txData.payee, memo: txData.memo, type: txData.type, amount: txData.amount, accountId: txData.accountId });
       if (ruleCategoryId !== null) txData.categoryId = ruleCategoryId;
     }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { decodeCsv, detectDelimiter, findHeaderIndex, guessMapping, parseBankCsv, splitCsv } from "../parsers/bank-csv.js";
-import { findRuleCategory, loadRules } from "../services/category-rules.service.js";
+import { findRuleFor, loadRules } from "../services/category-rules.service.js";
 import { todayIso } from "../utils/dates.js";
 import { Router } from "express";
 import { db } from "../db/index.js";
@@ -414,7 +414,7 @@ importRouter.post("/csv", uploadCsv.single("file"), async (req, res, next) => {
       date: r.date,
       payee: r.payee || null,
       memo: r.memo || null,
-      categoryId: findRuleCategory(r.payee, rules),
+      categoryId: findRuleFor({ payee: r.payee, memo: r.memo, type: r.amount > 0 ? "income" : "expense", amount: Math.abs(r.amount), accountId }, rules),
       // Lo que ya aparece en el extracto, el banco ya lo ha cobrado o pagado.
       cleared: r.date <= today,
       importedFrom: "csv",

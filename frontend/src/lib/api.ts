@@ -1333,13 +1333,45 @@ export interface CategoryRule {
   categoryId: number;
   categoryName: string;
   groupName: string;
+  /** Dónde buscar el texto. */
+  matchField: "payee" | "memo" | "any";
+  transactionType: "expense" | "income" | null;
+  minAmount: number | null;
+  maxAmount: number | null;
+  accountId: number | null;
   createdAt: string;
 }
 
+export type CategoryRuleInput = Pick<CategoryRule, "match" | "categoryId"> &
+  Partial<Pick<CategoryRule, "matchField" | "transactionType" | "minAmount" | "maxAmount" | "accountId">>;
+
 export const getCategoryRules = () => request<{ data: CategoryRule[] }>("/category-rules").then((r) => r.data);
 
-export const createCategoryRule = (data: { match: string; categoryId: number }) =>
+export const createCategoryRule = (data: CategoryRuleInput) =>
   request<{ id: number }>("/category-rules", { method: "POST", body: JSON.stringify(data) });
+
+export const updateCategoryRule = (id: number, data: CategoryRuleInput) =>
+  request<{ id: number }>(`/category-rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
+
+export const previewCategoryRule = (data: CategoryRuleInput) =>
+  request<{ matched: number; uncategorized: number; sample: Array<{ id: number; date: string; payee: string | null; amount: number; type: string }> }>(
+    "/category-rules/preview",
+    { method: "POST", body: JSON.stringify(data) },
+  );
+
+// ─── Beneficiarios ──────────────────────────────────────────────
+export interface PayeeSummary {
+  payee: string;
+  count: number;
+  expense: number;
+  income: number;
+  lastDate: string;
+}
+
+export const getPayeeSummary = () => request<{ data: PayeeSummary[] }>("/transactions/payees/summary").then((r) => r.data);
+
+export const renamePayees = (from: string[], to: string) =>
+  request<{ ok: boolean; updated: number }>("/transactions/payees/rename", { method: "POST", body: JSON.stringify({ from, to }) });
 
 export const deleteCategoryRule = (id: number) =>
   request<{ ok: boolean }>(`/category-rules/${id}`, { method: "DELETE" });

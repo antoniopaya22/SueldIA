@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "cn";
 import { darkBoost } from "../../../lib/color";
+import { normalizeSearch } from "../../../lib/text";
 
 export type TxType = "expense" | "income" | "transfer";
 
@@ -173,7 +174,7 @@ interface CategoryOptionGroup {
   items: CategoryOption[];
 }
 
-const normalizeText = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const normalizeText = normalizeSearch;
 
 /**
  * Selector de categoría con búsqueda (por nombre de categoría o de grupo, sin

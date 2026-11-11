@@ -170,6 +170,8 @@ describeDb("autorización entre usuarios (integración)", () => {
     ["POST", `/recurring-transactions`, { accountId: ids.account, type: "expense", amount: 1, cadence: "monthly", intervalCount: 1, startDate: "2026-01-01" }],
     ["POST", `/category-rules`, { match: "x", categoryId: ids.category }],
     ["DELETE", `/category-rules/${ids.rule}`],
+    ["PUT", `/category-rules/${ids.rule}`, { match: "hack", categoryId: ids.category }],
+    ["POST", `/category-rules`, { match: "cuenta-ajena", categoryId: ids.category, accountId: ids.account }],
     ["DELETE", `/tags/${ids.tag}`],
     ["POST", `/tags/assign`, { payslipId: ids.payslip, tagId: ids.tag }],
     ["DELETE", `/tags/assign/${ids.payslip}/${ids.tag}`],
@@ -195,6 +197,13 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect(leaks).toEqual([]);
   }, 60_000);
 
+  it("renombrar beneficiarios solo toca los propios", async () => {
+    const r = await call("b", "POST", "/transactions/payees/rename", { from: ["Tienda"], to: "Hackeado" });
+    expect(r.json).toMatchObject({ ok: true, updated: 0 });
+    const summary = (await call("a", "GET", "/transactions/payees/summary")).json.data as Array<{ payee: string }>;
+    expect(summary.map((p) => p.payee)).toContain("Tienda");
+  });
+
   it("las operaciones en lote ignoran los ids de A", async () => {
     const batch = await call("b", "POST", "/transactions/batch", { action: "delete", ids: [ids.transaction] });
     expect(batch.status).toBeLessThan(300);
@@ -206,7 +215,7 @@ describeDb("autorización entre usuarios (integración)", () => {
   it("los listados y exportaciones de B no contienen nada de A", async () => {
     const lists = [
       "/profiles", "/payslips", "/accounts", "/categories", "/transactions", "/recurring-transactions",
-      "/category-rules", "/tags", "/alerts/rules", "/alerts/history", "/budgets?month=2026-01", "/export/all",
+      "/category-rules", "/tags", "/transactions/payees/summary", "/alerts/rules", "/alerts/history", "/budgets?month=2026-01", "/export/all",
       `/payslips?profileId=${ids.profile}`, `/transactions?accountId=${ids.account}`, `/dashboard?profileId=${ids.profile}`,
       `/analytics?profileId=${ids.profile}`, "/finance/summary", "/finance/analytics", "/transactions/payees?q=Tien",
     ];
