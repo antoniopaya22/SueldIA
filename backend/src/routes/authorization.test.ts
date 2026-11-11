@@ -103,7 +103,7 @@ describeDb("autorización entre usuarios (integración)", () => {
     await ok("POST", "/tags/assign", { payslipId: ids.payslip, tagId: ids.tag });
     ids.note = (await ok<{ id: number }>("POST", "/notes", { payslipId: ids.payslip, content: "Nota de A" })).id;
     ids.alertRule = (await ok<{ id: number }>("POST", "/alerts/rules", {
-      name: "Bajada", type: "salary_drop", config: { thresholdPercent: 5 },
+      name: "Regla privada de A", type: "salary_drop", config: { thresholdPercent: 5 },
     })).id;
     const [hist] = await db.insert(s.alertHistory).values({
       userId: (await db.select().from(s.users)).find((u) => u.supabaseUserId === "user-a")!.id,
@@ -204,7 +204,7 @@ describeDb("autorización entre usuarios (integración)", () => {
       `/payslips?profileId=${ids.profile}`, `/transactions?accountId=${ids.account}`, `/dashboard?profileId=${ids.profile}`,
       `/analytics?profileId=${ids.profile}`, "/finance/summary", "/finance/analytics", "/transactions/payees?q=Tien",
     ];
-    const markers = ["Banco A", "Ahorro A", "Grupo A", "Cat A", "Tienda", "Empresa", "Revisada", "Bajada", "Aviso de A", "a.pdf", "Nota de A"];
+    const markers = ["Banco A", "Ahorro A", "Grupo A", "Cat A", "Tienda", "Empresa", "Revisada", "Regla privada de A", "Aviso de A", "a.pdf", "Nota de A"];
     const leaks: string[] = [];
     for (const path of lists) {
       const r = await call("b", "GET", path);
@@ -273,7 +273,10 @@ describeDb("autorización entre usuarios (integración)", () => {
     const notes = (await call("a", "GET", `/notes/${ids.payslip}`)).json as unknown as unknown[];
     expect(notes).toHaveLength(1);
     const rules = (await call("a", "GET", "/alerts/rules")).json as unknown as Array<{ name: string }>;
-    expect(rules.map((r) => r.name)).toEqual(["Bajada"]);
+    // Las tres reglas con las que empieza toda cuenta, más la suya.
+    expect(rules.map((r) => r.name).sort()).toEqual(
+      ["Bajada del neto", "Cambio en la retención de IRPF", "Nómina sin subir", "Regla privada de A"],
+    );
     const recurring = (await call("a", "GET", "/recurring-transactions")).json.data as Array<{ active: boolean }>;
     expect(recurring[0].active).toBe(true);
     const cats = (await call("a", "GET", "/categories")).json.data as Array<{ name: string; categories: Array<{ name: string }> }>;

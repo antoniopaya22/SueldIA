@@ -4,6 +4,8 @@ import { eq } from "drizzle-orm";
 import { env } from "../config.js";
 import { db } from "../db/index.js";
 import { users } from "../db/schema.js";
+import { createDefaultAlertRules } from "../services/alerts.service.js";
+import { logger } from "../logger.js";
 
 export interface AuthPayload {
   userId: number;
@@ -54,14 +56,24 @@ async function findOrCreateUser(payload: SupabasePayload & { email: string }): P
     .where(eq(users.supabaseUserId, payload.sub));
   if (existing) return { userId: existing.id, email: existing.email };
 
-  await db
+  const [inserted] = await db
     .insert(users)
     .values({
       supabaseUserId: payload.sub,
       email: payload.email,
       name: payload.user_metadata?.full_name ?? payload.user_metadata?.name ?? payload.email,
     })
-    .onConflictDoNothing({ target: users.supabaseUserId });
+    .onConflictDoNothing({ target: users.supabaseUserId })
+    .returning({ id: users.id });
+  // Solo quien de verdad ha creado la fila (no las peticiones simultáneas que
+  // chocan con ella) siembra las reglas de alerta por defecto.
+  if (inserted) {
+    try {
+      await createDefaultAlertRules(inserted.id);
+    } catch (err) {
+      logger.error({ err, userId: inserted.id }, "No se pudieron crear las alertas por defecto");
+    }
+  }
   const [created] = await db
     .select({ id: users.id, email: users.email })
     .from(users)

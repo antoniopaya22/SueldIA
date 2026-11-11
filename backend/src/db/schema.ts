@@ -169,7 +169,7 @@ export const alertRules = pgTable(
     name: text("name").notNull(),
     type: text("type", {
       enum: [
-        "salary_drop", "missing_payslip", "concept_change", "custom_threshold",
+        "salary_drop", "missing_payslip", "concept_change", "custom_threshold", "irpf_change",
         "category_overspent", "low_balance", "overdue_pending",
       ],
     }).notNull(),

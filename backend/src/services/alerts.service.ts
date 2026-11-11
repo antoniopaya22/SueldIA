@@ -28,6 +28,13 @@ export const alertConfigSchemas = {
     conceptName: z.string().min(1).max(100),
     thresholdPercent: z.number().positive().max(1000).default(15),
   }),
+  // Cambio del tipo efectivo de IRPF (retención / bruto) entre la última
+  // nómina y la anterior, en puntos porcentuales. Antes solo se calculaba al
+  // vuelo en Analítica y nunca llegaba como aviso.
+  irpf_change: z.object({
+    profileId: z.number().int().positive().optional(),
+    thresholdPoints: z.number().positive().max(50).default(2),
+  }),
   custom_threshold: z.object({
     profileId: z.number().int().positive().optional(),
     metric: z.enum(["net", "gross"]),
@@ -106,8 +113,11 @@ async function evalMissingPayslip(
     );
     if (alreadyHasExpected) continue;
 
-    // Plazo en fecha de Madrid (el servidor va en UTC): día 1 del mes esperado + días de gracia.
-    const deadline = new Date(Date.UTC(expected.year, expected.month - 1, 1 + config.graceDays)).toISOString().slice(0, 10);
+    // Plazo en fecha de Madrid (el servidor va en UTC). La nómina de un mes se
+    // cobra a final de ese mes: el plazo es el día 1 del mes siguiente + días
+    // de gracia (antes contaba desde el día 1 del propio mes y la nómina de
+    // noviembre "faltaba" ya el 11 de noviembre).
+    const deadline = new Date(Date.UTC(expected.year, expected.month, 1 + config.graceDays)).toISOString().slice(0, 10);
     if (todayIso() < deadline) continue;
 
     const monthLabel = new Date(expected.year, expected.month - 1, 1).toLocaleDateString("es-ES", {
@@ -212,6 +222,57 @@ async function evalCustomThreshold(
   return candidates;
 }
 
+/** ¿Es la retención de IRPF? ("IRPF", "I.R.P.F.", "Retención IRPF", "Retención a cuenta"…) */
+export function isIrpfConceptName(name: string): boolean {
+  const n = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return /\bi\.?\s?r\.?\s?p\.?\s?f\b/.test(n) || /retencion (a cuenta|irpf)/.test(n);
+}
+
+/** Tipo efectivo de IRPF (%) de una nómina; null sin bruto o sin retención. */
+export function effectiveIrpfRate(
+  grossSalary: number | null,
+  concepts: Array<{ category: string; name: string; amount: number; isPercentage: boolean }>,
+): number | null {
+  if (!grossSalary || grossSalary <= 0) return null;
+  const irpf = concepts
+    .filter((c) => c.category === "deduccion" && !c.isPercentage && isIrpfConceptName(c.name))
+    .reduce((s, c) => s + c.amount, 0);
+  return irpf > 0 ? (irpf / grossSalary) * 100 : null;
+}
+
+async function evalIrpfChange(
+  rule: Rule,
+  config: z.infer<typeof alertConfigSchemas.irpf_change>,
+): Promise<Candidate[]> {
+  const candidates: Candidate[] = [];
+  for (const profile of await scopedProfiles(rule.userId, config.profileId)) {
+    const history = await parsedOrdinalPayslips(profile.id);
+    const latest = history.at(-1);
+    const prior = history.at(-2);
+    if (!latest || !prior) continue;
+
+    const concepts = await db
+      .select()
+      .from(payslipConcepts)
+      .where(inArray(payslipConcepts.payslipId, [latest.id, prior.id]));
+    const latestRate = effectiveIrpfRate(latest.grossSalary, concepts.filter((c) => c.payslipId === latest.id));
+    const priorRate = effectiveIrpfRate(prior.grossSalary, concepts.filter((c) => c.payslipId === prior.id));
+    if (latestRate == null || priorRate == null) continue;
+
+    const diff = latestRate - priorRate;
+    if (Math.abs(diff) < config.thresholdPoints) continue;
+
+    const fmt = (n: number) => n.toLocaleString("es-ES", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    candidates.push({
+      severity: "warning",
+      message: `La retención de IRPF de ${profile.name} ha ${diff > 0 ? "subido" : "bajado"} del ${fmt(priorRate)} % al ${fmt(latestRate)} % en la última nómina.`,
+      payslipId: latest.id,
+      dedupeKey: `irpf_change:${rule.id}:${latest.id}`,
+    });
+  }
+  return candidates;
+}
+
 async function evaluateRule(rule: Rule): Promise<Candidate[]> {
   const schema = alertConfigSchemas[rule.type as AlertRuleType];
   if (!schema) return [];
@@ -237,6 +298,8 @@ async function evaluateRule(rule: Rule): Promise<Candidate[]> {
       return evalConceptChange(rule, parsed.data as z.infer<typeof alertConfigSchemas.concept_change>);
     case "custom_threshold":
       return evalCustomThreshold(rule, parsed.data as z.infer<typeof alertConfigSchemas.custom_threshold>);
+    case "irpf_change":
+      return evalIrpfChange(rule, parsed.data as z.infer<typeof alertConfigSchemas.irpf_change>);
     case "category_overspent":
       return evalCategoryOverspent(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.category_overspent>);
     case "low_balance":
@@ -285,6 +348,22 @@ export async function evaluateRulesForUser(userId: number): Promise<number> {
     }
   }
   return created;
+}
+
+/**
+ * Reglas con las que empieza cada cuenta nueva: la portada promete «te avisa
+ * si algo cambia» y un usuario recién llegado no tenía ninguna.
+ */
+export const DEFAULT_ALERT_RULES = [
+  { name: "Bajada del neto", type: "salary_drop", config: { thresholdPercent: 5 } },
+  { name: "Nómina sin subir", type: "missing_payslip", config: { graceDays: 10 } },
+  { name: "Cambio en la retención de IRPF", type: "irpf_change", config: { thresholdPoints: 2 } },
+] as const;
+
+export async function createDefaultAlertRules(userId: number): Promise<void> {
+  await db.insert(alertRules).values(
+    DEFAULT_ALERT_RULES.map((r) => ({ userId, name: r.name, type: r.type, config: JSON.stringify(r.config) })),
+  );
 }
 
 /** Evalúa las reglas de todos los usuarios — pensado para el cron diario. */

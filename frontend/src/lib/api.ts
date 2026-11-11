@@ -507,7 +507,7 @@ export const moveBudget = (month: string, fromCategoryId: number, toCategoryId: 
 
 // ─── Alerts ─────────────────────────────────────────────────────
 export type AlertRuleType =
-  | "salary_drop" | "missing_payslip" | "concept_change" | "custom_threshold"
+  | "salary_drop" | "missing_payslip" | "concept_change" | "custom_threshold" | "irpf_change"
   | "category_overspent" | "low_balance" | "overdue_pending";
 
 // Formas de `config` por tipo de regla — deben reflejar
@@ -524,6 +524,11 @@ export interface ConceptChangeConfig {
   profileId?: number;
   conceptName: string;
   thresholdPercent?: number;
+}
+export interface IrpfChangeConfig {
+  profileId?: number;
+  /** Puntos porcentuales de cambio del tipo efectivo (por defecto 2). */
+  thresholdPoints?: number;
 }
 export interface CustomThresholdConfig {
   profileId?: number;
@@ -547,6 +552,7 @@ export type AlertRuleConfig =
   | MissingPayslipConfig
   | ConceptChangeConfig
   | CustomThresholdConfig
+  | IrpfChangeConfig
   | CategoryOverspentConfig
   | LowBalanceConfig
   | OverduePendingConfig;
@@ -567,6 +573,8 @@ export interface AlertHistoryItem {
   severity: "info" | "warning" | "critical";
   message: string;
   read: boolean;
+  /** Nómina que lo provocó (alertas de nóminas); null en las de finanzas. */
+  payslipId?: number | null;
   createdAt: string;
 }
 

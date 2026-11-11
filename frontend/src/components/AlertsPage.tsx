@@ -8,7 +8,7 @@ import {
   createAlertRule, deleteAlertRule, getAccounts, getAlertHistory, getAlertRules, getCategories, getProfiles,
   markAllAlertsRead, markAlertRead, updateAlertRule,
   type Account, type AlertRule, type AlertRuleConfig, type AlertRuleType, type CategoryGroup,
-  type CategoryOverspentConfig, type ConceptChangeConfig, type CustomThresholdConfig, type LowBalanceConfig,
+  type CategoryOverspentConfig, type ConceptChangeConfig, type CustomThresholdConfig, type IrpfChangeConfig, type LowBalanceConfig,
   type MissingPayslipConfig, type OverduePendingConfig, type Profile, type SalaryDropConfig,
 } from "../lib/api";
 import { formatCurrency, formatRelativeDate } from "../lib/format";
@@ -34,7 +34,7 @@ import { cn } from "cn";
 
 // ─── Metadatos por tipo de regla ────────────────────────────────
 const RULE_TYPE_GROUPS: { label: string; types: AlertRuleType[] }[] = [
-  { label: "Nóminas", types: ["salary_drop", "missing_payslip", "concept_change", "custom_threshold"] },
+  { label: "Nóminas", types: ["salary_drop", "missing_payslip", "irpf_change", "concept_change", "custom_threshold"] },
   { label: "Finanzas", types: ["category_overspent", "low_balance", "overdue_pending"] },
 ];
 
@@ -53,6 +53,10 @@ const RULE_TYPE_META: Record<AlertRuleType, { label: string; description: string
   concept_change: {
     label: "Cambio en un concepto",
     description: "Se dispara si el importe de un concepto (ej. «IRPF») cambia más de un % entre las dos últimas nóminas.",
+  },
+  irpf_change: {
+    label: "Cambio en la retención de IRPF",
+    description: "Se dispara si el tipo efectivo de IRPF (retención sobre el bruto) cambia más de unos puntos entre las dos últimas nóminas.",
   },
   custom_threshold: {
     label: "Umbral personalizado",
@@ -85,7 +89,7 @@ const ALL_PROFILES = "__all__";
 // Config unificado (todas las claves posibles, opcionales) para poder leer
 // `rule.config` sin importar el tipo concreto al precargar el formulario.
 type AnyRuleConfig = Partial<
-  SalaryDropConfig & MissingPayslipConfig & ConceptChangeConfig & CustomThresholdConfig
+  SalaryDropConfig & MissingPayslipConfig & ConceptChangeConfig & CustomThresholdConfig & IrpfChangeConfig
   & CategoryOverspentConfig & LowBalanceConfig & OverduePendingConfig
 >;
 
@@ -114,7 +118,9 @@ function summarizeRule(rule: AlertRule, profiles: Profile[], accounts: Account[]
     case "missing_payslip":
       return `Nómina no subida tras ${config.graceDays ?? 10} días · ${scope}`;
     case "concept_change":
-      return `"${config.conceptName}" cambia > ${config.thresholdPercent ?? 15}% · ${scope}`;
+      return `"${config.conceptName}" cambia > ${config.thresholdPercent ?? 15} % · ${scope}`;
+    case "irpf_change":
+      return `IRPF cambia ≥ ${config.thresholdPoints ?? 2} puntos · ${scope}`;
     case "custom_threshold": {
       const metricLabel = config.metric === "gross" ? "Bruto" : "Neto";
       const comparatorLabel = config.comparator === "above" ? "por encima de" : "por debajo de";
@@ -146,7 +152,9 @@ function AlertRuleDialog({
   const [type, setType] = useState<AlertRuleType>(rule?.type ?? presetType ?? "salary_drop");
   const [profileId, setProfileId] = useState<string>(existingConfig.profileId != null ? String(existingConfig.profileId) : ALL_PROFILES);
   const [enabled, setEnabled] = useState(rule?.enabled ?? true);
-  const [thresholdPercent, setThresholdPercent] = useState(existingConfig.thresholdPercent != null ? String(existingConfig.thresholdPercent) : "");
+  // Para irpf_change el mismo campo guarda puntos (thresholdPoints).
+  const initialThreshold = existingConfig.thresholdPercent ?? existingConfig.thresholdPoints;
+  const [thresholdPercent, setThresholdPercent] = useState(initialThreshold != null ? String(initialThreshold) : "");
   const [graceDays, setGraceDays] = useState(existingConfig.graceDays != null ? String(existingConfig.graceDays) : "");
   const [conceptName, setConceptName] = useState(existingConfig.conceptName ?? "");
   const [metric, setMetric] = useState<"" | "net" | "gross">(existingConfig.metric ?? "");
@@ -191,6 +199,9 @@ function AlertRuleDialog({
       case "missing_payslip":
         if (graceDays.trim() !== "") base.graceDays = Number(graceDays);
         return base as MissingPayslipConfig;
+      case "irpf_change":
+        if (thresholdPercent.trim() !== "") base.thresholdPoints = Number(thresholdPercent);
+        return base as IrpfChangeConfig;
       case "concept_change":
         base.conceptName = conceptName.trim();
         if (thresholdPercent.trim() !== "") base.thresholdPercent = Number(thresholdPercent);
@@ -356,9 +367,9 @@ function AlertRuleDialog({
               </div>
             )}
 
-            {(type === "salary_drop" || type === "concept_change") && (
+            {(type === "salary_drop" || type === "concept_change" || type === "irpf_change") && (
               <div className="space-y-1.5">
-                <Label htmlFor="rule-threshold">Umbral de cambio (%)</Label>
+                <Label htmlFor="rule-threshold">{type === "irpf_change" ? "Cambio mínimo (puntos)" : "Umbral de cambio (%)"}</Label>
                 <Input
                   id="rule-threshold"
                   type="number"
@@ -367,9 +378,13 @@ function AlertRuleDialog({
                   step="0.1"
                   value={thresholdPercent}
                   onChange={(e) => setThresholdPercent(e.target.value)}
-                  placeholder={type === "salary_drop" ? "10" : "15"}
+                  placeholder={type === "salary_drop" ? "10" : type === "irpf_change" ? "2" : "15"}
                 />
-                <p className="text-xs text-muted-foreground">Déjalo en blanco para usar el valor por defecto ({type === "salary_drop" ? "10" : "15"}%).</p>
+                <p className="text-xs text-muted-foreground">
+                  {type === "irpf_change"
+                    ? "Déjalo en blanco para usar el valor por defecto (2 puntos: p. ej., del 15 % al 17 %)."
+                    : `Déjalo en blanco para usar el valor por defecto (${type === "salary_drop" ? "10" : "15"} %).`}
+                </p>
               </div>
             )}
 
@@ -658,6 +673,11 @@ function AlertsView() {
                     <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       <span>{formatRelativeDate(item.createdAt)}</span>
                       <span className={cn("inline-flex h-5 items-center rounded-md px-1.5 text-[11px] font-medium", meta.className)}>{meta.label}</span>
+                      {item.payslipId && (
+                        <a href={`/app/payslips?nomina=${item.payslipId}`} className="font-medium text-foreground underline underline-offset-2">
+                          Ver nómina
+                        </a>
+                      )}
                     </p>
                   </div>
                   {!item.read && (
