@@ -24,15 +24,23 @@ export const users = pgTable("users", {
 }).enableRLS();
 
 // ─── Profiles ───────────────────────────────────────────────────
-export const profiles = pgTable("profiles", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  color: text("color").notNull().default("#6366f1"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}).enableRLS();
+export const profiles = pgTable(
+  "profiles",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color").notNull().default("#6366f1"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    // Claves foráneas consultadas o usadas en borrados en cascada (sin índice,
+    // Postgres recorre la tabla hija entera).
+    userIdx: index("profiles_user_idx").on(table.userId),
+  }),
+).enableRLS();
 
 export const payslips = pgTable(
   "payslips",
@@ -96,24 +104,36 @@ export const payslipConcepts = pgTable(
 ).enableRLS();
 
 // ─── Payslip Notes (document management) ────────────────────────
-export const payslipNotes = pgTable("payslip_notes", {
-  id: serial("id").primaryKey(),
-  payslipId: integer("payslip_id")
-    .notNull()
-    .references(() => payslips.id, { onDelete: "cascade" }),
-  content: text("content").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}).enableRLS();
+export const payslipNotes = pgTable(
+  "payslip_notes",
+  {
+    id: serial("id").primaryKey(),
+    payslipId: integer("payslip_id")
+      .notNull()
+      .references(() => payslips.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    payslipIdx: index("payslip_notes_payslip_idx").on(table.payslipId),
+  }),
+).enableRLS();
 
 // ─── Tags (document organization) ──────────────────────────────
-export const tags = pgTable("tags", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  color: text("color").notNull().default("#6366f1"),
-}).enableRLS();
+export const tags = pgTable(
+  "tags",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color").notNull().default("#6366f1"),
+  },
+  (table) => ({
+    userIdx: index("tags_user_idx").on(table.userId),
+  }),
+).enableRLS();
 
 export const payslipTags = pgTable(
   "payslip_tags",
@@ -130,26 +150,33 @@ export const payslipTags = pgTable(
     // Evita asignar la misma etiqueta dos veces a la misma nómina (p. ej. un
     // doble clic en "asignar").
     payslipTagIdx: uniqueIndex("payslip_tags_payslip_tag_idx").on(table.payslipId, table.tagId),
+    tagIdx: index("payslip_tags_tag_idx").on(table.tagId),
   }),
 ).enableRLS();
 
 // ─── Alert Rules (automation) ───────────────────────────────────
-export const alertRules = pgTable("alert_rules", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  type: text("type", {
-    enum: [
-      "salary_drop", "missing_payslip", "concept_change", "custom_threshold",
-      "category_overspent", "low_balance", "overdue_pending",
-    ],
-  }).notNull(),
-  config: text("config").notNull().default("{}"), // JSON config
-  enabled: boolean("enabled").notNull().default(true),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}).enableRLS();
+export const alertRules = pgTable(
+  "alert_rules",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: text("type", {
+      enum: [
+        "salary_drop", "missing_payslip", "concept_change", "custom_threshold",
+        "category_overspent", "low_balance", "overdue_pending",
+      ],
+    }).notNull(),
+    config: text("config").notNull().default("{}"), // JSON config
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("alert_rules_user_idx").on(table.userId),
+  }),
+).enableRLS();
 
 // ─── Alert History ──────────────────────────────────────────────
 export const alertHistory = pgTable(
@@ -174,52 +201,73 @@ export const alertHistory = pgTable(
   },
   (table) => ({
     ruleDedupeIdx: uniqueIndex("alert_history_rule_dedupe_idx").on(table.ruleId, table.dedupeKey),
+    // La campana lo consulta en cada carga de página.
+    userIdx: index("alert_history_user_idx").on(table.userId, table.createdAt),
+    payslipIdx: index("alert_history_payslip_idx").on(table.payslipId),
   }),
 ).enableRLS();
 
 // ─── Financial Accounts ─────────────────────────────────────────
-export const accounts = pgTable("accounts", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  type: text("type", {
-    enum: ["bank", "credit_card", "cash", "investment", "other"],
-  })
-    .notNull()
-    .default("bank"),
-  currency: text("currency").notNull().default("EUR"),
-  initialBalance: doublePrecision("initial_balance").notNull().default(0),
-  color: text("color").notNull().default("#6366f1"),
-  icon: text("icon"),
-  archived: boolean("archived").notNull().default(false),
-  // Orden elegido por el usuario (Transacciones → Ordenar); a igualdad, por nombre.
-  sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}).enableRLS();
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: text("type", {
+      enum: ["bank", "credit_card", "cash", "investment", "other"],
+    })
+      .notNull()
+      .default("bank"),
+    currency: text("currency").notNull().default("EUR"),
+    initialBalance: doublePrecision("initial_balance").notNull().default(0),
+    color: text("color").notNull().default("#6366f1"),
+    icon: text("icon"),
+    archived: boolean("archived").notNull().default(false),
+    // Orden elegido por el usuario (Transacciones → Ordenar); a igualdad, por nombre.
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("accounts_user_idx").on(table.userId),
+  }),
+).enableRLS();
 
 // ─── Category Groups ────────────────────────────────────────────
-export const categoryGroups = pgTable("category_groups", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  icon: text("icon"),
-  sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}).enableRLS();
+export const categoryGroups = pgTable(
+  "category_groups",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    icon: text("icon"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("category_groups_user_idx").on(table.userId),
+  }),
+).enableRLS();
 
-export const categories = pgTable("categories", {
-  id: serial("id").primaryKey(),
-  groupId: integer("group_id")
-    .notNull()
-    .references(() => categoryGroups.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}).enableRLS();
+export const categories = pgTable(
+  "categories",
+  {
+    id: serial("id").primaryKey(),
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => categoryGroups.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    groupIdx: index("categories_group_idx").on(table.groupId),
+  }),
+).enableRLS();
 
 // ─── Financial Transactions ─────────────────────────────────────
 export const transactions = pgTable(
@@ -279,42 +327,52 @@ export const transactions = pgTable(
     categoryIdx: index("transactions_category_idx").on(table.categoryId),
     // Localizar las partes de un gasto dividido.
     splitGroupIdx: index("transactions_split_group_idx").on(table.splitGroupId),
+    // Editar/borrar un traspaso busca su pareja.
+    transferIdx: index("transactions_transfer_idx").on(table.transferId),
   }),
 ).enableRLS();
 
 // ─── Recurring Transactions ────────────────────────────────────
-export const recurringTransactions = pgTable("recurring_transactions", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  accountId: integer("account_id")
-    .notNull()
-    .references(() => accounts.id, { onDelete: "cascade" }),
-  categoryId: integer("category_id").references(() => categories.id, {
-    onDelete: "set null",
+export const recurringTransactions = pgTable(
+  "recurring_transactions",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    categoryId: integer("category_id").references(() => categories.id, {
+      onDelete: "set null",
+    }),
+    type: text("type", {
+      enum: ["expense", "income"],
+    }).notNull(),
+    amount: doublePrecision("amount").notNull(),
+    cadence: text("cadence", {
+      enum: ["weekly", "monthly", "yearly"],
+    })
+      .notNull()
+      .default("monthly"),
+    intervalCount: integer("interval_count").notNull().default(1),
+    startDate: text("start_date").notNull(),
+    endDate: text("end_date"),
+    payee: text("payee"),
+    memo: text("memo"),
+    flag: text("flag"),
+    active: boolean("active").notNull().default(true),
+    // Domiciliaciones: las ocurrencias se liquidan solas el día del cargo (si no, quedan
+    // pendientes hasta que el usuario las marque).
+    autoSettle: boolean("auto_settle").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("recurring_transactions_user_idx").on(table.userId),
+    accountIdx: index("recurring_transactions_account_idx").on(table.accountId),
+    categoryIdx: index("recurring_transactions_category_idx").on(table.categoryId),
   }),
-  type: text("type", {
-    enum: ["expense", "income"],
-  }).notNull(),
-  amount: doublePrecision("amount").notNull(),
-  cadence: text("cadence", {
-    enum: ["weekly", "monthly", "yearly"],
-  })
-    .notNull()
-    .default("monthly"),
-  intervalCount: integer("interval_count").notNull().default(1),
-  startDate: text("start_date").notNull(),
-  endDate: text("end_date"),
-  payee: text("payee"),
-  memo: text("memo"),
-  flag: text("flag"),
-  active: boolean("active").notNull().default(true),
-  // Domiciliaciones: las ocurrencias se liquidan solas el día del cargo (si no, quedan
-  // pendientes hasta que el usuario las marque).
-  autoSettle: boolean("auto_settle").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}).enableRLS();
+).enableRLS();
 
 // ─── Budgets (presupuesto por categoría y mes, estilo YNAB) ─────
 export const budgets = pgTable(
@@ -384,6 +442,7 @@ export const categoryRules = pgTable(
   (table) => ({
     // Una regla por texto y usuario: volver a crearla solo cambia su categoría.
     userMatchIdx: uniqueIndex("category_rules_user_match_idx").on(table.userId, table.match),
+    categoryIdx: index("category_rules_category_idx").on(table.categoryId),
   }),
 ).enableRLS();
 

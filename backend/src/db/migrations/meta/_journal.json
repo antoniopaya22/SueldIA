@@ -99,6 +99,13 @@
       "when": 1794387387991,
       "tag": "0013_users_email_not_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794388108422,
+      "tag": "0014_fk_indexes",
+      "breakpoints": true
     }
   ]
 }
