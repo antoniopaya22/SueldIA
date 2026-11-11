@@ -280,7 +280,22 @@ function HomeDashboardView() {
       return trends.map((t) => (acc += t.savings));
     })();
 
-    return { prevMonth, netSeries, previousNet, irpfRate, cashflow, balanceSeries };
+    // Ahorro real: lo cobrado en nómina (neto, todos los perfiles) menos lo
+    // gastado, en los últimos 12 meses completos con nómina. Une los dos
+    // módulos, que hasta ahora no se cruzaban en ningún sitio.
+    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const netByMonth = new Map<string, number>();
+    for (const series of Object.values(payroll?.evolution ?? {})) {
+      for (const e of series) if (e.net && e.month < currentKey) netByMonth.set(e.month, (netByMonth.get(e.month) ?? 0) + e.net);
+    }
+    const savingsMonths = trends.filter((t) => t.month < currentKey && netByMonth.has(t.month)).slice(-12);
+    const salary = savingsMonths.reduce((s, t) => s + (netByMonth.get(t.month) ?? 0), 0);
+    const spent = savingsMonths.reduce((s, t) => s + t.expenses, 0);
+    const realSavings = savingsMonths.length >= 2 && salary > 0
+      ? { months: savingsMonths.length, salary, spent, saved: salary - spent, rate: ((salary - spent) / salary) * 100 }
+      : null;
+
+    return { prevMonth, netSeries, previousNet, irpfRate, cashflow, balanceSeries, realSavings };
   }, [trends, payroll, latest, finance]);
 
   if (loadingPayroll || loadingFinance) return <HomeSkeleton />;
@@ -442,6 +457,25 @@ function HomeDashboardView() {
         </SectionCard>
 
         <div className="flex flex-col gap-6">
+          {derived.realSavings && (
+            <SectionCard
+              title="Ahorro sobre tu sueldo"
+              description={`Últimos ${plural(derived.realSavings.months, "mes", "meses")} con nómina`}
+            >
+              <p className={cn("text-2xl font-semibold tabular-nums", derived.realSavings.saved < 0 ? "text-red-600 dark:text-red-400" : "text-foreground")}>
+                {formatCurrency(derived.realSavings.saved)}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {derived.realSavings.saved >= 0
+                  ? `Guardas el ${formatPct(derived.realSavings.rate)} de lo que cobras en nómina.`
+                  : "Gastas más de lo que cobras en nómina."}
+              </p>
+              <dl className="mt-4 space-y-1.5 text-sm">
+                <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Cobrado en nómina (neto)</dt><dd className="tabular-nums text-foreground">{formatCurrency(derived.realSavings.salary)}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Gastado</dt><dd className="tabular-nums text-foreground">{formatCurrency(derived.realSavings.spent)}</dd></div>
+              </dl>
+            </SectionCard>
+          )}
           <SectionCard title="Cuentas" action={<CardLink href="/app/accounts">Gestionar</CardLink>} flush>
             {accounts.length > 0 ? (
               <ul className="divide-y divide-border">

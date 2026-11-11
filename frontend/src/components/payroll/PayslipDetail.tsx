@@ -342,10 +342,18 @@ function WarningsBanner({ warnings }: { warnings: { code: string; message: strin
 function LinkIncomeCard({
   payslipId,
   linkedTransaction,
+  netSalary,
 }: {
   payslipId: number;
   linkedTransaction: PayslipLinkCandidate | null | undefined;
+  netSalary: number | null;
 }) {
+  // Neto de la nómina frente a lo que llegó al banco: si no cuadran, o el
+  // analizador leyó mal el neto o hay un embargo/anticipo que conviene ver.
+  const mismatch =
+    linkedTransaction && netSalary != null && Math.abs(linkedTransaction.amount - netSalary) >= 1
+      ? linkedTransaction.amount - netSalary
+      : null;
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -421,8 +429,17 @@ function LinkIncomeCard({
             <p className="truncate text-sm font-medium text-foreground">{linkedTransaction.payee || linkedTransaction.accountName}</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {formatCurrency(linkedTransaction.amount)} · {linkedTransaction.accountName} ·{" "}
-              {new Date(linkedTransaction.date).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}
+              {new Date(`${linkedTransaction.date}T00:00:00`).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}
             </p>
+            {mismatch != null && (
+              <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  El abono es {formatCurrency(Math.abs(mismatch))} {mismatch > 0 ? "mayor" : "menor"} que el neto de la nómina ({formatCurrency(netSalary)}).
+                  Revisa si el neto se leyó bien o si hubo un anticipo o embargo.
+                </span>
+              </p>
+            )}
           </div>
           <Button
             variant="ghost"
@@ -766,7 +783,7 @@ export function PayslipDetail({
 
         <div className="space-y-6">
           {!editing && gross > 0 && <BreakdownCard payslip={payslip} />}
-          <LinkIncomeCard payslipId={payslip.id} linkedTransaction={payslip.linkedTransaction} />
+          <LinkIncomeCard payslipId={payslip.id} linkedTransaction={payslip.linkedTransaction} netSalary={payslip.netSalary} />
           <TagsCard payslipId={payslip.id} />
           <SectionCard title="Archivo" icon={FileText}>
             <dl className="space-y-2 text-sm">

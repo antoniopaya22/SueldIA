@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, type MouseEvent } from "react";
 import {
-  CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock,
+  CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock, FileText,
 } from "lucide-react";
 import type { Account, Transaction } from "../../../lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -136,9 +136,20 @@ function ClearedToggle({ tx, onToggle }: { tx: Transaction; onToggle: () => void
 
 function TxBadges({ tx, today }: { tx: Transaction; today: string }) {
   const isFutureRecurring = !!tx.recurringTransactionId && !!tx.scheduledFor && tx.scheduledFor > today && !tx.cleared;
-  if (!tx.recurringTransactionId && !isFutureRecurring && !tx.splitGroupId) return null;
+  if (!tx.recurringTransactionId && !isFutureRecurring && !tx.splitGroupId && !tx.payslipId) return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
+      {tx.payslipId && (
+        // El vínculo nómina ↔ ingreso solo se veía desde la nómina.
+        <a
+          href={`/app/payslips?nomina=${tx.payslipId}`}
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+          title="Ingreso vinculado a una nómina: ver la nómina"
+        >
+          <FileText className="size-2.5" aria-hidden="true" /> Nómina
+        </a>
+      )}
       {tx.splitGroupId && (
         <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground" title="Parte de un gasto dividido en varias categorías">
           <Split className="size-2.5" aria-hidden="true" /> Dividido
