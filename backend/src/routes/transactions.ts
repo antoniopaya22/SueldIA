@@ -18,6 +18,7 @@ import {
   amountRangeValid, amountRangeIssue, buildBaseConditions, buildConditions, transactionFilterFields,
 } from "../services/transaction-query.js";
 import { getTodayIsoDate } from "../services/recurring-transactions.service.js";
+import { isoDateSchema } from "../utils/dates.js";
 
 export const transactionsRouter = Router();
 transactionsRouter.param("id", validateIdParam);
@@ -27,7 +28,7 @@ const transactionSchema = z.object({
   categoryId: z.number().int().positive().nullish(),
   type: z.enum(["expense", "income", "transfer"]),
   amount: z.number().positive("Importe debe ser positivo"),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato YYYY-MM-DD"),
+  date: isoDateSchema,
   payee: z.string().max(200).nullish(),
   memo: z.string().max(500).nullish(),
   cleared: z.boolean().optional(),
@@ -747,7 +748,7 @@ transactionsRouter.post("/bulk", async (req, res, next) => {
         categoryId: z.number().int().positive().nullish(),
         type: z.enum(["expense", "income", "transfer"]),
         amount: z.number().nonnegative(),
-        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        date: isoDateSchema,
         payee: z.string().max(200).nullish(),
         memo: z.string().max(500).nullish(),
         cleared: z.boolean().optional(),

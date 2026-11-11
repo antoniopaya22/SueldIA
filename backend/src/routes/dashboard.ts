@@ -12,13 +12,14 @@ import {
   buildIrpfEvolution,
   buildMonthlySavings,
 } from "../services/dashboard.service.js";
+import { monthKeySchema } from "../utils/dates.js";
 
 export const dashboardRouter = Router();
 
 const dashboardQuerySchema = z.object({
   profileId: z.string().regex(/^\d+(,\d+)*$/, "IDs numéricos separados por coma").optional(),
-  from: z.string().regex(/^\d{4}-\d{2}$/, "Formato YYYY-MM").optional(),
-  to: z.string().regex(/^\d{4}-\d{2}$/, "Formato YYYY-MM").optional(),
+  from: monthKeySchema.optional(),
+  to: monthKeySchema.optional(),
 });
 
 const EMPTY_DASHBOARD = {

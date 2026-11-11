@@ -2,12 +2,13 @@ import { and, eq, gte, ilike, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { categories, transactions } from "../db/schema.js";
 import { escapeLike } from "./payee-suggestions.service.js";
+import { isoDateSchema } from "../utils/dates.js";
 
 // Filtros de movimientos compartidos por el listado (GET /transactions) y la
 // exportación: un solo sitio que define qué significa cada filtro, para que
 // "exportar con los filtros actuales" exporte exactamente lo que se ve.
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const isoDate = isoDateSchema;
 
 export const transactionFilterFields = {
   accountId: z.coerce.number().int().positive().optional(),

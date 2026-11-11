@@ -36,9 +36,27 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
       return res.status(400).json({ error: "No se ha subido ningún archivo" });
     }
 
-    const parsed = parseYnabCsv(file.buffer.toString("utf-8"));
+    let parsed: ReturnType<typeof parseYnabCsv>;
+    try {
+      parsed = parseYnabCsv(file.buffer.toString("utf-8"));
+    } catch (err) {
+      // El parser lanza Error con un mensaje ya pensado para el usuario
+      // (p. ej. fichero vacío) — sin esto llegaba como 500 genérico.
+      throw new AppError(400, err instanceof Error ? err.message : "No se pudo leer el archivo");
+    }
     if (parsed.rows.length === 0) {
       throw new AppError(400, "El archivo no contiene movimientos de YNAB");
+    }
+    // Una fecha que no existe (o en formato US, MM/DD/YYYY) se insertaba tal
+    // cual y luego dejaba en blanco toda la analítica de finanzas.
+    if (parsed.invalidDateLines.length > 0) {
+      const lines = parsed.invalidDateLines;
+      const shown = lines.slice(0, 5).join(", ") + (lines.length > 5 ? ` y ${lines.length - 5} más` : "");
+      throw new AppError(
+        400,
+        `Hay ${lines.length} ${lines.length === 1 ? "fila" : "filas"} con una fecha no válida (fila ${shown}). ` +
+          "El export de YNAB debe usar fechas DD/MM/AAAA.",
+      );
     }
 
     const existingAccounts = await db.select().from(accounts).where(eq(accounts.userId, userId));

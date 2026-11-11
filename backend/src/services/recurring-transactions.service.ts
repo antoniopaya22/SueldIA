@@ -1,6 +1,8 @@
 import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import { db, type DbOrTx } from "../db/index.js";
 import { recurringTransactions, transactions } from "../db/schema.js";
+import { todayIso } from "../utils/dates.js";
+import { logger } from "../logger.js";
 
 export type RecurringCadence = "weekly" | "monthly" | "yearly";
 
@@ -50,8 +52,9 @@ function addYearsFromBase(isoDate: string, yearsToAdd: number): string {
   return formatIsoDate(targetYear, month, targetDay);
 }
 
+// Hoy en hora de Madrid (el servidor corre en UTC) — ver utils/dates.ts.
 export function getTodayIsoDate(reference = new Date()): string {
-  return formatIsoDate(reference.getFullYear(), reference.getMonth() + 1, reference.getDate());
+  return todayIso(reference);
 }
 
 export function getOccurrenceDate(
@@ -330,15 +333,28 @@ export async function getPendingOccurrencesForRule(
  * GET /recurring-transactions ya no lo hacen en cada lectura (crear,
  * editar y activar/desactivar una regla lo siguen disparando al momento).
  */
-export async function syncAllUsersRecurringTransactions(): Promise<{ usersSynced: number; occurrencesCreated: number }> {
+export async function syncAllUsersRecurringTransactions(): Promise<{
+  usersSynced: number;
+  usersFailed: number;
+  occurrencesCreated: number;
+}> {
   const userIds = await db
     .selectDistinct({ userId: recurringTransactions.userId })
     .from(recurringTransactions)
     .where(eq(recurringTransactions.active, true));
 
   let occurrencesCreated = 0;
+  let usersFailed = 0;
   for (const { userId } of userIds) {
-    occurrencesCreated += await syncRecurringTransactions(userId);
+    // Un usuario con datos rotos (p. ej. una regla antigua con fecha
+    // imposible) no puede dejar sin sus recurrentes a todos los que vienen
+    // detrás en el bucle — antes un solo error abortaba el cron entero.
+    try {
+      occurrencesCreated += await syncRecurringTransactions(userId);
+    } catch (err) {
+      usersFailed++;
+      logger.error({ err, userId }, "Error sincronizando recurrentes de un usuario");
+    }
   }
-  return { usersSynced: userIds.length, occurrencesCreated };
+  return { usersSynced: userIds.length - usersFailed, usersFailed, occurrencesCreated };
 }

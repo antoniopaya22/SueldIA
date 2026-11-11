@@ -189,7 +189,7 @@ function getMonthKey(date: string): string {
 }
 
 function buildMonthRange(filters: FinanceFilters, rows: FinanceAnalyticsSourceRow[]): string[] {
-  const nowMonth = getMonthKey(new Date().toISOString().slice(0, 10));
+  const nowMonth = getMonthKey(getTodayIsoDate());
   const startMonth = filters.from?.slice(0, 7) ?? rows[0]?.date.slice(0, 7) ?? nowMonth;
   const endMonth = filters.to?.slice(0, 7) ?? rows[rows.length - 1]?.date.slice(0, 7) ?? startMonth;
 

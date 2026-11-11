@@ -2,6 +2,7 @@ import { db } from "../db/index.js";
 import { payslips, payslipConcepts, profiles } from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import { avg, round, stdDev, calculateTrend, predictNext } from "../utils/math.js";
+import { currentYearMonth } from "../utils/dates.js";
 
 /* ───────── Types ────────────────────────────────────────────── */
 
@@ -239,8 +240,11 @@ export function buildAlerts(
   }
 
   if (currentYearData.length > 0) {
-    const currentMonth = new Date().getMonth() + 1;
-    const expectedMonths = currentMonth;
+    // `currentYear` es el último año CON datos, no el del calendario: si no es
+    // el año en curso, se esperan sus 12 meses (antes se comparaba siempre con
+    // el mes actual del calendario y el mensaje salía falso).
+    const today = currentYearMonth();
+    const expectedMonths = currentYear === today.year ? today.month : 12;
     const actualMonths = currentYearData.length;
     if (actualMonths < expectedMonths - 1) {
       alerts.push({

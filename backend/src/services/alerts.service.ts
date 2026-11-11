@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { alertHistory, alertRules, payslipConcepts, payslips, profiles } from "../db/schema.js";
 import { logger } from "../logger.js";
+import { todayIso } from "../utils/dates.js";
 import {
   evalCategoryOverspent, evalLowBalance, evalOverduePending, financeAlertConfigSchemas,
 } from "./finance-alerts.service.js";
@@ -68,6 +69,11 @@ async function parsedOrdinalPayslips(profileId: number): Promise<ParsedPayslip[]
         eq(payslips.profileId, profileId),
         eq(payslips.parsingStatus, "parsed"),
         eq(payslips.payslipType, "ordinal"),
+        // Sin periodo no se puede ordenar: Postgres pondría los NULL al final
+        // y esa nómina pasaría a ser "la última", desactivando en silencio la
+        // regla de nómina ausente y comparando las demás con la equivocada.
+        isNotNull(payslips.periodYear),
+        isNotNull(payslips.periodMonth),
       ),
     )
     .orderBy(asc(payslips.periodYear), asc(payslips.periodMonth));
@@ -100,8 +106,9 @@ async function evalMissingPayslip(
     );
     if (alreadyHasExpected) continue;
 
-    const deadline = new Date(expected.year, expected.month - 1, 1 + config.graceDays);
-    if (new Date() < deadline) continue;
+    // Plazo en fecha de Madrid (el servidor va en UTC): día 1 del mes esperado + días de gracia.
+    const deadline = new Date(Date.UTC(expected.year, expected.month - 1, 1 + config.graceDays)).toISOString().slice(0, 10);
+    if (todayIso() < deadline) continue;
 
     const monthLabel = new Date(expected.year, expected.month - 1, 1).toLocaleDateString("es-ES", {
       month: "long",

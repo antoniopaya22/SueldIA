@@ -2,6 +2,7 @@ import { db } from "../db/index.js";
 import { payslips, payslipConcepts, profiles } from "../db/schema.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { round } from "../utils/math.js";
+import { currentYearMonth } from "../utils/dates.js";
 
 /* ───────── Types ────────────────────────────────────────────── */
 
@@ -173,8 +174,7 @@ export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]
       const totalNet = regularNet + extraNet;
       const totalDeductions = totalGross - totalNet;
       const months = regular.length;
-      const currentMonth = new Date().getMonth() + 1;
-      const currentFullYear = new Date().getFullYear();
+      const { month: currentMonth, year: currentFullYear } = currentYearMonth();
       const isCurrentYear = year === currentFullYear;
       const projectedMonths = isCurrentYear ? Math.max(months, currentMonth) : 12;
       const monthlyAvgGross = months > 0 ? regularGross / months : 0;

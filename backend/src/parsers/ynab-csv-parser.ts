@@ -5,6 +5,7 @@
  * Amounts use European format: "20,99€" → 20.99
  * Dates use DD/MM/YYYY → YYYY-MM-DD
  */
+import { isValidIsoDate } from "../utils/dates.js";
 
 export interface YnabRawRow {
   account: string;
@@ -28,6 +29,8 @@ export interface YnabParseResult {
   totalTransfers: number;
   totalExpenses: number;
   totalIncome: number;
+  /** Números de línea (1 = cabecera) cuya fecha no es una fecha real DD/MM/YYYY. */
+  invalidDateLines: number[];
 }
 
 /** Strip quotes and trim */
@@ -83,7 +86,9 @@ export function parseYnabCsv(content: string): YnabParseResult {
   const categoryGroups = new Map<string, Set<string>>();
   let transfers = 0;
 
-  for (const line of dataLines) {
+  const invalidDateLines: number[] = [];
+
+  for (const [index, line] of dataLines.entries()) {
     // TSV with quoted fields — split by tab
     const parts = line.split("\t");
     if (parts.length < 11) continue;
@@ -103,6 +108,8 @@ export function parseYnabCsv(content: string): YnabParseResult {
     const cleared = clearedStatus === "Cleared" || clearedStatus === "Reconciled";
 
     const date = parseDate(dateRaw);
+    // +2: la línea 1 es la cabecera y las líneas se numeran desde 1.
+    if (!isValidIsoDate(date)) invalidDateLines.push(index + 2);
 
     accountSet.add(account);
 
@@ -159,5 +166,6 @@ export function parseYnabCsv(content: string): YnabParseResult {
     totalTransfers: transfers,
     totalExpenses,
     totalIncome,
+    invalidDateLines,
   };
 }

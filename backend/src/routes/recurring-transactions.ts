@@ -18,6 +18,7 @@ import {
   getTodayIsoDate,
   syncRecurringTransactions,
 } from "../services/recurring-transactions.service.js";
+import { isoDateSchema } from "../utils/dates.js";
 
 export const recurringTransactionsRouter = Router();
 recurringTransactionsRouter.param("id", validateIdParam);
@@ -30,8 +31,8 @@ const recurringTransactionSchema = z
     amount: z.number().positive("Importe debe ser positivo"),
     cadence: z.enum(["weekly", "monthly", "yearly"]),
     intervalCount: z.number().int().min(1).max(12).default(1),
-    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato YYYY-MM-DD"),
-    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato YYYY-MM-DD").nullish(),
+    startDate: isoDateSchema,
+    endDate: isoDateSchema.nullish(),
     payee: z.string().max(200).nullish(),
     memo: z.string().max(500).nullish(),
     flag: z.string().max(100).nullish(),
@@ -155,26 +156,32 @@ recurringTransactionsRouter.post("/", async (req, res, next) => {
       }
     }
 
-    const [created] = await db
-      .insert(recurringTransactions)
-      .values({
-        userId,
-        accountId: parsed.data.accountId,
-        categoryId: parsed.data.categoryId ?? null,
-        type: parsed.data.type,
-        amount: parsed.data.amount,
-        cadence: parsed.data.cadence,
-        intervalCount: parsed.data.intervalCount,
-        startDate: parsed.data.startDate,
-        endDate: parsed.data.endDate ?? null,
-        payee: parsed.data.payee ?? null,
-        memo: parsed.data.memo ?? null,
-        flag: parsed.data.flag ?? null,
-        autoSettle: parsed.data.autoSettle,
-      })
-      .returning();
+    // Crear la regla y generar sus ocurrencias es una sola unidad: si la
+    // generación falla, no debe quedar guardada una regla activa a medias
+    // (que luego el cron diario volvería a intentar cada día).
+    const created = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(recurringTransactions)
+        .values({
+          userId,
+          accountId: parsed.data.accountId,
+          categoryId: parsed.data.categoryId ?? null,
+          type: parsed.data.type,
+          amount: parsed.data.amount,
+          cadence: parsed.data.cadence,
+          intervalCount: parsed.data.intervalCount,
+          startDate: parsed.data.startDate,
+          endDate: parsed.data.endDate ?? null,
+          payee: parsed.data.payee ?? null,
+          memo: parsed.data.memo ?? null,
+          flag: parsed.data.flag ?? null,
+          autoSettle: parsed.data.autoSettle,
+        })
+        .returning();
 
-    await syncRecurringTransactions(userId, getRecurringSyncThroughDate());
+      await syncRecurringTransactions(userId, getRecurringSyncThroughDate(), tx);
+      return created;
+    });
 
     res.status(201).json(created);
   } catch (err) {
