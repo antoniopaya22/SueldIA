@@ -34,7 +34,7 @@ export const TYPE_META: Record<TxType, { label: string; plural: string; icon: Lu
     selected: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   },
   transfer: {
-    label: "Transferencia",
+    label: "Traspaso",
     plural: "Traspasos",
     icon: ArrowLeftRight,
     tile: "bg-muted text-muted-foreground",

@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { getDashboard, getProfiles, type DashboardData } from "../lib/api";
 import { Providers } from "./Providers";
-import { formatCurrency, formatCompact, formatMonthLabel, formatPct } from "../lib/format";
+import { formatCurrency, formatCompact, formatMonthLabel, formatPct, plural } from "../lib/format";
 import { ChartTooltip } from "./ui/ChartTooltip";
 import { ProfileSelector } from "./ui/ProfileSelector";
 import { EmptyState } from "./ui/EmptyState";
@@ -433,7 +433,7 @@ function DashboardView() {
           hint={
             data.kpis.extrasCount > 0
               ? `${data.kpis.totalPayslips} nóminas · ${data.kpis.extrasCount} ${data.kpis.extrasCount === 1 ? "paga extra" : "pagas extra"}`
-              : `${data.kpis.totalPayslips} nóminas`
+              : plural(data.kpis.totalPayslips, "nómina", "nóminas")
           }
         />
       </StatGrid>
@@ -726,7 +726,7 @@ function DashboardView() {
 
       {/* Conceptos */}
       {data.conceptBreakdown.length > 0 && (
-        <SectionCard className="mt-10" title="Todos los conceptos" description={`${data.conceptBreakdown.length} conceptos detectados en el periodo`} flush>
+        <SectionCard className="mt-10" title="Todos los conceptos" description={`${plural(data.conceptBreakdown.length, "concepto detectado", "conceptos detectados")} en el periodo`} flush>
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">

@@ -76,3 +76,8 @@ export function formatDecimalInput(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n)) return "";
   return String(Math.round(n * 100) / 100).replace(".", ",");
 }
+
+/** "1 cuenta", "3 cuentas", "1.234 movimientos". */
+export function plural(n: number, one: string, many: string): string {
+  return `${n.toLocaleString("es-ES")} ${n === 1 ? one : many}`;
+}

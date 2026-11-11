@@ -115,11 +115,11 @@ export function TransactionFormDialog({ open, onClose, editing, initial, default
       if (addAnotherRef.current) {
         // Conserva tipo, cuenta y fecha (lo habitual al apuntar varios tickets seguidos).
         setForm((f) => ({ ...f, amount: "", payee: "", memo: "", categoryId: "" }));
-        toast.success("Transacción creada. Añade la siguiente.");
+        toast.success("Movimiento guardado. Añade el siguiente.");
         setTimeout(() => document.getElementById("tx-amount")?.focus(), 0);
       } else {
         onClose();
-        toast.success("Transacción creada");
+        toast.success("Movimiento guardado");
       }
     },
     onError: (e: Error) => toast.error(e.message),
@@ -130,7 +130,7 @@ export function TransactionFormDialog({ open, onClose, editing, initial, default
     onSuccess: () => {
       invalidateFinance(queryClient);
       onClose();
-      toast.success("Transacción actualizada");
+      toast.success("Movimiento actualizado");
     },
     onError: (e: Error) => toast.error(e.message),
   });

@@ -11,7 +11,7 @@ import {
 import { toast } from "sonner";
 import { exportData, getAnalytics, getProfiles, type AnalyticsData } from "../lib/api";
 import { useSelectedProfile } from "../hooks/use-selected-profile";
-import { formatCompact, formatCurrency, formatMonthLabel, formatPct } from "../lib/format";
+import { formatCompact, formatCurrency, formatMonthLabel, formatPct, plural } from "../lib/format";
 import { Providers } from "./Providers";
 import {
   ChartCard, PageHeader, PageHeaderSkeleton, SectionCard, Segmented, StatCard, StatCardSkeleton, StatGrid,
@@ -294,7 +294,7 @@ function AnalyticsView() {
           label="Vs. año anterior"
           value={yoyAvg == null ? "—" : `${yoyAvg > 0 ? "+" : ""}${formatPct(yoyAvg)}`}
           icon={TrendingUp}
-          hint={yoyAvg == null ? "Hace falta un año de histórico" : `Neto medio, ${analytics.trends.yoyNet.length} meses comparados`}
+          hint={yoyAvg == null ? "Hace falta un año de histórico" : `Neto medio, ${plural(analytics.trends.yoyNet.length, "mes comparado", "meses comparados")}`}
         />
         <StatCard
           label="Proyección"
@@ -398,7 +398,7 @@ function AnalyticsView() {
 
         <ChartCard
           title="Proyección"
-          description={analytics.predictions.length ? `Próximos ${analytics.predictions.length} meses por regresión lineal` : "Hace falta más histórico para estimar"}
+          description={analytics.predictions.length ? `${analytics.predictions.length === 1 ? "Próximo mes" : `Próximos ${analytics.predictions.length} meses`} por regresión lineal` : "Hace falta más histórico para estimar"}
           height={260}
           legend={
             analytics.predictions.length > 0 && (

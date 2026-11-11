@@ -283,7 +283,7 @@ export function TransactionTable(props: Props) {
                           </div>
                           <div className="min-w-0">
                             <p className="truncate font-medium text-foreground">
-                              {tx.payee || (tx.type === "transfer" ? "Transferencia" : "Sin beneficiario")}
+                              {tx.payee || (tx.type === "transfer" ? "Traspaso" : "Sin beneficiario")}
                             </p>
                             {(tx.memo || tx.recurringTransactionId || tx.splitGroupId) && (
                               <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
@@ -365,7 +365,7 @@ export function TransactionTable(props: Props) {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-foreground">
-                        {tx.payee || (tx.type === "transfer" ? "Transferencia" : "Sin beneficiario")}
+                        {tx.payee || (tx.type === "transfer" ? "Traspaso" : "Sin beneficiario")}
                       </p>
                       <p className="truncate text-xs text-muted-foreground">
                         {!grouped && `${formatDateShort(tx.date)} · `}

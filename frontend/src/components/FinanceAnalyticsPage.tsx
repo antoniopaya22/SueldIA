@@ -14,7 +14,7 @@ import {
   type FinanceAnalyticsCategoryItem, type FinanceAnalyticsFilters, type FinanceAnalyticsGroupItem,
 } from "../lib/api";
 import { Providers } from "./Providers";
-import { formatCompact, formatCurrency, formatMonthLabel, formatPct } from "../lib/format";
+import { formatCompact, formatCurrency, formatMonthLabel, formatPct, plural } from "../lib/format";
 import { EmptyState } from "./ui/EmptyState";
 import {
   PageHeader, StatCard, StatGrid, SectionCard, Segmented, PageHeaderSkeleton, StatCardSkeleton, ChartCardSkeleton,
@@ -1434,7 +1434,7 @@ function FinanceAnalyticsView() {
           <CalendarRange className="size-3.5" />
           {isFetching
             ? "Actualizando…"
-            : `${rangeLabel(from, to)} · ${summary.visibleMonths} meses · ${summary.transactionCount} movimientos${compareActive && prevRange ? ` · frente a ${rangeLabel(prevRange.from, prevRange.to)}` : ""}`}
+            : `${rangeLabel(from, to)} · ${plural(summary.visibleMonths, "mes", "meses")} · ${plural(summary.transactionCount, "movimiento", "movimientos")}${compareActive && prevRange ? ` · frente a ${rangeLabel(prevRange.from, prevRange.to)}` : ""}`}
         </span>
       }
       title="Analítica"

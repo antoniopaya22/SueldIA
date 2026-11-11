@@ -59,7 +59,7 @@ export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onC
       >
         <span className="px-1 text-sm font-medium whitespace-nowrap text-foreground tabular-nums" aria-live="polite">
           {count}
-          <span className="sr-only sm:not-sr-only"> {count === 1 ? "seleccionada" : "seleccionadas"}</span>
+          <span className="sr-only sm:not-sr-only"> {count === 1 ? "seleccionado" : "seleccionados"}</span>
         </span>
         <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />
         <Button variant="ghost" size="sm" disabled={busy} onClick={onSuggest} className="gap-1.5" aria-label="Sugerir categorías" title="Categoriza con tus reglas y con lo que ya has hecho con cada beneficiario">

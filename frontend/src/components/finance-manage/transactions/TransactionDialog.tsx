@@ -60,12 +60,12 @@ export function TransactionDialog({
   open, editing, form, setForm, accounts, groups, canCreateTransfers, pending, onClose, onSubmit, onNewCategory,
 }: Props) {
   const isTransfer = form.type === "transfer";
-  const title = editing ? "Editar transacción" : isTransfer ? "Movimiento entre cuentas" : "Nueva transacción";
+  const title = editing ? (isTransfer ? "Editar traspaso" : "Editar movimiento") : isTransfer ? "Nuevo traspaso" : "Nueva transacción";
   const description = editing
     ? "Actualiza importe, cuenta, categoría o notas."
     : isTransfer
       ? "Se registran ambos lados: cargo en la cuenta de origen y abono en la de destino."
-      : "Registra un gasto o un ingreso. Cámbialo a transferencia si mueves saldo entre tus cuentas.";
+      : "Registra un gasto o un ingreso. Cámbialo a traspaso si mueves dinero entre tus cuentas.";
 
   const today = getTodayIsoDate();
   const yesterday = getYesterdayIsoDate();
@@ -218,7 +218,7 @@ export function TransactionDialog({
                 <p className="text-xs text-muted-foreground">
                   {form.cleared
                     ? "Cuenta ya en tu saldo, el presupuesto y las gráficas."
-                    : "Prevista: no afecta al saldo ni a las gráficas hasta que la liquides."}
+                    : "Programado: no afecta al saldo ni a las gráficas hasta que lo liquides."}
                 </p>
               </div>
             </div>

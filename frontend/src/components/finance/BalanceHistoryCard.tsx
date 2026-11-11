@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Landmark } from "lucide-react";
 import { getBalanceHistory } from "../../lib/api";
-import { formatCompact, formatCurrency, formatMonthLabel } from "../../lib/format";
+import { formatCompact, formatCurrency, formatMonthLabel, plural } from "../../lib/format";
 import { ChartTooltip } from "../ui/ChartTooltip";
 import { SectionCard, Segmented, chartAxis, chartColors, chartCursor, chartGrid } from "../app";
 import { ChartLegend, adaptiveColor, paletteColor } from "./finance-ui";
@@ -39,7 +39,7 @@ export function BalanceHistoryCard({ accountId }: { accountId?: number }) {
   }, [data, accountId]);
 
   const description = chart
-    ? `${chart.change >= 0 ? "+" : "−"}${formatCurrency(Math.abs(chart.change))} en ${months} meses`
+    ? `${chart.change >= 0 ? "+" : "−"}${formatCurrency(Math.abs(chart.change))} en ${plural(Number(months), "mes", "meses")}`
     : "Saldo al final de cada mes";
 
   return (

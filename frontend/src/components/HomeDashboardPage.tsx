@@ -14,7 +14,7 @@ import {
   type Transaction, type Account,
 } from "../lib/api";
 import { Providers } from "./Providers";
-import { formatCurrency, formatCompact, formatMonthLabel, formatPct } from "../lib/format";
+import { formatCurrency, formatCompact, formatMonthLabel, formatPct, plural } from "../lib/format";
 import { ChartTooltip } from "./ui/ChartTooltip";
 import { EmptyState } from "./ui/EmptyState";
 import {
@@ -361,7 +361,7 @@ function HomeDashboardView() {
         )}
         {!hasFinance && hasPayroll && kpis && (
           <>
-            <StatCard label="Neto medio" value={formatCurrency(kpis.avgNet)} icon={PiggyBank} hint={`${kpis.totalPayslips} nóminas`} />
+            <StatCard label="Neto medio" value={formatCurrency(kpis.avgNet)} icon={PiggyBank} hint={plural(kpis.totalPayslips, "nómina", "nóminas")} />
             <StatCard
               label="Te llega del bruto"
               value={kpis.avgGross > 0 ? formatPct((kpis.avgNet / kpis.avgGross) * 100) : "—"}

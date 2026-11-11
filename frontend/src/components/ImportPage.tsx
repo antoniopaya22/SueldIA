@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { plural } from "../lib/format";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import {
@@ -60,7 +61,7 @@ function Stepper({ step }: { step: Step }) {
 function SummaryTiles({ summary }: { summary: ImportResult["summary"] }) {
   const tiles = [
     { label: "Cuentas", value: summary.accounts, icon: Landmark, hint: summary.accounts === 1 ? "cuenta" : "cuentas" },
-    { label: "Categorías", value: summary.categoryGroups + summary.categories, icon: Tags, hint: `${summary.categoryGroups} grupos · ${summary.categories} categorías` },
+    { label: "Categorías", value: summary.categoryGroups + summary.categories, icon: Tags, hint: `${plural(summary.categoryGroups, "grupo", "grupos")} · ${plural(summary.categories, "categoría", "categorías")}` },
     { label: "Transacciones", value: summary.transactions, icon: Receipt, hint: "movimientos" },
   ];
   return (

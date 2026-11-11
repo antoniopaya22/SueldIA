@@ -167,6 +167,14 @@ La app es instalable: `public/manifest.webmanifest` (nombre, colores, iconos en 
 - Scripts y recursos de terceros: solo los dominios de `connect-src`/`img-src` del script (Supabase, avatares de Google). Añadir uno nuevo es una decisión explícita.
 - Cabeceras que no admite una `<meta>` (`frame-ancestors`, HSTS, `Permissions-Policy`…) están en `vercel.json` → `headers`.
 
+## Glosario (textos visibles)
+
+- **movimiento**: cada apunte (gasto, ingreso, parte de un traspaso). La sección se llama «Transacciones» y la acción global «Nueva transacción» (etiquetas de navegación ya asentadas); en frases, avisos y recuentos, «movimiento».
+- **traspaso**: dinero entre dos cuentas propias (no «transferencia», «mover entre cuentas»).
+- Estados: **liquidado** (ya en el banco), **pendiente** (aún no), **programado** (fecha futura).
+- **beneficiario**: a quién se paga; en ingresos, «pagador/origen».
+- Plurales con `plural(n, "cuenta", "cuentas")` de `lib/format.ts`, nunca `${n} cuentas`.
+
 ## Reglas Críticas
 
 - **No usar default exports** excepto en componentes de página (el export default envuelve con Providers)

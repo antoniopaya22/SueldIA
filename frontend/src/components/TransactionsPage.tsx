@@ -31,7 +31,7 @@ import {
 } from "../lib/api";
 import { Providers } from "./Providers";
 import { toast } from "sonner";
-import { formatCurrency } from "../lib/format";
+import { formatCurrency, plural } from "../lib/format";
 import { invalidateFinance } from "../lib/finance-cache";
 import { deferWithUndo, groupIdsBy } from "../lib/undo";
 import { setUrlParams, useUrlEnumParam, useUrlParam } from "../lib/url-state";
@@ -388,7 +388,7 @@ function TransactionsView() {
 
   const openEditForm = (tx: Transaction) => {
     if (tx.type === "transfer" && tx.transferDirection === "inflow") {
-      toast.info("Edita la transferencia desde el movimiento de salida");
+      toast.info("Edita el traspaso desde su movimiento de salida");
       return;
     }
     setEditingTransaction(tx);
@@ -563,7 +563,7 @@ function TransactionsView() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-56">
                 <DropdownMenuItem onClick={() => openCreateForm("transfer")} disabled={!canCreateTransfers} className="gap-2">
-                  <ArrowLeftRight className="size-4" /> Mover entre cuentas
+                  <ArrowLeftRight className="size-4" /> Nuevo traspaso
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={openCreateRecurring} className="gap-2">
                   <Repeat className="size-4" /> Programar recurrente
@@ -659,7 +659,7 @@ function TransactionsView() {
                 hint="Lo que ya refleja el banco"
               />
               <StatCard
-                label="Sin liquidar"
+                label="Pendiente"
                 value={
                   <span className={selectedAccount.unclearedBalance < 0 ? "text-red-600 dark:text-red-400" : undefined}>
                     {selectedAccount.unclearedBalance > 0 ? "+" : ""}{formatCurrency(selectedAccount.unclearedBalance)}
@@ -689,10 +689,10 @@ function TransactionsView() {
               hint={summary && summary.income > 0 ? `Ahorras el ${Math.round((summary.net / summary.income) * 100)} % de lo que ingresas` : "Ingresos menos gastos"}
             />
             <StatCard
-              label="Por liquidar"
+              label="Pendientes"
               value={filterCleared === "true" ? 0 : summary?.pending ?? "—"}
               icon={ListChecks}
-              hint={activeFilterCount ? `De ${totalCount} con los filtros actuales` : `De ${totalCount} movimientos`}
+              hint={activeFilterCount ? `De ${totalCount} con los filtros actuales` : `De ${plural(totalCount, "movimiento", "movimientos")}`}
             />
           </StatGrid>
           )}
@@ -917,7 +917,7 @@ function TransactionsView() {
                     [tx.id],
                     tx.splitGroupId ? "Gasto dividido eliminado (todas sus partes)"
                       : tx.type === "transfer" ? "Traspaso eliminado (las dos partes)"
-                      : "Transacción eliminada",
+                      : "Movimiento eliminado",
                     () => deleteTransaction(tx.id),
                   )}
                 />
