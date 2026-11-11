@@ -47,6 +47,7 @@ import { formatRelativeDate, plural } from "@/lib/format";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 import { CommandMenu } from "@/components/app/CommandMenu";
+import { ShortcutsDialog } from "@/components/app/ShortcutsDialog";
 import { PreferencesBoot } from "@/components/app/PreferencesBoot";
 import { MobileTabBar } from "@/components/app/MobileTabBar";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -558,11 +559,28 @@ function AppShellInner({ currentPath, children }: AppShellProps) {
     };
   }, []);
 
+  const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setSearchOpen((o) => !o);
+        return;
+      }
+      // «/» y «?»: solo si no se está escribiendo ni hay un diálogo abierto.
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [role='combobox']")) return;
+      if (document.querySelector("[role='dialog'], [role='alertdialog']")) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        setShortcutsOpen(true);
+      } else if (e.key === "/") {
+        e.preventDefault();
+        // El buscador de la página si lo hay; si no, el de toda la app.
+        const field = document.querySelector<HTMLInputElement>("#app-scroll [data-page-search], #app-scroll input[type='search']");
+        if (field) field.focus();
+        else setSearchOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -612,6 +630,7 @@ function AppShellInner({ currentPath, children }: AppShellProps) {
         </SidebarInset>
         <MobileTabBar workspace={activeWorkspace} currentPath={currentPath} />
         <CommandMenu open={searchOpen} onOpenChange={setSearchOpen} />
+        <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
         <QueryClientProvider client={appQueryClient}>
           <PreferencesBoot />
           {txDialog.mounted && (

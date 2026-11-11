@@ -94,7 +94,7 @@ function PayeesView() {
           <div className="border-b border-border p-4">
             <div className="relative">
               <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
-              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar beneficiario" aria-label="Buscar beneficiario" className="pl-8" />
+              <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar beneficiario" aria-label="Buscar beneficiario" data-page-search className="pl-8" />
             </div>
             <p className="mt-2 text-xs text-muted-foreground">Marca varios para fusionarlos en uno, o pulsa un nombre para renombrarlo.</p>
           </div>

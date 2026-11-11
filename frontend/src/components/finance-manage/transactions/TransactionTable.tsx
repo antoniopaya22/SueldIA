@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, type MouseEvent } from "react";
+import { Fragment, useMemo, useRef, type MouseEvent, useState, type KeyboardEvent } from "react";
 import {
   CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock, FileText, Lock, SkipForward } from "lucide-react";
 import type { Account, Transaction } from "../../../lib/api";
@@ -206,6 +206,31 @@ export function TransactionTable(props: Props) {
   const allSelected = !!selection && transactions.length > 0 && transactions.every((t) => selection.ids.has(t.id));
   const actionsFor = useRowActions(props);
   const rowActivate = useDoubleActivate(props.onEdit);
+  // Teclado (escritorio): una sola parada de Tab para toda la tabla y, desde
+  // una fila, ↑↓ o J/K para moverse, Intro o E para editar y C para liquidar.
+  const [activeRowId, setActiveRowId] = useState<number | null>(null);
+  const focusableRowId = transactions.some((t) => t.id === activeRowId) ? activeRowId : transactions[0]?.id;
+  const rowKeys = (tx: Transaction) => ({
+    tabIndex: tx.id === focusableRowId ? 0 : -1,
+    "data-row-id": tx.id,
+    onFocus: () => setActiveRowId(tx.id),
+    onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => {
+      if (e.target !== e.currentTarget || e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "arrowdown" || key === "j" || key === "arrowup" || key === "k") {
+        e.preventDefault();
+        const rows = [...(e.currentTarget.closest("table")?.querySelectorAll<HTMLElement>("tr[data-row-id]") ?? [])];
+        const i = rows.indexOf(e.currentTarget);
+        rows[key === "arrowdown" || key === "j" ? Math.min(rows.length - 1, i + 1) : Math.max(0, i - 1)]?.focus();
+      } else if ((key === "enter" || key === "e") && canEditTx(tx)) {
+        e.preventDefault();
+        props.onEdit(tx);
+      } else if (key === "c") {
+        e.preventDefault();
+        props.onToggleCleared(tx);
+      }
+    },
+  });
   const grouped = sortBy === "date";
   // Lectores de pantalla: qué columna ordena la tabla y en qué sentido.
   const ariaSort = (field: SortField) => (sortBy === field ? (sortDir === "asc" ? "ascending" : "descending") : undefined);
@@ -280,8 +305,12 @@ export function TransactionTable(props: Props) {
                     <tr
                       key={tx.id}
                       {...rowActivate(tx)}
-                      title={canEditTx(tx) ? "Doble clic para editar" : undefined}
-                      className={cn("group/row border-b border-border last:border-0 transition-colors hover:bg-muted/40", selection?.ids.has(tx.id) && "bg-primary/5 hover:bg-primary/10")}
+                      {...rowKeys(tx)}
+                      title={canEditTx(tx) ? "Doble clic o Intro para editar" : undefined}
+                      className={cn(
+                        "group/row border-b border-border outline-none last:border-0 transition-colors hover:bg-muted/40 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+                        selection?.ids.has(tx.id) && "bg-primary/5 hover:bg-primary/10",
+                      )}
                     >
                       {selection && (
                         <td className="py-2 pl-4 align-middle">

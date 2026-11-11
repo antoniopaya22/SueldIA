@@ -612,6 +612,7 @@ function TransactionsView() {
                     value={searchInput}
                     onChange={(e) => setSearchInput(e.target.value)}
                     placeholder="Buscar por beneficiario o nota"
+                    data-page-search
                     aria-label="Buscar transacciones"
                     className="pl-8"
                   />
