@@ -186,6 +186,7 @@ describeDb("autorización entre usuarios (integración)", () => {
     ["PATCH", `/notes/${ids.note}`, { content: "intrusa" }],
     ["PATCH", `/tags/${ids.tag}`, { name: "intrusa" }],
     ["POST", `/payslips/batch`, { action: "delete", ids: [ids.payslip] }],
+    ["POST", `/payslips/${ids.payslip}/ocr-text`, { text: "NOMINA MENSUAL ENERO 2026 SALARIO BASE 1.000,00" }],
     ["POST", `/payslips/batch`, { action: "set-type", ids: [ids.payslip], type: "extra" }],
     ["POST", `/payslips/batch`, { action: "remove-tag", ids: [ids.payslip], tagId: ids.tag }],
     ["PUT", `/alerts/rules/${ids.alertRule}`, { name: "hack" }],
@@ -343,6 +344,30 @@ describeDb("autorización entre usuarios (integración)", () => {
     const { eq } = await import("drizzle-orm");
     expect(await db.select().from(s.users).where(eq(s.users.supabaseUserId, "user-c"))).toHaveLength(0);
     expect((await db.select().from(s.profiles)).map((p) => p.name)).not.toContain("C");
+  });
+
+  it("PDF escaneado: sin texto, la huella es la del fichero, y el OCR del navegador lo completa", async () => {
+    const upload = async (bytes: string, name: string) => {
+      const form = new FormData();
+      form.append("profileId", String(ids.profile));
+      form.append("files", new Blob([bytes], { type: "application/pdf" }), name);
+      const res = await fetch(`${api}/api/payslips/upload`, { method: "POST", headers: { Authorization: `Bearer ${tokens.a}` }, body: form });
+      return ((await res.json()) as Array<{ id: number; alreadyUploaded: boolean; parsingStatus: string }>)[0];
+    };
+    // Dos «escaneados» distintos (PDF sin texto): antes el segundo salía como ya subido.
+    const first = await upload(minimalPdf([]), "escaneada1.pdf");
+    const second = await upload(minimalPdf([]) + "\n%%otra", "escaneada2.pdf");
+    expect(first.alreadyUploaded).toBe(false);
+    expect(second.alreadyUploaded).toBe(false);
+    expect(second.id).not.toBe(first.id);
+    expect(first.parsingStatus).toBe("review");
+
+    const ocr = await call("a", "POST", `/payslips/${first.id}/ocr-text`, { text: "ACME S.L.\nNOMINA MENSUAL ENERO 2026\nSALARIO BASE   2.000,00\nLIQUIDO A PERCIBIR   1.700,00" });
+    expect(ocr.status).toBe(200);
+    expect(ocr.json).toMatchObject({ parserFormat: expect.stringMatching(/^ocr:/) });
+    // Ya tiene texto: no se vuelve a aceptar OCR.
+    expect((await call("a", "POST", `/payslips/${first.id}/ocr-text`, { text: "x".repeat(30) })).status).toBe(409);
+    for (const p of [first, second]) await call("a", "DELETE", `/payslips/${p.id}`);
   });
 
   it("subir el mismo PDF dos veces no crea otra nómina", async () => {

@@ -73,7 +73,12 @@ payslipsRouter.post(
         } catch (err) {
           logger.error({ err }, "Parse error");
         }
-        const contentHash = parsed ? hashText(parsed.rawText) : null;
+        // Huella para detectar el mismo PDF dos veces: la de su texto, o la del
+        // fichero si no tiene (escaneado). Antes, todos los escaneados tenían la
+        // huella del texto vacío y el segundo salía como «ya subido».
+        const contentHash = parsed?.rawText.trim()
+          ? hashText(parsed.rawText)
+          : `file:${createHash("sha256").update(file.buffer).digest("hex")}`;
 
         // 2. El mismo PDF ya subido a este perfil: no se guarda otra vez.
         if (contentHash) {
@@ -485,6 +490,33 @@ payslipsRouter.post("/:id/reprocess", async (req, res, next) => {
       .from(payslipConcepts)
       .where(eq(payslipConcepts.payslipId, id));
 
+    res.json({ ...updated, concepts });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Texto leído con OCR en el navegador del usuario (PDF escaneado, sin capa de
+// texto): se guarda y se analiza como el de cualquier nómina. El PDF nunca sale
+// del dispositivo para hacer el OCR. Solo para nóminas sin texto todavía.
+const ocrTextSchema = z.object({ text: z.string().trim().min(20, "No se ha leído texto suficiente").max(200_000) });
+
+payslipsRouter.post("/:id/ocr-text", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = ocrTextSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Texto no válido", details: parsed.error.flatten().fieldErrors });
+    const userProfileIds = await getUserProfileIds(userId);
+    const id = Number(req.params.id);
+    const [payslip] = await db.select().from(payslips).where(eq(payslips.id, id));
+    if (!payslip || !userProfileIds.includes(payslip.profileId)) return res.status(404).json({ error: "Nómina no encontrada" });
+    if (payslip.rawText?.trim()) return res.status(409).json({ error: "Esta nómina ya tiene texto: no necesita OCR" });
+
+    const result = matchConcepts(parsed.data.text);
+    // Métrica: el formato, marcado como leído por OCR.
+    await applyParsedResult(id, { ...result, format: `ocr:${result.format ?? "desconocido"}` });
+    const [updated] = await db.select().from(payslips).where(eq(payslips.id, id));
+    const concepts = await db.select().from(payslipConcepts).where(eq(payslipConcepts.payslipId, id));
     res.json({ ...updated, concepts });
   } catch (err) {
     next(err);
