@@ -11,6 +11,7 @@ import {
   buildAnnualSummaries,
   buildIrpfEvolution,
   buildMonthlySavings,
+  buildHousehold,
 } from "../services/dashboard.service.js";
 import { monthKeySchema } from "../utils/dates.js";
 
@@ -29,6 +30,7 @@ const EMPTY_DASHBOARD = {
   annualSummaries: [],
   irpfEvolution: [],
   monthlySavings: [],
+  household: [],
   profiles: [],
 };
 
@@ -83,6 +85,7 @@ dashboardRouter.get("/", async (req, res, next) => {
       annualSummaries: buildAnnualSummaries(filtered, allConcepts, singleProfilePayments(requestedProfileIds ?? userProfileIds, profileMap)),
       irpfEvolution: buildIrpfEvolution(filtered, allConcepts),
       monthlySavings: buildMonthlySavings(filtered),
+      household: buildHousehold(filtered, allConcepts, profileMap),
       profiles: userProfiles.map((p) => ({ id: p.id, name: p.name, color: p.color })),
     });
   } catch (err) {

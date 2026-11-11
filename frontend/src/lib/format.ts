@@ -81,3 +81,8 @@ export function formatDecimalInput(n: number | null | undefined): string {
 export function plural(n: number, one: string, many: string): string {
   return `${n.toLocaleString("es-ES")} ${n === 1 ? one : many}`;
 }
+
+/** Iniciales de un nombre (máx. 2), solo de palabras que empiezan por letra: «Lucía (ejemplo)» → «LE». */
+export function initials(name: string): string {
+  return name.split(/\s+/).map((w) => w.match(/\p{L}/u)?.[0] ?? "").filter(Boolean).slice(0, 2).join("").toUpperCase() || "?";
+}

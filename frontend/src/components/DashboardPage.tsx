@@ -34,6 +34,7 @@ import { cn } from "cn";
 import { isIrpfConcept } from "../lib/payslip-concepts";
 import { setUrlParams, useUrlParam } from "../lib/url-state";
 import { LoadDemoButton } from "./app/DemoData";
+import { HouseholdCard } from "./payroll/HouseholdCard";
 
 type ConceptBreakdownItem = DashboardData["conceptBreakdown"][number];
 type ConceptSortColumn = "name" | "category" | "average" | "total" | "count";
@@ -513,6 +514,8 @@ function DashboardView() {
           )}
         </ResponsiveContainer>
       </ChartCard>
+
+      {data.household?.length > 0 && <HouseholdCard className="mt-6" household={data.household} />}
 
       {/* Del bruto al neto + resumen */}
       <div className="mt-6 grid gap-6 lg:grid-cols-3">

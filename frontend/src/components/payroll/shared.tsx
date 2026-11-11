@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, CircleDashed, Loader2, Gift } from "lucide-react";
 import { cn } from "cn";
 import { adaptiveColor } from "../../lib/color";
+import { initials } from "../../lib/format";
 
 export const MONTHS_SHORT = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
 export const MONTHS_FULL = [
@@ -69,7 +70,7 @@ export function adaptiveProfileColor(hex: string | undefined): string {
 /** Avatar redondo con el color del perfil (el color lo elige el usuario). */
 export function ProfileDot({ color: rawColor, name, size = "md" }: { color: string; name: string; size?: "sm" | "md" | "lg" }) {
   const color = adaptiveProfileColor(rawColor);
-  const initials = name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  const letters = initials(name);
   return (
     <span
       className={cn(
@@ -81,7 +82,7 @@ export function ProfileDot({ color: rawColor, name, size = "md" }: { color: stri
       style={{ backgroundColor: color }}
       aria-hidden="true"
     >
-      {initials}
+      {letters}
     </span>
   );
 }

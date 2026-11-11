@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCurrency, formatDecimalInput, formatPct, parseDecimal } from "./format";
+import { formatCurrency, formatDecimalInput, formatPct, initials, parseDecimal } from "./format";
 
 describe("parseDecimal", () => {
   it.each([
@@ -38,5 +38,15 @@ describe("formatos", () => {
   });
   it("porcentaje a la española", () => {
     expect(formatPct(77.66)).toBe("77,7 %");
+  });
+});
+
+describe("initials", () => {
+  it("toma la primera letra de hasta dos palabras, saltando signos", () => {
+    expect(initials("Ana")).toBe("A");
+    expect(initials("ana maría lópez")).toBe("AM");
+    expect(initials("Lucía (ejemplo)")).toBe("LE");
+    expect(initials("Ñoño — 2")).toBe("Ñ");
+    expect(initials("  ")).toBe("?");
   });
 });

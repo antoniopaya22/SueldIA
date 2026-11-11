@@ -212,6 +212,91 @@ export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]
     });
 }
 
+/* ───────── Hogar (varios perfiles) ──────────────────────────── */
+
+export interface HouseholdMember {
+  profileId: number;
+  name: string;
+  color: string;
+  payslips: number;
+  totalGross: number;
+  totalNet: number;
+  totalIrpf: number;
+  avgMonthlyNet: number;
+  projectedAnnualNet: number;
+  /** % del neto del hogar en el año (0–100). */
+  shareOfNet: number;
+}
+
+export interface HouseholdYear {
+  year: number;
+  totalGross: number;
+  totalNet: number;
+  totalIrpf: number;
+  /** Suma de la proyección de cada perfil, cada uno con sus pagas. */
+  projectedAnnualNet: number;
+  members: HouseholdMember[];
+}
+
+/**
+ * Ingresos del hogar por año y cuánto aporta cada perfil. Solo tiene sentido
+ * con dos o más perfiles con nóminas: si no, devuelve [] y la vista no sale.
+ */
+export function buildHousehold(
+  filtered: Payslip[],
+  allConcepts: Concept[],
+  profileMap: Map<number, Pick<Profile, "id" | "name" | "color"> & { paymentsPerYear?: number | null }>,
+): HouseholdYear[] {
+  const byProfile = new Map<number, Payslip[]>();
+  for (const p of filtered) {
+    if (!byProfile.has(p.profileId)) byProfile.set(p.profileId, []);
+    byProfile.get(p.profileId)!.push(p);
+  }
+  if (byProfile.size < 2) return [];
+
+  const conceptsByPayslip = new Map<number, Concept[]>();
+  for (const c of allConcepts) {
+    if (!conceptsByPayslip.has(c.payslipId)) conceptsByPayslip.set(c.payslipId, []);
+    conceptsByPayslip.get(c.payslipId)!.push(c);
+  }
+
+  const years = new Map<number, Omit<HouseholdMember, "shareOfNet">[]>();
+  for (const [profileId, ps] of byProfile) {
+    const profile = profileMap.get(profileId);
+    const concepts = ps.flatMap((p) => conceptsByPayslip.get(p.id) ?? []);
+    for (const s of buildAnnualSummaries(ps, concepts, profile?.paymentsPerYear ?? null)) {
+      if (!years.has(s.year)) years.set(s.year, []);
+      years.get(s.year)!.push({
+        profileId,
+        name: profile?.name ?? `Perfil ${profileId}`,
+        color: profile?.color ?? "#2e3a48",
+        payslips: ps.filter((p) => (p.periodYear ?? 0) === s.year).length,
+        totalGross: s.totalGross,
+        totalNet: s.totalNet,
+        totalIrpf: s.totalIrpf,
+        avgMonthlyNet: s.avgMonthlyNet,
+        projectedAnnualNet: s.projectedAnnualNet,
+      });
+    }
+  }
+
+  return [...years.entries()]
+    .sort(([a], [b]) => b - a)
+    .map(([year, members]) => {
+      const totalNet = members.reduce((s, m) => s + m.totalNet, 0);
+      return {
+        year,
+        totalGross: round(members.reduce((s, m) => s + m.totalGross, 0)),
+        totalNet: round(totalNet),
+        totalIrpf: round(members.reduce((s, m) => s + m.totalIrpf, 0)),
+        projectedAnnualNet: round(members.reduce((s, m) => s + m.projectedAnnualNet, 0)),
+        members: members
+          .map((m) => ({ ...m, shareOfNet: totalNet > 0 ? round((m.totalNet / totalNet) * 100) : 0 }))
+          .sort((a, b) => b.totalNet - a.totalNet),
+      };
+    });
+}
+
 /* ───────── IRPF Evolution ───────────────────────────────────── */
 
 export function buildIrpfEvolution(filtered: Payslip[], allConcepts: Concept[]) {

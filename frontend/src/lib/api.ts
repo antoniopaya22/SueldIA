@@ -391,7 +391,29 @@ export interface DashboardData {
   annualSummaries: AnnualSummary[];
   irpfEvolution: Array<{ month: string; amount: number; rate: number }>;
   monthlySavings: Array<{ month: string; gross: number; net: number; deductions: number; retentionRate: number }>;
+  /** Vista de hogar: vacía con menos de dos perfiles con nóminas. */
+  household: HouseholdYear[];
   profiles: Array<{ id: number; name: string; color: string }>;
+}
+
+export interface HouseholdYear {
+  year: number;
+  totalGross: number;
+  totalNet: number;
+  totalIrpf: number;
+  projectedAnnualNet: number;
+  members: Array<{
+    profileId: number;
+    name: string;
+    color: string;
+    payslips: number;
+    totalGross: number;
+    totalNet: number;
+    totalIrpf: number;
+    avgMonthlyNet: number;
+    projectedAnnualNet: number;
+    shareOfNet: number;
+  }>;
 }
 
 export const getDashboard = (profileIds?: number[], from?: string, to?: string) => {

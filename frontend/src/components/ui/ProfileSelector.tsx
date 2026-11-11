@@ -1,5 +1,6 @@
 import { Check } from "lucide-react";
 import { cn } from "cn";
+import { initials } from "../../lib/format";
 
 interface Profile {
   id: number;
@@ -33,7 +34,7 @@ export function ProfileSelector({ profiles, value, onChange, multi = false }: Pr
     <div className="flex flex-wrap gap-1.5" role="group" aria-label="Seleccionar perfil">
       {profiles.map((p) => {
         const isSelected = selected.includes(p.id);
-        const initials = p.name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+        const letters = initials(p.name);
         return (
           <button
             key={p.id}
@@ -51,7 +52,7 @@ export function ProfileSelector({ profiles, value, onChange, multi = false }: Pr
               className={cn("flex size-6 items-center justify-center rounded-full text-[10px] font-semibold text-white transition-opacity", !isSelected && "opacity-50")}
               style={{ backgroundColor: p.color }}
             >
-              {isSelected && multi ? <Check className="size-3" /> : initials}
+              {isSelected && multi ? <Check className="size-3" /> : letters}
             </span>
             {p.name}
           </button>
