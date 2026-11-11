@@ -1652,6 +1652,35 @@ export const importBankCsv = (file: File, accountId: number, headerIndex: number
   return postForm<BankCsvResult>(`/import/csv${dryRun ? "?dryRun=true" : ""}`, form);
 };
 
+// ─── Objetivos de ahorro ────────────────────────────────────────
+export interface SavingsGoal {
+  id: number;
+  name: string;
+  targetAmount: number;
+  targetDate: string | null;
+  accountId: number | null;
+  accountName: string | null;
+  savedAmount: number;
+  color: string;
+  archived: boolean;
+  progress: {
+    saved: number;
+    remaining: number;
+    percent: number;
+    monthsLeft: number | null;
+    monthlyNeeded: number | null;
+    status: "done" | "on-track" | "no-date" | "overdue";
+  };
+}
+export type SavingsGoalInput = Partial<Pick<SavingsGoal, "name" | "targetAmount" | "targetDate" | "accountId" | "savedAmount" | "color" | "archived">>;
+
+export const getSavingsGoals = () => request<{ data: SavingsGoal[] }>("/savings-goals").then((r) => r.data);
+export const createSavingsGoal = (data: SavingsGoalInput) =>
+  request<SavingsGoal>("/savings-goals", { method: "POST", body: JSON.stringify(data) });
+export const updateSavingsGoal = (id: number, data: SavingsGoalInput) =>
+  request<SavingsGoal>(`/savings-goals/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+export const deleteSavingsGoal = (id: number) => request<{ ok: boolean }>(`/savings-goals/${id}`, { method: "DELETE" });
+
 // ─── Notificaciones push ────────────────────────────────────────
 export const getPushKey = () => request<{ publicKey: string }>("/push/key");
 export const savePushSubscription = (sub: PushSubscriptionJSON) =>

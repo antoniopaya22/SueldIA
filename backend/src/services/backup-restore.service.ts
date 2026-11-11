@@ -149,6 +149,16 @@ const categoryRuleRow = z.object({
   accountId: id.nullable().optional(),
   createdAt,
 });
+const goalRow = z.object({
+  name: text(100).min(1),
+  targetAmount: moneySchema,
+  targetDate: isoDateSchema.nullable().optional(),
+  accountId: id.nullable().optional(),
+  savedAmount: moneySchema.optional(),
+  color: text(32).optional(),
+  archived: z.boolean().optional(),
+  createdAt,
+});
 const preferenceRow = z.object({ key: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/), value: z.unknown() });
 
 const list = <T extends z.ZodTypeAny>(row: T, max: number) => z.array(row).max(max).default([]);
@@ -175,6 +185,7 @@ export const backupSchema = z.object({
   categoryTargets: list(targetRow, USER_LIMITS.categories),
   categoryRules: list(categoryRuleRow, USER_LIMITS.categoryRules),
   userPreferences: list(preferenceRow, 100),
+  savingsGoals: list(goalRow, USER_LIMITS.savingsGoals),
 });
 
 export type Backup = z.infer<typeof backupSchema>;
@@ -371,7 +382,7 @@ export async function restoreBackup(userId: number, b: Backup): Promise<BackupCo
     await db.transaction(async (tx) => {
       // Todo lo demás cuelga de estas tablas y se va en cascada.
       for (const table of [s.transactions, s.recurringTransactions, s.budgets, s.categoryTargets, s.categoryRules,
-        s.alertHistory, s.alertRules, s.accounts, s.categoryGroups, s.tags, s.profiles, s.userPreferences]) {
+        s.alertHistory, s.alertRules, s.savingsGoals, s.accounts, s.categoryGroups, s.tags, s.profiles, s.userPreferences]) {
         await tx.delete(table).where(eq((table as typeof s.profiles).userId, userId));
       }
 
@@ -421,6 +432,7 @@ export async function restoreBackup(userId: number, b: Backup): Promise<BackupCo
       await insertChunked(tx, s.categoryRules, b.categoryRules.map((x) => ({
         ...x, userId, categoryId: must(categories, x.categoryId), accountId: pick(accounts, x.accountId),
       })));
+      await insertChunked(tx, s.savingsGoals, b.savingsGoals.map((g) => ({ ...g, userId, accountId: pick(accounts, g.accountId) })));
       await insertChunked(tx, s.userPreferences, b.userPreferences.map((p) => ({ userId, key: p.key, value: JSON.stringify(p.value) ?? "null" })));
     });
   } catch (err) {
@@ -461,7 +473,7 @@ export async function buildFullExport(userId: number) {
   const payslipIds = userPayslips.map((p) => p.id);
   const none = payslipIds.length === 0;
 
-  const [concepts, notes, payslipTagLinks, tags, accounts, groups, categories, transactions, recurring, rules, history, budgets, targets, catRules, prefs, skips] =
+  const [concepts, notes, payslipTagLinks, tags, accounts, groups, categories, transactions, recurring, rules, history, budgets, targets, catRules, prefs, skips, goals] =
     await Promise.all([
       none ? [] : db.select().from(s.payslipConcepts).where(inArray(s.payslipConcepts.payslipId, payslipIds)),
       none ? [] : db.select().from(s.payslipNotes).where(inArray(s.payslipNotes.payslipId, payslipIds)),
@@ -488,6 +500,7 @@ export async function buildFullExport(userId: number) {
         .from(s.recurringSkips)
         .innerJoin(s.recurringTransactions, eq(s.recurringSkips.recurringTransactionId, s.recurringTransactions.id))
         .where(eq(s.recurringTransactions.userId, userId)),
+      db.select().from(s.savingsGoals).where(eq(s.savingsGoals.userId, userId)),
     ]);
 
   return {
@@ -508,6 +521,7 @@ export async function buildFullExport(userId: number) {
     transactions,
     recurringTransactions: recurring,
     recurringSkips: skips,
+    savingsGoals: goals,
     alertRules: rules.map((r) => ({ ...r, config: safeJson(r.config) })),
     alertHistory: history,
     budgets,

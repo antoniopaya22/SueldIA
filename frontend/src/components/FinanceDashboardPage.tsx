@@ -24,6 +24,7 @@ import {
 import { BalanceHistoryCard } from "./finance/BalanceHistoryCard";
 import { GettingStartedCard } from "./finance/GettingStartedCard";
 import { ForecastCard } from "./finance/ForecastCard";
+import { GoalsCard } from "./finance/GoalsCard";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
 import { useUrlEnumParam, useUrlOptionalIdParam } from "../lib/url-state";
@@ -396,6 +397,7 @@ function FinanceDashboardView() {
         <BalanceHistoryCard accountId={accountId} />
         <ForecastCard />
       </div>
+      <GoalsCard />
     </div>
   );
 }

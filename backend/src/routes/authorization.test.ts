@@ -252,6 +252,21 @@ describeDb("autorización entre usuarios (integración)", () => {
     await call("a", "DELETE", `/recurring-transactions/${(created.json as { id: number }).id}`);
   });
 
+  it("objetivos de ahorro: cada uno los suyos, y solo con sus cuentas", async () => {
+    const created = await call("a", "POST", "/savings-goals", { name: "Vacaciones A", targetAmount: 2000, targetDate: "2027-07-01", accountId: ids.account2 });
+    expect(created.status).toBe(201);
+    const goalId = (created.json as { id: number }).id;
+    const list = (await call("a", "GET", "/savings-goals")).json.data as Array<{ id: number; accountName: string; progress: { status: string } }>;
+    expect(list.find((g) => g.id === goalId)).toMatchObject({ accountName: "Ahorro A", progress: { status: "on-track" } });
+    // B: no ve, no edita, no borra, y no puede asociar una cuenta de A.
+    expect(JSON.stringify((await call("b", "GET", "/savings-goals")).json)).not.toContain("Vacaciones A");
+    expect((await call("b", "PATCH", `/savings-goals/${goalId}`, { name: "hack" })).status).toBe(404);
+    expect((await call("b", "DELETE", `/savings-goals/${goalId}`)).status).toBe(404);
+    expect((await call("b", "POST", "/savings-goals", { name: "x", targetAmount: 1, accountId: ids.account })).status).toBe(404);
+    expect((await call("a", "POST", "/savings-goals", { name: "x", targetAmount: -5 })).status).toBe(400);
+    expect((await call("a", "DELETE", `/savings-goals/${goalId}`)).status).toBe(200);
+  });
+
   it("renombrar beneficiarios solo toca los propios", async () => {
     const r = await call("b", "POST", "/transactions/payees/rename", { from: ["Tienda"], to: "Hackeado" });
     expect(r.json).toMatchObject({ ok: true, updated: 0 });

@@ -520,6 +520,31 @@ export const pushSubscriptions = pgTable(
   }),
 ).enableRLS();
 
+// Objetivos de ahorro («Vacaciones: 2.000 € para julio»). El progreso sale
+// del saldo de la cuenta asociada o, sin cuenta, de lo que el usuario apunta.
+export const savingsGoals = pgTable(
+  "savings_goals",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    targetAmount: doublePrecision("target_amount").notNull(),
+    // "YYYY-MM-DD", opcional: sin fecha no hay aportación mensual sugerida.
+    targetDate: text("target_date"),
+    accountId: integer("account_id").references(() => accounts.id, { onDelete: "set null" }),
+    savedAmount: doublePrecision("saved_amount").notNull().default(0),
+    color: text("color").notNull().default("#2a8558"),
+    archived: boolean("archived").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("savings_goals_user_idx").on(table.userId),
+    accountIdx: index("savings_goals_account_idx").on(table.accountId),
+  }),
+).enableRLS();
+
 export const userPreferences = pgTable(
   "user_preferences",
   {

@@ -36,6 +36,9 @@ Aplicación web monorepo de gestión y análisis de nóminas españolas. Solo ve
 | `category_targets` | Objetivo por categoría (mensual o para una fecha) |
 | `category_rules` | «Si el beneficiario contiene X → categoría Y» |
 | `user_preferences` | Preferencias de interfaz (clave → JSON) |
+| `recurring_skips` | Ocurrencias de una recurrente que no se generan («saltar esta vez», o el pasado al crear «desde hoy») |
+| `savings_goals` | Objetivos de ahorro (importe, fecha, cuenta asociada o cantidad apuntada a mano) |
+| `push_subscriptions` | Dispositivos con avisos push activados (Web Push) |
 
 **RLS**: todas las tablas tienen Row Level Security activado y sin políticas (`.enableRLS()` en `schema.ts`). La app no usa la Data API de Supabase; el backend se conecta como propietario. Una tabla nueva sin `.enableRLS()` hace fallar `db:migrate`.
 

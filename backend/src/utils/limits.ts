@@ -16,6 +16,7 @@ export const USER_LIMITS = {
   alertRules: 50,
   recurring: 300,
   notesPerPayslip: 100,
+  savingsGoals: 50,
 } as const;
 
 /** Lanza 409 si ya hay `max` filas con `column = ownerId`. */

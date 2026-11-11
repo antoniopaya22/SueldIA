@@ -30,6 +30,7 @@ import { budgetsRouter } from "./routes/budgets.js";
 import { cronRouter } from "./routes/cron.js";
 import { clientErrorsRouter } from "./routes/client-errors.js";
 import { pushRouter } from "./routes/push.js";
+import { savingsGoalsRouter } from "./routes/savings-goals.js";
 import { db, client } from "./db/index.js";
 
 const app = express();
@@ -118,6 +119,7 @@ app.use("/api/alerts", authMiddleware, alertsRouter);
 app.use("/api/notes", authMiddleware, notesRouter);
 app.use("/api/tags", authMiddleware, tagsRouter);
 app.use("/api/push", authMiddleware, pushRouter);
+app.use("/api/savings-goals", authMiddleware, savingsGoalsRouter);
 app.use("/api/client-errors", authMiddleware, clientErrorsRouter);
 
 // ─── Error handler (must be last) ──────────────────────────────
