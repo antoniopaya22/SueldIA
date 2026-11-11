@@ -151,6 +151,13 @@ Patrón visual: bruto en navy (línea discontinua), neto en verde (área/sólido
 
 La app es instalable: `public/manifest.webmanifest` (nombre, colores, iconos en `public/icons/`, atajos a Nueva transacción / Subir nómina / Analítica), enlazado desde `Layout.astro`, `MarketingLayout.astro` y `login.astro`. `public/sw.js` es un service worker **mínimo**: solo guarda `public/offline.html` y la muestra si una navegación falla sin red. **No cachea nada de `/api` ni de las páginas de la app** (son datos financieros); no añadir caché de datos sin decidirlo explícitamente. Si cambias `offline.html`, sube la versión de `CACHE` en `sw.js`.
 
+## Seguridad (CSP)
+
+`npm run build` = `astro build` + `scripts/csp.mjs`, que añade a cada HTML una `Content-Security-Policy` con el hash de cada `<script>` en línea. Consecuencias:
+- **Nada de manejadores en línea** (`onclick="…"`, `onload="…"`): el script de CSP hace fallar el build si encuentra uno. Usar `addEventListener`.
+- Scripts y recursos de terceros: solo los dominios de `connect-src`/`img-src` del script (Supabase, avatares de Google). Añadir uno nuevo es una decisión explícita.
+- Cabeceras que no admite una `<meta>` (`frame-ancestors`, HSTS, `Permissions-Policy`…) están en `vercel.json` → `headers`.
+
 ## Reglas Críticas
 
 - **No usar default exports** excepto en componentes de página (el export default envuelve con Providers)

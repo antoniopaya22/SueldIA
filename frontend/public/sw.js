@@ -2,7 +2,7 @@
 // página propia si se abre sin conexión. NO guarda en caché nada de /api ni
 // de las páginas de la app: son datos financieros y siempre vienen de la red.
 // Si cambias offline.html, sube la versión: así el service worker nuevo vuelve a guardarlo.
-const CACHE = "sueldia-offline-v1";
+const CACHE = "sueldia-offline-v2";
 const OFFLINE_URL = "/offline.html";
 
 self.addEventListener("install", (event) => {

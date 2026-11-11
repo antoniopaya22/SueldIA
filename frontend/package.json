@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && node scripts/csp.mjs",
     "preview": "astro preview",
     "test": "vitest run"
   },
