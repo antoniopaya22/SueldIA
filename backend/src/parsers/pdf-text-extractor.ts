@@ -1,16 +1,14 @@
 import { readFileSync } from "fs";
-import { createRequire } from "module";
+import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
+// @ts-expect-error — el worker no trae tipos; solo se registra.
+import * as pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs";
 
-// pdfjs-dist v3 legacy build is CJS
-const require = createRequire(import.meta.url);
-const pdfjs = require("pdfjs-dist/legacy/build/pdf.js") as typeof import("pdfjs-dist");
-
-// pdfjs-dist carga su "fake worker" en Node con un require oculto tras
-// eval() (para esquivar bundlers) — el analizador de dependencias de Vercel
-// no lo detecta y `pdf.worker.js` se queda fuera del paquete desplegado
-// ("Cannot find module './pdf.worker.js'" en producción). Fijar workerSrc
-// con un require.resolve() normal hace que sí se detecte y se incluya.
-pdfjs.GlobalWorkerOptions.workerSrc = require.resolve("pdfjs-dist/legacy/build/pdf.worker.js");
+// En Node, pdfjs usa un «worker falso» en el mismo hilo. Si no lo encuentra en
+// globalThis.pdfjsWorker, lo carga con un import() dinámico de una ruta que el
+// analizador de dependencias de Vercel no ve, y en producción falla
+// («Cannot find module pdf.worker.mjs»). Importarlo aquí de forma estática
+// garantiza que se incluye en el despliegue.
+(globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = pdfjsWorker;
 
 const BOX_DRAWING_CHARS = /[│├┤┌┐└┘┬┴┼─═║╔╗╚╝╠╣╦╩╬]/g;
 const ROW_Y_TOLERANCE = 2; // pt
@@ -86,10 +84,9 @@ export async function extractTextFromPdfBuffer(data: Uint8Array): Promise<string
   // técnicamente un Uint8Array ("Please provide binary data as Uint8Array,
   // rather than Buffer") — Buffer.isBuffer detecta ese caso concreto.
   const safeData = Buffer.isBuffer(data) ? new Uint8Array(data) : data;
-  // isEvalSupported: false — mitigación oficial de CVE-2024-4367 (ejecución de
-  // código con fuentes manipuladas en pdfjs-dist <= 4.1.392). El PDF lo sube
-  // cualquier usuario y se procesa en el mismo proceso que tiene DATABASE_URL.
-  // No cambia el texto extraído: solo desactiva la compilación de glifos con eval.
+  // isEvalSupported: false — defensa adicional (desde pdfjs 4.2 ya no hace
+  // falta contra CVE-2024-4367): el PDF lo sube cualquier usuario y se procesa
+  // en el mismo proceso que tiene DATABASE_URL. No cambia el texto extraído.
   const doc = await pdfjs.getDocument({ data: safeData, useSystemFonts: true, isEvalSupported: false } as never).promise;
   const allLines: string[] = [];
   const pageCount = Math.min(doc.numPages, MAX_PAGES);
