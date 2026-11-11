@@ -26,6 +26,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
 import { irpfAmount } from "../lib/payslip-concepts";
 import { getTodayIsoDate } from "./finance-manage/transactions/shared";
+import { AttentionCard } from "./home/AttentionCard";
 
 // ─── Helpers ────────────────────────────────────────────────────
 const MONTHS_FULL = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -337,6 +338,8 @@ function HomeDashboardView() {
               : `Así van tus finanzas en ${monthName}.`
         }
       />
+
+      <AttentionCard hasFinance={hasFinance} hasPayroll={hasPayroll} />
 
       <StatGrid>
         {hasFinance && finance && (
