@@ -6,6 +6,9 @@ import { HOME_ITEM, SETTINGS_ITEM, WORKSPACES } from "./navigation";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { getCategories, getPayeeSuggestions, getPayslips, getTransactions, type CategoryGroup } from "@/lib/api";
 import { formatCurrency } from "@/lib/format";
+import { todayIso } from "@/lib/dates";
+import { hasSyntax, parseSearchQuery, type ParsedQuery } from "@/lib/search-syntax";
+import { transactionsHref } from "@/lib/transaction-filters";
 import { openNewTransaction } from "@/lib/new-transaction";
 
 interface CommandEntry {
@@ -25,6 +28,77 @@ const go = (href: string) => () => {
 };
 
 const MONTH_SHORT = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+/** Resultados de una búsqueda con sintaxis: primero «ver todo» con los filtros, luego unos pocos. */
+async function structuredSearch(p: ParsedQuery): Promise<CommandEntry[]> {
+  const joined = [p.text && `«${p.text}»`, ...p.chips].filter(Boolean).join(" · ");
+  const summary = joined.charAt(0).toUpperCase() + joined.slice(1);
+  const out: CommandEntry[] = [];
+  const hasAmount = p.minAmount !== undefined || p.maxAmount !== undefined;
+  const wantsPayslips = p.kind === "payslip" || (!p.kind && !hasAmount && p.year !== undefined && !p.text);
+  const wantsTransactions = p.kind !== "payslip";
+
+  const [payslips, transactions] = await Promise.all([
+    wantsPayslips
+      ? getPayslips({ search: p.text || undefined, year: p.year, limit: 50 }).then((r) => r.data).catch(() => [])
+      : Promise.resolve([]),
+    wantsTransactions
+      ? getTransactions({
+          search: p.text || undefined, minAmount: p.minAmount, maxAmount: p.maxAmount, from: p.from, to: p.to,
+          type: p.kind === "expense" || p.kind === "income" ? p.kind : undefined, limit: 5,
+        }).then((r) => r.data).catch(() => [])
+      : Promise.resolve([]),
+  ]);
+
+  if (wantsTransactions) {
+    out.push({
+      id: "search:transactions",
+      group: "Buscar movimientos",
+      label: summary,
+      hint: "Ver todos",
+      icon: Search,
+      run: go(transactionsHref({
+        search: p.text || undefined, minAmount: p.minAmount, maxAmount: p.maxAmount, from: p.from, to: p.to,
+        type: p.kind === "expense" || p.kind === "income" ? p.kind : undefined,
+      })),
+    });
+    for (const t of transactions) {
+      out.push({
+        id: `tx:${t.id}`,
+        group: "Transacciones",
+        label: t.payee || t.memo || "Sin descripción",
+        hint: [t.categoryName, formatCurrency(t.amount), t.date].filter(Boolean).join(" · "),
+        icon: Receipt,
+        run: go(t.payee ? `/app/transactions?buscar=${encodeURIComponent(t.payee)}` : transactionsHref({ from: t.date, to: t.date })),
+      });
+    }
+  }
+  if (wantsPayslips) {
+    const params = new URLSearchParams();
+    if (p.year) params.set("anio", String(p.year));
+    if (p.month) params.set("mes", String(p.month));
+    if (p.text) params.set("buscar", p.text);
+    out.push({
+      id: "search:payslips",
+      group: "Buscar nóminas",
+      label: summary,
+      hint: "Ver todas",
+      icon: FileText,
+      run: go(`/app/payslips${params.size ? `?${params}` : ""}`),
+    });
+    for (const n of payslips.filter((x) => !p.month || x.periodMonth === p.month).slice(0, 5)) {
+      out.push({
+        id: `payslip:${n.id}`,
+        group: "Nóminas",
+        label: n.company ?? n.fileName,
+        hint: [payslipPeriodLabel(n.periodMonth, n.periodYear), n.netSalary != null ? `${formatCurrency(n.netSalary)} netos` : null].filter(Boolean).join(" · "),
+        icon: FileText,
+        run: go(`/app/payslips?perfil=${n.profileId}&nomina=${n.id}`),
+      });
+    }
+  }
+  return out;
+}
 function payslipPeriodLabel(month: number | null, year: number | null): string {
   if (!month || !year) return "Sin periodo";
   return `${MONTH_SHORT[month - 1]} ${year}`;
@@ -55,6 +129,17 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
       return;
     }
     let cancelled = false;
+    const parsed = parseSearchQuery(q, todayIso());
+    if (hasSyntax(parsed)) {
+      // «mercadona >50 oct», «nómina marzo 2025»: búsqueda con filtros.
+      const timer = setTimeout(() => {
+        structuredSearch(parsed).then((found) => { if (!cancelled) setSearchEntries(found); });
+      }, 250);
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }
     const timer = setTimeout(() => {
       Promise.all([
         getPayslips({ search: q, limit: 5 }).catch(() => ({ data: [] })),
@@ -253,6 +338,11 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
             );
           })}
         </div>
+        {!query.trim() && (
+          <p className="border-t border-border px-4 py-2.5 text-xs text-muted-foreground">
+            Prueba: <span className="text-foreground">mercadona &gt;50 oct</span> · <span className="text-foreground">nómina marzo 2025</span> · <span className="text-foreground">gastos 20-40 mes pasado</span>
+          </p>
+        )}
       </DialogContent>
     </Dialog>
   );
