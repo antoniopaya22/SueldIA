@@ -61,7 +61,7 @@ const alertRuleRow = z.object({
   id,
   name: text(200),
   type: z.enum(s.alertRules.type.enumValues),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
   enabled: z.boolean(),
   createdAt,
 });

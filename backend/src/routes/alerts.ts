@@ -22,7 +22,7 @@ function parseConfigForType(type: AlertRuleType, config: unknown) {
 const baseRuleSchema = z.object({
   name: z.string().min(1).max(100),
   type: ruleTypeSchema,
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
   enabled: z.boolean().default(true),
 });
 
