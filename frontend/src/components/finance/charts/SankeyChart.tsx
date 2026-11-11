@@ -20,12 +20,25 @@ function colorFor(kind: SankeyData["nodes"][number]["kind"], groupIndex: number)
 /** Diagrama de flujo: de dónde viene el dinero (ingresos) y a dónde va (grupos de gasto y ahorro). */
 export function SankeyChart({ income, groups, limit, expanded }: Props) {
   const data = useMemo(() => buildSankey(income, groups, limit), [income, groups, limit]);
+  return <SankeyView data={data} expanded={expanded} />;
+}
+
+/**
+ * Pinta un diagrama de flujo ya calculado. `colorOf` permite dar color propio
+ * a algunos nodos (p. ej. IRPF o Neto); el resto, por su tipo.
+ */
+export function SankeyView({ data, expanded, colorOf, emptyMessage = "No hay ingresos ni gastos en este periodo." }: {
+  data: SankeyData;
+  expanded: boolean;
+  colorOf?: (node: SankeyData["nodes"][number]) => string | undefined;
+  emptyMessage?: string;
+}) {
   const nodeColors = useMemo(() => {
     let g = 0;
-    return data.nodes.map((n) => colorFor(n.kind, n.kind === "group" ? g++ : 0));
-  }, [data]);
+    return data.nodes.map((n) => colorOf?.(n) ?? colorFor(n.kind, n.kind === "group" ? g++ : 0));
+  }, [data, colorOf]);
 
-  if (data.links.length === 0) return <ChartEmpty message="No hay ingresos ni gastos en este periodo." height={expanded ? 420 : 320} />;
+  if (data.links.length === 0) return <ChartEmpty message={emptyMessage} height={expanded ? 420 : 320} />;
 
   return (
     <div className={expanded ? "h-[28rem]" : "h-80"}>

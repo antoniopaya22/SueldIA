@@ -27,6 +27,7 @@ import { cn } from "cn";
 import { irpfAmount } from "../lib/payslip-concepts";
 import { getTodayIsoDate } from "./finance-manage/transactions/shared";
 import { AttentionCard } from "./home/AttentionCard";
+import { PaySankeyCard } from "./home/PaySankeyCard";
 
 // ─── Helpers ────────────────────────────────────────────────────
 const MONTHS_FULL = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -522,6 +523,7 @@ function HomeDashboardView() {
           </SectionCard>
         </div>
       </div>
+      {hasFinance && hasPayroll && <PaySankeyCard />}
     </div>
   );
 }
