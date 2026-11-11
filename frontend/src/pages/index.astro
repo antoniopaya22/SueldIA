@@ -1,4 +1,6 @@
 ---
+// Fuera de la plantilla: el compilador de Astro 7 no ve `Astro` dentro de las expresiones de un slot.
+const siteUrl = Astro.site?.toString();
 import MarketingLayout from "../layouts/MarketingLayout.astro";
 import ProductMockup from "../components/marketing/ProductMockup.astro";
 import ExtractionVisual from "../components/marketing/ExtractionVisual.astro";
@@ -126,7 +128,7 @@ const faqs = [
     applicationCategory: "FinanceApplication",
     operatingSystem: "Web",
     description: "Sube tus nóminas en PDF y SueldIA extrae cada concepto, analiza tu evolución salarial e IRPF y gestiona tus finanzas personales.",
-    url: Astro.site?.toString(),
+    url: siteUrl,
     offers: { "@type": "Offer", price: "0", priceCurrency: "EUR" },
     inLanguage: "es-ES",
   })} />
