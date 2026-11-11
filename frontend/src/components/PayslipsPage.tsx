@@ -293,6 +293,7 @@ function PayslipsList() {
             key={detail.id}
             payslip={detail}
             profileName={profiles.find((p) => p.id === detail.profileId)?.name}
+            profiles={profiles}
             onBack={() => openPayslip(null)}
             onDelete={() => setDeleteTarget({ id: detail.id, label: formatPeriod(detail.periodMonth, detail.periodYear, true) })}
             onReprocess={() => reprocessMut.mutate(detail.id)}

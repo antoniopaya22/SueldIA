@@ -1,17 +1,18 @@
 import { useMemo, useState } from "react";
 import { useLeaveGuard } from "../../hooks/use-leave-guard";
 import { deferWithUndo } from "../../lib/undo";
+import { setUrlParams } from "../../lib/url-state";
 import { irpfAmount, socialSecurityAmount } from "../../lib/payslip-concepts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowLeft, Building2, ChevronDown, FileText, Gift, Link2, Loader2, MoreHorizontal,
+  AlertTriangle, ArrowRightLeft, Check, ArrowLeft, Building2, ChevronDown, FileText, Gift, Link2, Loader2, MoreHorizontal,
   NotebookPen, Pencil, Plus, RefreshCw, Save, Search, Tag as TagIcon, Trash2, Unlink, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   assignTag, createNote, createTag, deleteNote, getNotes, getPayslipTags, getTags, removeTag,
   getPayslipLinkSuggestions, getTransactions, linkPayslipTransaction,
-  updatePayslipConcepts, updatePayslipType,
+  updatePayslipConcepts, updatePayslipType, markPayslipReviewed, movePayslipToProfile,
   type Payslip, type PayslipConcept, type PayslipLinkCandidate,
 } from "../../lib/api";
 import { formatCurrency, formatPct } from "../../lib/format";
@@ -49,11 +50,11 @@ function ConceptTable({
   title, tone, concepts, allConcepts, editing, onChange, onRemove, onAdd, invalidAmounts,
 }: {
   title: string;
-  tone: "devengo" | "deduccion";
+  tone: "devengo" | "deduccion" | "otros";
   concepts: PayslipConcept[];
   allConcepts: PayslipConcept[];
   editing: boolean;
-  onChange: (index: number, field: "name" | "amount", value: string | number) => void;
+  onChange: (index: number, patch: Partial<Pick<PayslipConcept, "name" | "amount" | "category" | "isPercentage">>) => void;
   invalidAmounts?: boolean;
   onRemove: (index: number) => void;
   onAdd: () => void;
@@ -64,7 +65,7 @@ function ConceptTable({
     <SectionCard
       title={
         <span className="flex items-center gap-2">
-          <span className={cn("size-2 rounded-full", tone === "devengo" ? "bg-primary-500 dark:bg-primary" : "bg-red-500")} />
+          <span className={cn("size-2 rounded-full", tone === "devengo" ? "bg-primary-500 dark:bg-primary" : tone === "deduccion" ? "bg-red-500" : "bg-slate-400")} />
           {title}
           <span className="font-normal text-muted-foreground">· {concepts.length}</span>
         </span>
@@ -72,8 +73,8 @@ function ConceptTable({
       flush
       footer={
         <div className="flex items-center justify-between text-sm">
-          <span className="font-medium text-muted-foreground">Total {tone === "devengo" ? "devengado" : "deducciones"}</span>
-          <span className={cn("font-semibold tabular-nums", tone === "devengo" ? "text-foreground" : "text-red-600 dark:text-red-400")}>
+          <span className="font-medium text-muted-foreground">Total {tone === "devengo" ? "devengado" : tone === "deduccion" ? "deducciones" : "otros"}</span>
+          <span className={cn("font-semibold tabular-nums", tone === "deduccion" ? "text-red-600 dark:text-red-400" : "text-foreground")}>
             {tone === "deduccion" && total > 0 ? "−" : ""}{formatCurrency(total)}
           </span>
         </div>
@@ -81,34 +82,63 @@ function ConceptTable({
     >
       {sorted.length === 0 && !editing ? (
         <p className="px-5 py-8 text-center text-sm text-muted-foreground">
-          {tone === "devengo" ? "No se detectaron devengos." : "No se detectaron deducciones."}
+          {tone === "devengo" ? "No se detectaron devengos." : tone === "deduccion" ? "No se detectaron deducciones." : "Sin otros conceptos."}
         </p>
       ) : (
         <ul className="divide-y divide-border">
           {sorted.map((c) => {
             const realIndex = allConcepts.indexOf(c);
             return (
-              <li key={realIndex} className="flex items-center gap-3 px-5 py-2.5">
+              <li key={realIndex} className={cn("px-5 py-2.5", editing ? "space-y-2" : "flex items-center gap-3")}>
                 {editing ? (
                   <>
-                    <Input
-                      value={c.name}
-                      onChange={(e) => onChange(realIndex, "name", e.target.value)}
-                      placeholder="Concepto"
-                      aria-label="Nombre del concepto"
-                      className="h-8 flex-1"
-                    />
-                    <DecimalInput
-                      value={c.amount}
-                      // Vacío o no numérico → NaN: el formulario lo marca al guardar.
-                      onValueChange={(v) => onChange(realIndex, "amount", v ?? Number.NaN)}
-                      aria-label={`Importe de ${c.name || "concepto"}`}
-                      aria-invalid={invalidAmounts && !Number.isFinite(c.amount) ? true : undefined}
-                      className="h-8 w-24 shrink-0 text-right tabular-nums"
-                    />
-                    <Button variant="ghost" size="icon-sm" onClick={() => onRemove(realIndex)} aria-label="Quitar concepto" className="text-muted-foreground hover:text-destructive">
-                      <X className="size-4" />
-                    </Button>
+                    {/* Dos líneas: con todo en una, el nombre se quedaba sin sitio. */}
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={c.name}
+                        onChange={(e) => onChange(realIndex, { name: e.target.value })}
+                        placeholder="Concepto"
+                        aria-label="Nombre del concepto"
+                        className="h-8 min-w-0 flex-1"
+                      />
+                      <Button variant="ghost" size="icon-sm" onClick={() => onRemove(realIndex)} aria-label={`Quitar ${c.name || "concepto"}`} className="shrink-0 text-muted-foreground hover:text-destructive">
+                        <X className="size-4" />
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <DecimalInput
+                        value={c.amount}
+                        // Vacío o no numérico → NaN: el formulario lo marca al guardar.
+                        onValueChange={(v) => onChange(realIndex, { amount: v ?? Number.NaN })}
+                        aria-label={`Importe de ${c.name || "concepto"}`}
+                        aria-invalid={invalidAmounts && !Number.isFinite(c.amount) ? true : undefined}
+                        className="h-8 w-28 text-right tabular-nums"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onChange(realIndex, { isPercentage: !c.isPercentage })}
+                        aria-pressed={c.isPercentage}
+                        aria-label={`${c.name || "Concepto"}: ${c.isPercentage ? "es un porcentaje" : "es un importe en euros"}`}
+                        title={c.isPercentage ? "Es un porcentaje (no suma en euros)" : "Importe en euros"}
+                        className={cn(
+                          "h-8 w-8 shrink-0 rounded-md border text-xs font-medium tabular-nums transition-colors",
+                          c.isPercentage ? "border-primary/40 bg-primary/10 text-primary-700 dark:text-primary" : "border-input text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {c.isPercentage ? "%" : "€"}
+                      </button>
+                      {/* Cambiar de sección: un concepto mal clasificado por el analizador. */}
+                      <select
+                        value={c.category}
+                        onChange={(e) => onChange(realIndex, { category: e.target.value as PayslipConcept["category"] })}
+                        aria-label={`Sección de ${c.name || "concepto"}`}
+                        className="h-8 min-w-0 flex-1 rounded-md border border-input bg-transparent px-1.5 text-xs text-muted-foreground dark:bg-input/30"
+                      >
+                        <option value="devengo">Devengo</option>
+                        <option value="deduccion">Deducción</option>
+                        <option value="otros">Otros</option>
+                      </select>
+                    </div>
                   </>
                 ) : (
                   <>
@@ -124,7 +154,7 @@ function ConceptTable({
           {editing && (
             <li className="px-5 py-2.5">
               <Button variant="ghost" size="sm" onClick={onAdd} className="gap-1.5 text-primary-700 hover:text-primary-700 dark:text-primary">
-                <Plus className="size-3.5" /> Añadir {tone === "devengo" ? "devengo" : "deducción"}
+                <Plus className="size-3.5" /> Añadir {tone === "devengo" ? "devengo" : tone === "deduccion" ? "deducción" : "concepto"}
               </Button>
             </li>
           )}
@@ -511,10 +541,12 @@ function LinkIncomeCard({
 
 // ─── Detalle ────────────────────────────────────────────────────
 export function PayslipDetail({
-  payslip, profileName, onBack, onDelete, onReprocess, isReprocessing, onEditingChange,
+  payslip, profileName, profiles = [], onBack, onDelete, onReprocess, isReprocessing, onEditingChange,
 }: {
   payslip: PayslipWithConcepts;
   profileName?: string;
+  /** Perfiles del usuario, para «Mover a otro perfil». */
+  profiles?: Array<{ id: number; name: string }>;
   onBack: () => void;
   onDelete: () => void;
   onReprocess: () => void;
@@ -596,6 +628,23 @@ export function PayslipDetail({
     onError: (e: Error) => toast.error(e.message || "No se pudieron guardar los cambios"),
   });
 
+  const reviewedMut = useMutation({
+    mutationFn: () => markPayslipReviewed(payslip.id),
+    onSuccess: () => { invalidate(); toast.success("Nómina marcada como revisada"); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const moveMut = useMutation({
+    mutationFn: (profileId: number) => movePayslipToProfile(payslip.id, profileId),
+    onSuccess: (_d, profileId) => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      setUrlParams({ perfil: profileId });
+      toast.success(`Nómina movida a ${profiles.find((p) => p.id === profileId)?.name ?? "otro perfil"}`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const typeMut = useMutation({
     mutationFn: (type: "ordinal" | "extra") => updatePayslipType(payslip.id, type),
     onSuccess: (_d, type) => {
@@ -608,6 +657,28 @@ export function PayslipDetail({
   const shownConcepts = editing ? concepts : payslip.concepts;
   const devengos = shownConcepts.filter((c) => c.category === "devengo");
   const deducciones = shownConcepts.filter((c) => c.category === "deduccion");
+  const otros = shownConcepts.filter((c) => c.category === "otros");
+
+  // Comprobación en vivo mientras se edita: antes los avisos de cuadre se
+  // ocultaban justo al editar, que es cuando hacen falta.
+  const liveChecks = useMemo(() => {
+    if (!editing) return [];
+    const sum = (cat: PayslipConcept["category"]) =>
+      concepts.filter((c) => c.category === cat && !c.isPercentage && Number.isFinite(c.amount)).reduce((s, c) => s + c.amount, 0);
+    const devengado = sum("devengo");
+    const deducido = sum("deduccion");
+    const checks: Array<{ ok: boolean; text: string }> = [];
+    if (meta.grossSalary != null && Number.isFinite(meta.grossSalary) && devengado > 0) {
+      const ok = Math.abs(devengado - meta.grossSalary) < Math.max(1, meta.grossSalary * 0.005);
+      checks.push({ ok, text: `Devengos ${formatCurrency(devengado)} ${ok ? "=" : "≠"} bruto ${formatCurrency(meta.grossSalary)}` });
+    }
+    if (meta.grossSalary != null && meta.netSalary != null && Number.isFinite(meta.grossSalary) && Number.isFinite(meta.netSalary) && deducido > 0) {
+      const expected = meta.grossSalary - deducido;
+      const ok = Math.abs(expected - meta.netSalary) < Math.max(1, meta.netSalary * 0.005);
+      checks.push({ ok, text: `Bruto − deducciones = ${formatCurrency(expected)} ${ok ? "=" : "≠"} neto ${formatCurrency(meta.netSalary)}` });
+    }
+    return checks;
+  }, [editing, concepts, meta.grossSalary, meta.netSalary]);
   const gross = payslip.grossSalary ?? 0;
   const net = payslip.netSalary ?? 0;
   const irpf = useMemo(
@@ -615,9 +686,10 @@ export function PayslipDetail({
     [payslip.concepts],
   );
 
-  const updateConcept = (index: number, field: "name" | "amount", value: string | number) =>
-    setConcepts((cs) => cs.map((c, i) => (i === index ? { ...c, [field]: value } : c)));
-  const addConcept = (category: "devengo" | "deduccion") =>
+  // Al cambiar nombre o sección se borra el tipo: lo recalcula el servidor al guardar.
+  const updateConcept = (index: number, patch: Partial<Pick<PayslipConcept, "name" | "amount" | "category" | "isPercentage">>) =>
+    setConcepts((cs) => cs.map((c, i) => (i === index ? { ...c, ...patch, ...(patch.name !== undefined || patch.category ? { kind: null } : {}) } : c)));
+  const addConcept = (category: "devengo" | "deduccion" | "otros") =>
     setConcepts((cs) => [...cs, { id: 0, payslipId: payslip.id, category, name: "", amount: 0, isPercentage: false }]);
   const removeConcept = (index: number) => setConcepts((cs) => cs.filter((_, i) => i !== index));
 
@@ -679,6 +751,11 @@ export function PayslipDetail({
             </>
           ) : (
             <>
+              {payslip.parsingStatus === "review" && payslip.periodMonth && payslip.periodYear && (
+                <Button onClick={() => reviewedMut.mutate()} disabled={reviewedMut.isPending} className="gap-1.5">
+                  <Check className="size-4" /> Marcar como revisada
+                </Button>
+              )}
               <Button variant="outline" onClick={startEdit} className="gap-1.5">
                 <Pencil className="size-4" /> Editar
               </Button>
@@ -699,6 +776,11 @@ export function PayslipDetail({
                     <Gift className="size-4" />
                     {payslip.payslipType === "extra" ? "Marcar como mensual" : "Marcar como paga extra"}
                   </DropdownMenuItem>
+                  {profiles.filter((p) => p.id !== payslip.profileId).map((p) => (
+                    <DropdownMenuItem key={p.id} onClick={() => moveMut.mutate(p.id)} disabled={moveMut.isPending} className="gap-2">
+                      <ArrowRightLeft className="size-4" /> Mover a {p.name}
+                    </DropdownMenuItem>
+                  ))}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={onDelete} variant="destructive" className="gap-2">
                     <Trash2 className="size-4" /> Eliminar nómina
@@ -748,6 +830,16 @@ export function PayslipDetail({
             </div>
           </div>
           {errors.concepts && <p role="alert" className="mt-3 text-sm text-destructive">{errors.concepts}</p>}
+          {liveChecks.length > 0 && (
+            <ul className="mt-4 space-y-1 text-xs" aria-live="polite">
+              {liveChecks.map((c) => (
+                <li key={c.text} className={cn("flex items-center gap-1.5 tabular-nums", c.ok ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>
+                  {c.ok ? <Check className="size-3.5" aria-hidden="true" /> : <AlertTriangle className="size-3.5" aria-hidden="true" />}
+                  {c.text}
+                </li>
+              ))}
+            </ul>
+          )}
         </SectionCard>
       ) : (
         <StatGrid className="mb-6">
@@ -784,10 +876,32 @@ export function PayslipDetail({
             invalidAmounts={!!errors.concepts}
           />
         </div>
+        {/* Antes los conceptos «otros» no se veían, aunque se guardaban. */}
+        {(otros.length > 0 || editing) && (
+          <ConceptTable
+            title="Otros conceptos"
+            tone="otros"
+            concepts={otros}
+            allConcepts={shownConcepts}
+            editing={editing}
+            onChange={updateConcept}
+            onRemove={removeConcept}
+            onAdd={() => addConcept("otros")}
+            invalidAmounts={!!errors.concepts}
+          />
+        )}
         <NotesCard payslipId={payslip.id} />
         </div>
 
         <div className="space-y-6">
+          {/* Al editar, el texto del PDF arriba y abierto: es la referencia para corregir. */}
+          {editing && payslip.rawText && (
+            <SectionCard title="Texto extraído del PDF" icon={FileText} description="Para comparar mientras corriges.">
+              <pre className="max-h-[28rem] overflow-auto rounded-lg bg-muted/40 p-3 [font-family:ui-monospace,SFMono-Regular,Menlo,monospace] text-[11px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                {payslip.rawText}
+              </pre>
+            </SectionCard>
+          )}
           {!editing && gross > 0 && <BreakdownCard payslip={payslip} />}
           <LinkIncomeCard payslipId={payslip.id} linkedTransaction={payslip.linkedTransaction} netSalary={payslip.netSalary} />
           <TagsCard payslipId={payslip.id} />

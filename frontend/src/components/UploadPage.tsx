@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import {
-  ArrowRight, Building2, CalendarDays, CheckCircle2, CircleAlert, FileText, FileUp, Gift,
+  ArrowRight, Building2, CalendarDays, CheckCircle2, CircleAlert, Eye, FileText, FileUp, Gift,
   Loader2, Lock, RotateCcw, ScanLine, Sparkles, Upload, Users, X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -121,6 +121,24 @@ function QueueRow({ item, onRemove, onRetry, disabled }: {
       {item.state === "failed" && (
         <Button variant="ghost" size="sm" onClick={onRetry} disabled={disabled} className="gap-1.5">
           <RotateCcw className="size-3.5" /> Reintentar
+        </Button>
+      )}
+      {item.state !== "uploading" && (
+        // El PDF no se guarda en el servidor, pero mientras sigue aquí se puede
+        // abrir desde el propio navegador para comparar con lo extraído.
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => {
+            const url = URL.createObjectURL(item.file);
+            window.open(url, "_blank", "noopener");
+            setTimeout(() => URL.revokeObjectURL(url), 60_000);
+          }}
+          aria-label={`Ver el PDF ${item.file.name}`}
+          title="Ver el PDF (solo en este navegador, no se guarda)"
+          className="text-muted-foreground"
+        >
+          <Eye className="size-4" />
         </Button>
       )}
       {item.state === "done" && r && (

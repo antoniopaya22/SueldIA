@@ -514,6 +514,58 @@ payslipsRouter.patch("/:id/type", async (req, res, next) => {
   }
 });
 
+// Marcar como revisada sin tener que editar: el usuario ha mirado una nómina
+// "para revisar" y está bien (p. ej. una sin conceptos que de verdad no los tiene).
+payslipsRouter.patch("/:id/reviewed", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const userProfileIds = await getUserProfileIds(userId);
+    const id = Number(req.params.id);
+    const [payslip] = await db.select().from(payslips).where(eq(payslips.id, id));
+    if (!payslip || !userProfileIds.includes(payslip.profileId))
+      return res.status(404).json({ error: "Nómina no encontrada" });
+    // Sin periodo no se puede situar en ninguna serie: hay que editarla.
+    if (!payslip.periodMonth || !payslip.periodYear)
+      return res.status(400).json({ error: "Indica el periodo de la nómina antes de darla por revisada" });
+
+    const [updated] = await db
+      .update(payslips)
+      .set({ parsingStatus: "parsed" })
+      .where(and(eq(payslips.id, id), inArray(payslips.profileId, userProfileIds)))
+      .returning();
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Mover a otro perfil (p. ej. se subió en el de la pareja por error).
+const moveProfileSchema = z.object({ profileId: z.number().int().positive().max(2_147_483_647) });
+payslipsRouter.patch("/:id/profile", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const userProfileIds = await getUserProfileIds(userId);
+    const id = Number(req.params.id);
+    const parsed = moveProfileSchema.safeParse(req.body);
+    if (!parsed.success)
+      return res.status(400).json({ error: "Perfil inválido", details: parsed.error.flatten().fieldErrors });
+    const [payslip] = await db.select().from(payslips).where(eq(payslips.id, id));
+    if (!payslip || !userProfileIds.includes(payslip.profileId))
+      return res.status(404).json({ error: "Nómina no encontrada" });
+    if (!userProfileIds.includes(parsed.data.profileId))
+      return res.status(404).json({ error: "Perfil no encontrado" });
+
+    const [updated] = await db
+      .update(payslips)
+      .set({ profileId: parsed.data.profileId })
+      .where(and(eq(payslips.id, id), inArray(payslips.profileId, userProfileIds)))
+      .returning();
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Reparse all payslips (useful after parser improvements) — igual que
 // reprocess, sobre el rawText ya guardado de cada una.
 payslipsRouter.post("/reparse", async (req, res, next) => {

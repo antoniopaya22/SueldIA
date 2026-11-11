@@ -138,6 +138,8 @@ describeDb("autorización entre usuarios (integración)", () => {
     ["GET", `/payslips/${ids.payslip}/link-suggestions`],
     ["PUT", `/payslips/${ids.payslip}/link`, { transactionId: ids.income }],
     ["PATCH", `/payslips/${ids.payslip}/type`, { payslipType: "extra" }],
+    ["PATCH", `/payslips/${ids.payslip}/reviewed`],
+    ["PATCH", `/payslips/${ids.payslip}/profile`, { profileId: ids.bProfile }],
     ["DELETE", `/payslips/${ids.payslip}`],
     ["GET", `/accounts/${ids.account}`],
     ["PUT", `/accounts/${ids.account}`, { name: "hack", type: "bank" }],
@@ -228,6 +230,8 @@ describeDb("autorización entre usuarios (integración)", () => {
     })).status).toBe(400);
     expect((await call("a", "POST", "/transactions/bulk", { transactions: [] })).status).toBe(404);
     expect((await call("a", "GET", "/transactions?limit=10000")).status).toBe(400);
+    // A no puede mandar su nómina a un perfil de B.
+    expect((await call("a", "PATCH", `/payslips/${ids.payslip}/profile`, { profileId: ids.bProfile })).status).toBe(404);
   });
 
   it("eliminar la cuenta borra los datos y lo dice si la identidad sigue viva", async () => {

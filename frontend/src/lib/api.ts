@@ -319,6 +319,14 @@ export const reprocessPayslip = (id: number) =>
 export const deletePayslip = (id: number) =>
   request<{ ok: boolean }>(`/payslips/${id}`, { method: "DELETE" });
 
+/** Dar por buena una nómina «para revisar» sin editarla (requiere periodo). */
+export const markPayslipReviewed = (id: number) =>
+  request<Payslip>(`/payslips/${id}/reviewed`, { method: "PATCH" });
+
+/** Mover una nómina a otro perfil del usuario. */
+export const movePayslipToProfile = (id: number, profileId: number) =>
+  request<Payslip>(`/payslips/${id}/profile`, { method: "PATCH", body: JSON.stringify({ profileId }) });
+
 export const updatePayslipType = (id: number, type: "ordinal" | "extra") =>
   request<Payslip>(`/payslips/${id}/type`, {
     method: "PATCH",
