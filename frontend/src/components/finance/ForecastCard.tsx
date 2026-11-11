@@ -77,7 +77,7 @@ export function ForecastCard() {
         {!hasPlans ? (
           <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
             No tienes nada programado. Programa tus pagos fijos como recurrentes para ver aquí cómo evoluciona tu saldo.{" "}
-            <a href="/app/transactions" className="font-medium text-foreground underline underline-offset-2">Programar</a>
+            <a href="/app/transactions?vista=recurrentes" className="font-medium text-foreground underline underline-offset-2">Programar</a>
           </p>
         ) : (
           <ul className="divide-y divide-border">

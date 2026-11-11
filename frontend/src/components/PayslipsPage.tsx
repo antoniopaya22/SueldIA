@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, CircleDollarSign,
@@ -10,7 +10,7 @@ import {
   type PayslipSortField,
 } from "../lib/api";
 import { formatCurrency } from "../lib/format";
-import { readIntParam, setIntParam } from "../lib/url-params";
+import { setUrlParams, useUrlEnumParam, useUrlIntParam, useUrlParam } from "../lib/url-state";
 import { useSelectedProfile } from "../hooks/use-selected-profile";
 import { Providers } from "./Providers";
 import {
@@ -102,29 +102,47 @@ function FilterSelect({ value, onChange, placeholder, options, className }: {
   );
 }
 
+const SORT_FIELDS: readonly PayslipSortField[] = ["period", "fileName", "grossSalary", "netSalary", "parsingStatus"];
+
 // ─── Vista ──────────────────────────────────────────────────────
 function PayslipsList() {
   const queryClient = useQueryClient();
   const { data: profiles = [], isLoading: profilesLoading, error: profilesError, refetch: refetchProfiles } = useQuery({ queryKey: ["profiles"], queryFn: getProfiles });
 
   const [selectedProfile, setSelectedProfile] = useSelectedProfile(profiles.map((p) => p.id));
-  const [selectedPayslip, setSelectedPayslip] = useState<number | null>(null);
-  const [search, setSearch] = useState("");
-  const [yearFilter, setYearFilter] = useState("");
-  const [monthFilter, setMonthFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [sortField, setSortField] = useState<PayslipSortField>("period");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [page, setPage] = useState(1);
+  // Todo el estado de la vista vive en la URL: se puede compartir, sobrevive a
+  // una recarga, y Atrás vuelve del detalle a la lista con los filtros intactos.
+  const [nominaParam] = useUrlIntParam("nomina", 0);
+  const selectedPayslip = nominaParam || null;
+  const [search, setSearchParam] = useUrlParam("buscar");
+  const [searchInput, setSearchInput] = useState(search);
+  const [yearFilter, setYearParam] = useUrlParam("anio");
+  const [monthFilter, setMonthParam] = useUrlParam("mes");
+  const [statusFilter, setStatusParam] = useUrlParam("estado");
+  const [typeFilter, setTypeParam] = useUrlParam("tipo");
+  const [sortField, setSortFieldParam] = useUrlEnumParam<PayslipSortField>("orden", SORT_FIELDS, "period");
+  const [sortDir, setSortDirParam] = useUrlEnumParam("dir", ["asc", "desc"] as const, "desc");
+  const [page, setPageParam] = useUrlIntParam("pagina", 1);
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; label: string } | null>(null);
   const [exporting, setExporting] = useState(false);
+  // ¿Se abrió el detalle desde la lista (hay una entrada de historial a la que volver)?
+  const openedFromList = useRef(false);
 
-  // Tras montar (no en el render inicial) para no desincronizar la hidratación.
+  // Cualquier filtro nuevo vuelve a la primera página.
+  const setPage = (p: number) => setPageParam(p);
+  const setFilter = (set: (v: string) => void) => (v: string) => { setUrlParams({ pagina: null }); set(v); };
+  const setYearFilter = setFilter(setYearParam);
+  const setMonthFilter = setFilter(setMonthParam);
+  const setStatusFilter = setFilter(setStatusParam);
+  const setTypeFilter = setFilter(setTypeParam);
+
+  // Búsqueda con retardo: antes se lanzaba una petición por cada tecla.
+  useEffect(() => setSearchInput(search), [search]);
   useEffect(() => {
-    const fromUrl = readIntParam("nomina");
-    if (fromUrl) setSelectedPayslip(fromUrl);
-  }, []);
+    if (searchInput === search) return;
+    const t = setTimeout(() => setUrlParams({ buscar: searchInput.trim() || null, pagina: null }), 250);
+    return () => clearTimeout(t);
+  }, [searchInput, search]);
 
   const profileId = selectedProfile ?? profiles[0]?.id;
   const profile = profiles.find((p) => p.id === profileId);
@@ -171,10 +189,17 @@ function PayslipsList() {
   });
 
   const openPayslip = (id: number | null) => {
-    setSelectedPayslip(id);
     setEditingDetail(false);
-    setIntParam("nomina", id);
-    document.querySelector("main")?.scrollTo?.({ top: 0 });
+    if (id === null && openedFromList.current) {
+      // Volver = la entrada de historial anterior (la lista, con sus filtros).
+      openedFromList.current = false;
+      window.history.back();
+    } else {
+      openedFromList.current = id !== null;
+      setUrlParams({ nomina: id }, { push: id !== null });
+    }
+    // El contenedor con scroll es el de AppShell, no window.
+    document.getElementById("app-scroll")?.scrollTo({ top: 0 });
     window.scrollTo({ top: 0 });
   };
 
@@ -201,12 +226,11 @@ function PayslipsList() {
   });
 
   const handleSort = (field: PayslipSortField) => {
-    setPage(1);
     if (sortField === field) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      setUrlParams({ pagina: null, dir: sortDir === "asc" ? null : "asc" });
     } else {
-      setSortField(field);
-      setSortDir(field === "fileName" || field === "parsingStatus" ? "asc" : "desc");
+      const dir = field === "fileName" || field === "parsingStatus" ? "asc" : "desc";
+      setUrlParams({ pagina: null, orden: field === "period" ? null : field, dir: dir === "desc" ? null : dir });
     }
   };
 
@@ -233,7 +257,10 @@ function PayslipsList() {
   // al filtrar por un año el desplegable se quedaba solo con ese año.
   const years = (summary?.annualSummaries ?? []).map((s) => s.year).sort((a, b) => b - a);
   const hasFilters = Boolean(search || yearFilter || monthFilter || statusFilter || typeFilter);
-  const clearFilters = () => { setSearch(""); setYearFilter(""); setMonthFilter(""); setStatusFilter(""); setTypeFilter(""); setPage(1); };
+  const clearFilters = () => {
+    setSearchInput("");
+    setUrlParams({ buscar: null, anio: null, mes: null, estado: null, tipo: null, pagina: null });
+  };
 
   // ─── Detalle ──────────────────────────────────────────────────
   if (selectedPayslip) {
@@ -356,7 +383,7 @@ function PayslipsList() {
           <ProfileSelector
             profiles={profiles}
             value={profileId ?? 0}
-            onChange={(v) => { setSelectedProfile(v as number); setPage(1); setYearFilter(""); }}
+            onChange={(v) => { setSelectedProfile(v as number); setUrlParams({ pagina: null, anio: null }); }}
           />
         )}
       </PageHeader>
@@ -414,11 +441,11 @@ function PayslipsList() {
                   </span>
                   {totalPages > 1 && (
                     <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon-sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} aria-label="Página anterior">
+                      <Button variant="ghost" size="icon-sm" onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} aria-label="Página anterior">
                         <ChevronLeft className="size-4" />
                       </Button>
                       <span className="px-2 tabular-nums">{page} / {totalPages}</span>
-                      <Button variant="ghost" size="icon-sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} aria-label="Página siguiente">
+                      <Button variant="ghost" size="icon-sm" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} aria-label="Página siguiente">
                         <ChevronRight className="size-4" />
                       </Button>
                     </div>
@@ -433,8 +460,8 @@ function PayslipsList() {
                 <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                 <Input
                   type="search"
-                  value={search}
-                  onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
                   placeholder="Buscar por empresa o archivo…"
                   aria-label="Buscar nóminas"
                   className="h-8 pl-9"
@@ -444,19 +471,19 @@ function PayslipsList() {
                 {years.length > 0 && (
                   <FilterSelect
                     value={yearFilter}
-                    onChange={(v) => { setYearFilter(v); setPage(1); }}
+                    onChange={setYearFilter}
                     placeholder="Año"
                     options={years.map((y) => ({ value: String(y), label: String(y) }))}
                   />
                 )}
                 <FilterSelect
                   value={monthFilter}
-                  onChange={(v) => { setMonthFilter(v); setPage(1); }}
+                  onChange={setMonthFilter}
                   placeholder="Mes"
                   options={MONTHS_FULL.map((m, i) => ({ value: String(i + 1), label: capitalize(m) }))}
                 />
-                <FilterSelect value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} placeholder="Estado" options={STATUS_OPTIONS} />
-                <FilterSelect value={typeFilter} onChange={(v) => { setTypeFilter(v); setPage(1); }} placeholder="Tipo" options={TYPE_OPTIONS} />
+                <FilterSelect value={statusFilter} onChange={setStatusFilter} placeholder="Estado" options={STATUS_OPTIONS} />
+                <FilterSelect value={typeFilter} onChange={setTypeFilter} placeholder="Tipo" options={TYPE_OPTIONS} />
                 {hasFilters && (
                   <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-1 text-muted-foreground">
                     <X className="size-3.5" /> Limpiar
@@ -551,7 +578,7 @@ function PayslipsList() {
                 <AlertTriangle className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
                 {reviewCount} {reviewCount === 1 ? "nómina necesita" : "nóminas necesitan"} revisión: no se detectaron todos sus conceptos.
               </p>
-              <Button variant="outline" size="sm" onClick={() => { setStatusFilter("review"); setPage(1); }}>Ver cuáles</Button>
+              <Button variant="outline" size="sm" onClick={() => setStatusFilter("review")}>Ver cuáles</Button>
             </div>
           )}
         </>

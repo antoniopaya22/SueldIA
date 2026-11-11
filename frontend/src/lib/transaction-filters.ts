@@ -1,3 +1,5 @@
+import { writeUrl } from "./url-state";
+
 // Los filtros de Transacciones viven en la URL (?cuenta=2&categoria=7&desde=…):
 // se pueden compartir, sobreviven a un refresco y, sobre todo, permiten que
 // cualquier gráfico o ranking enlace al detalle de lo que muestra
@@ -79,11 +81,12 @@ export function transactionsHref(filters: TxUrlFilters): string {
   return `/app/transactions${query ? `?${query}` : ""}`;
 }
 
-/** Escribe los filtros en la URL actual sin recargar ni añadir entradas al historial. */
+/** Escribe los filtros en la URL actual sin recargar ni añadir entradas al historial. Cambiar filtros vuelve a la página 1. */
 export function writeTxFilters(filters: TxUrlFilters) {
   const url = new URL(window.location.href);
   applyFilters(url.searchParams, filters);
-  window.history.replaceState(window.history.state, "", url);
+  url.searchParams.delete("pagina");
+  writeUrl(url);
 }
 
 // ─── Periodos ───────────────────────────────────────────────────

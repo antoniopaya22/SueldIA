@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Bell, ChevronLeft, ChevronRight, PiggyBank, Receipt, Tags, Target } from "lucide-react";
 import { toast } from "sonner";
@@ -18,6 +18,7 @@ import { formatCurrency } from "../lib/format";
 import { groupTotals } from "../lib/budget-progress";
 import { invalidateFinance } from "../lib/finance-cache";
 import { cn } from "cn";
+import { useUrlParam } from "../lib/url-state";
 
 const MONTHS_FULL = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -49,7 +50,11 @@ const AUTO_EMPTY_MESSAGE: Record<AutoAssignMode, string> = {
 // ─── Página ─────────────────────────────────────────────────────
 function BudgetView() {
   const queryClient = useQueryClient();
-  const [month, setMonth] = useState(currentMonth);
+  // El mes va en la URL (?mes=2026-08): un enlace o una recarga abren ese mes.
+  const thisMonth = useMemo(currentMonth, []);
+  const [monthParam, setMonthParam] = useUrlParam("mes", thisMonth);
+  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(monthParam) ? monthParam : thisMonth;
+  const setMonth = (next: string) => setMonthParam(next);
   const [targetFor, setTargetFor] = useState<CategoryBudget | null>(null);
   const [coverFor, setCoverFor] = useState<CategoryBudget | null>(null);
 
@@ -131,15 +136,18 @@ function BudgetView() {
 
   const monthSwitcher = (
     <div className="flex items-center gap-1">
-      <Button variant="outline" size="icon-sm" onClick={() => setMonth((m) => shiftMonth(m, -1))} aria-label="Mes anterior">
+      <Button variant="outline" size="icon-sm" onClick={() => setMonth(shiftMonth(month, -1))} aria-label="Mes anterior">
         <ChevronLeft className="size-4" />
       </Button>
       <span className="min-w-32 px-1 text-center text-sm font-medium text-foreground tabular-nums">
         {monthLabel(month)}
       </span>
-      <Button variant="outline" size="icon-sm" onClick={() => setMonth((m) => shiftMonth(m, 1))} aria-label="Mes siguiente">
+      <Button variant="outline" size="icon-sm" onClick={() => setMonth(shiftMonth(month, 1))} aria-label="Mes siguiente">
         <ChevronRight className="size-4" />
       </Button>
+      {month !== thisMonth && (
+        <Button variant="ghost" size="sm" onClick={() => setMonth(thisMonth)}>Hoy</Button>
+      )}
     </div>
   );
 

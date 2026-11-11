@@ -31,8 +31,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "cn";
-
-const DEFAULT_RANGE_FROM = "2021-11";
+import { setUrlParams, useUrlParam } from "../lib/url-state";
 
 type ConceptBreakdownItem = DashboardData["conceptBreakdown"][number];
 type ConceptSortColumn = "name" | "category" | "average" | "total" | "count";
@@ -178,11 +177,21 @@ function DashboardView() {
     queryFn: getProfiles,
   });
 
-  const [selectedProfiles, setSelectedProfiles] = useState<number[]>([]);
+  // Selección en la URL (?perfiles=1,2&desde=2025-01&hasta=2025-12&anio=2025):
+  // se comparte, sobrevive a una recarga y a volver desde otra página. Antes el
+  // rango arrancaba en una fecha fija ("2021-11") que no tenía que ver con el usuario.
+  const [profilesParam, setProfilesParam] = useUrlParam("perfiles");
+  const selectedProfiles = useMemo(
+    () => profilesParam.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
+    [profilesParam],
+  );
+  const setSelectedProfiles = (ids: number[]) => setProfilesParam(ids.join(",") || null);
   const [chartType, setChartType] = useState<"area" | "line">("area");
-  const [selectedYear, setSelectedYear] = useState<number | null>(null);
-  const [rangeFrom, setRangeFrom] = useState(DEFAULT_RANGE_FROM);
-  const [rangeTo, setRangeTo] = useState("");
+  const [yearParam, setYearParam] = useUrlParam("anio");
+  const selectedYear = /^\d{4}$/.test(yearParam) ? Number(yearParam) : null;
+  const setSelectedYear = (y: number | null) => setYearParam(y);
+  const [rangeFrom] = useUrlParam("desde");
+  const [rangeTo] = useUrlParam("hasta");
   const [conceptSort, setConceptSort] = useState<{ column: ConceptSortColumn; direction: SortDirection }>({
     column: "total",
     direction: "desc",
@@ -226,20 +235,14 @@ function DashboardView() {
     else refetchDashboard();
   };
 
-  const handleRangeFromChange = (value: string) => {
-    setRangeFrom(value);
-    setRangeTo((current) => (!current || !value || current >= value ? current : value));
-  };
+  // Si el nuevo extremo cruza el otro, el otro se ajusta a él.
+  const handleRangeFromChange = (value: string) =>
+    setUrlParams({ desde: value, hasta: !rangeTo || !value || rangeTo >= value ? rangeTo : value });
 
-  const handleRangeToChange = (value: string) => {
-    setRangeTo(value);
-    setRangeFrom((current) => (!current || !value || current <= value ? current : value));
-  };
+  const handleRangeToChange = (value: string) =>
+    setUrlParams({ hasta: value, desde: !rangeFrom || !value || rangeFrom <= value ? rangeFrom : value });
 
-  const clearDateRange = () => {
-    setRangeFrom("");
-    setRangeTo("");
-  };
+  const clearDateRange = () => setUrlParams({ desde: null, hasta: null });
 
   const activeRangeLabel = availableMonths.length > 0
     ? `${formatMonthLabel(selectedRangeFrom || availableMonths[0])} – ${formatMonthLabel(selectedRangeTo || availableMonths[availableMonths.length - 1])}`

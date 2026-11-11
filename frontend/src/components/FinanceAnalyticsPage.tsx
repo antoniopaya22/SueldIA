@@ -48,12 +48,14 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "cn";
+import { setUrlParams, useUrlEnumParam, useUrlOptionalIdParam, useUrlParam } from "../lib/url-state";
 
 // Los paneles que son un gráfico con controles (todos menos las "lecturas rápidas", que es una tarjeta aparte).
 type ChartPanelKey = Exclude<PanelKey, "insights">;
 
 // ─── Tipos de controles ─────────────────────────────────────────
 type PeriodPreset = RangePreset | "custom";
+const PERIOD_PRESETS: readonly PeriodPreset[] = ["3m", "6m", "12m", "ytd", "all", "custom"];
 type TrendMetric = "all" | "income" | "expenses" | "net" | "count" | "savingsRate";
 type ChartView = "bars" | "area" | "line";
 type FlowType = "expense" | "income";
@@ -152,12 +154,23 @@ function accumulate<T extends { income: number; expenses: number; net: number; t
 // ─── Vista ──────────────────────────────────────────────────────
 function FinanceAnalyticsView() {
   const defaultRange = useMemo(() => presetRange(DEFAULT_PRESET), []);
-  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>(DEFAULT_PRESET);
-  const [from, setFrom] = useState(defaultRange.from);
-  const [to, setTo] = useState(defaultRange.to);
-  const [accountId, setAccountId] = useState<number | undefined>();
-  const [groupId, setGroupId] = useState<number | undefined>();
-  const [categoryId, setCategoryId] = useState<number | undefined>();
+  // Filtros en la URL (?periodo=3m&cuenta=2…): compartibles y recargables.
+  // Un periodo con nombre se guarda como nombre, no como fechas, para que un
+  // marcador de "últimos 3 meses" siga siéndolo dentro de un mes; solo el
+  // personalizado lleva ?desde=&hasta=.
+  const [periodPreset, setPresetParam] = useUrlEnumParam<PeriodPreset>("periodo", PERIOD_PRESETS, DEFAULT_PRESET);
+  const [fromParam] = useUrlParam("desde");
+  const [toParam] = useUrlParam("hasta");
+  const presetDates = useMemo(() => (periodPreset === "custom" ? null : presetRange(periodPreset)), [periodPreset]);
+  const from = presetDates ? presetDates.from : fromParam || defaultRange.from;
+  const to = presetDates ? presetDates.to : toParam || defaultRange.to;
+  const setPeriodPreset = (preset: PeriodPreset) =>
+    setUrlParams({ periodo: preset === DEFAULT_PRESET ? null : preset, ...(preset === "custom" ? { desde: from, hasta: to } : { desde: null, hasta: null }) });
+  const setFrom = (value: string) => setUrlParams({ periodo: "custom", desde: value, hasta: to });
+  const setTo = (value: string) => setUrlParams({ periodo: "custom", desde: from, hasta: value });
+  const [accountId, setAccountId] = useUrlOptionalIdParam("cuenta");
+  const [groupId, setGroupId] = useUrlOptionalIdParam("grupo");
+  const [categoryId, setCategoryId] = useUrlOptionalIdParam("categoria");
   const [expandedPanel, setExpandedPanel] = useState<ChartPanelKey | null>(null);
 
   // Lo que cada panel recuerda (tipo de gráfico, métrica, "Top N"): se guarda en la cuenta y se valida al leerlo.
@@ -534,10 +547,7 @@ function FinanceAnalyticsView() {
 
   const applyPreset = (preset: PeriodPreset) => {
     if (preset === "custom") return;
-    const range = presetRange(preset);
     setPeriodPreset(preset);
-    setFrom(range.from);
-    setTo(range.to);
   };
 
   const resetFilters = () => {
@@ -560,9 +570,7 @@ function FinanceAnalyticsView() {
     setGroupId(view.groupId);
     setCategoryId(view.categoryId);
     if (view.preset === "custom") {
-      setPeriodPreset("custom");
-      setFrom(view.from ?? defaultRange.from);
-      setTo(view.to ?? defaultRange.to);
+      setUrlParams({ periodo: "custom", desde: view.from ?? defaultRange.from, hasta: view.to ?? defaultRange.to });
     } else {
       applyPreset(view.preset);
     }
@@ -593,6 +601,9 @@ function FinanceAnalyticsView() {
   useEffect(() => {
     if (defaultViewApplied.current || !defaultViewPref.synced) return;
     defaultViewApplied.current = true;
+    // Un enlace con filtros manda sobre la vista por defecto.
+    const params = new URLSearchParams(window.location.search);
+    if (["periodo", "desde", "hasta", "cuenta", "grupo", "categoria"].some((k) => params.has(k))) return;
     const view = views.find((v) => v.id === defaultViewId);
     if (view) applyView(view);
     // eslint-disable-next-line react-hooks/exhaustive-deps

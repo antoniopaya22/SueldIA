@@ -30,8 +30,10 @@ import {
   DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "cn";
+import { useUrlEnumParam, useUrlParam } from "../lib/url-state";
 
 type Range = "12" | "24" | "all";
+const RANGES: readonly Range[] = ["12", "24", "all"];
 type Severity = "info" | "warning" | "critical";
 
 const SEVERITY_META: Record<Severity, { icon: typeof Bell; label: string; className: string; dot: string }> = {
@@ -94,9 +96,11 @@ function AnalyticsSkeleton() {
 function AnalyticsView() {
   const { data: profiles = [], isLoading: profilesLoading } = useQuery({ queryKey: ["profiles"], queryFn: getProfiles });
   const [selectedProfile, setSelectedProfile] = useSelectedProfile(profiles.map((p) => p.id));
-  const [range, setRange] = useState<Range>("24");
-  const [yoyMetric, setYoyMetric] = useState<"net" | "gross">("net");
-  const [concept, setConcept] = useState<string>("");
+  // En la URL: compartible y no se pierde al volver desde otra página.
+  const [range, setRange] = useUrlEnumParam<Range>("rango", RANGES, "24");
+  const [yoyMetric, setYoyMetric] = useUrlEnumParam("metrica", ["net", "gross"] as const, "net");
+  const [concept, setConceptParam] = useUrlParam("concepto");
+  const setConcept = (c: string) => setConceptParam(c);
   const [exportYear, setExportYear] = useState<string>("all");
   const [exporting, setExporting] = useState(false);
 

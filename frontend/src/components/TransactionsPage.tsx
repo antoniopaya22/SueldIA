@@ -34,6 +34,7 @@ import { toast } from "sonner";
 import { formatCurrency } from "../lib/format";
 import { invalidateFinance } from "../lib/finance-cache";
 import { deferWithUndo, groupIdsBy } from "../lib/undo";
+import { setUrlParams, useUrlEnumParam, useUrlParam } from "../lib/url-state";
 import { useTransactionFilters } from "../hooks/use-transaction-filters";
 import { PERIOD_LABELS, activePeriod, periodRange, type PeriodKey } from "../lib/transaction-filters";
 import { EmptyState } from "./ui/EmptyState";
@@ -96,12 +97,18 @@ function monthlyEquivalent(rule: RecurringTransaction) {
   return (rule.amount * perYear) / 12 / Math.max(1, rule.intervalCount);
 }
 
+const SORT_FIELDS: readonly SortField[] = ["date", "payee", "category", "amount", "type"];
+
 function TransactionsView() {
   const queryClient = useQueryClient();
   const today = getTodayIsoDate();
 
   // ─── Filtros y vista ─────────────────────────────────────────
-  const [tab, setTab] = useState<"movements" | "recurring">("movements");
+  // Pestaña, orden y página en la URL (?vista=recurrentes, ?orden=importe-asc…):
+  // un enlace puede llevar directo a Recurrentes y una recarga no los pierde.
+  const [vista, setVista] = useUrlEnumParam("vista", ["movimientos", "recurrentes"] as const, "movimientos");
+  const tab: "movements" | "recurring" = vista === "recurrentes" ? "recurring" : "movements";
+  const setTab = (t: "movements" | "recurring") => setVista(t === "recurring" ? "recurrentes" : "movimientos");
   // Los filtros viven en la URL (?cuenta=…&categoria=…): compartibles, recargables y enlazables desde gráficos.
   const { filters: urlFilters, update: updateFilters, clear: clearFilters, page, setPage } = useTransactionFilters();
   const selectedAccountId = urlFilters.accountId ?? null;
@@ -111,8 +118,21 @@ function TransactionsView() {
   const filterFrom = urlFilters.from ?? "";
   const filterTo = urlFilters.to ?? "";
   const filterCleared = urlFilters.cleared ?? "";
-  const [sortBy, setSortBy] = useState<SortField>("date");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [sortParam] = useUrlParam("orden", "date-desc");
+  const [sortByRaw, sortDirRaw] = sortParam.split("-");
+  const sortBy: SortField = (SORT_FIELDS as readonly string[]).includes(sortByRaw) ? (sortByRaw as SortField) : "date";
+  const sortDir: SortDir = sortDirRaw === "asc" ? "asc" : "desc";
+  const setSort = (field: SortField, dir: SortDir) =>
+    setUrlParams({ orden: field === "date" && dir === "desc" ? null : `${field}-${dir}`, pagina: null });
+
+  // Búsqueda con retardo: antes cada tecla lanzaba una petición y reescribía la URL.
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  useEffect(() => setSearchInput(searchQuery), [searchQuery]);
+  useEffect(() => {
+    if (searchInput === searchQuery) return;
+    const t = setTimeout(() => updateFilters({ search: searchInput.trim() || undefined }), 300);
+    return () => clearTimeout(t);
+  }, [searchInput, searchQuery, updateFilters]);
 
   // Modo selección: actuar sobre varios movimientos a la vez (categorizar, liquidar, borrar).
   const [selectionMode, setSelectionMode] = useState(false);
@@ -366,22 +386,6 @@ function TransactionsView() {
     setTxDialogOpen(true);
   };
 
-  // El buscador ⌘K enlaza aquí con ?buscar=<texto>: de un solo uso, se
-  // consume y se quita de la URL para que un refresco no lo repita. (La
-  // acción "Nueva transacción" ya no pasa por aquí: la gestiona el shell.)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    let changed = false;
-    if (params.has("buscar")) {
-      params.delete("buscar");
-      changed = true;
-    }
-    if (!changed) return;
-    const query = params.toString();
-    window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const openEditForm = (tx: Transaction) => {
     if (tx.type === "transfer" && tx.transferDirection === "inflow") {
       toast.info("Edita la transferencia desde el movimiento de salida");
@@ -479,9 +483,8 @@ function TransactionsView() {
   };
 
   const toggleSort = (field: SortField) => {
-    if (sortBy === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortBy(field); setSortDir(field === "date" ? "desc" : "asc"); }
-    setPage(1);
+    if (sortBy === field) setSort(field, sortDir === "asc" ? "desc" : "asc");
+    else setSort(field, field === "date" ? "desc" : "asc");
   };
 
   const handleExport = () => exportTransactions(urlFilters);
@@ -721,8 +724,8 @@ function TransactionsView() {
                 <div className="relative flex-1">
                   <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                   <Input
-                    value={searchQuery}
-                    onChange={(e) => updateFilters({ search: e.target.value || undefined })}
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
                     placeholder="Buscar por beneficiario o nota"
                     aria-label="Buscar transacciones"
                     className="pl-8"
@@ -787,7 +790,7 @@ function TransactionsView() {
                   value={`${sortBy}:${sortDir}`}
                   onValueChange={(v) => {
                     const opt = SORT_OPTIONS.find((o) => o.value === v);
-                    if (opt) { setSortBy(opt.field); setSortDir(opt.dir); setPage(1); }
+                    if (opt) setSort(opt.field, opt.dir);
                   }}
                 >
                   <SelectTrigger className="w-full sm:w-44" aria-label="Ordenar">
@@ -929,11 +932,11 @@ function TransactionsView() {
                 </span>
                 {totalPages > 1 && (
                   <div className="flex items-center gap-1.5">
-                    <Button variant="outline" size="icon-sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} aria-label="Página anterior">
+                    <Button variant="outline" size="icon-sm" onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1} aria-label="Página anterior">
                       <ChevronLeft className="size-4" />
                     </Button>
                     <span className="px-1 tabular-nums">Página {page} de {totalPages}</span>
-                    <Button variant="outline" size="icon-sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} aria-label="Página siguiente">
+                    <Button variant="outline" size="icon-sm" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page >= totalPages} aria-label="Página siguiente">
                       <ChevronRight className="size-4" />
                     </Button>
                   </div>

@@ -26,6 +26,7 @@ import { GettingStartedCard } from "./finance/GettingStartedCard";
 import { ForecastCard } from "./finance/ForecastCard";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
+import { useUrlEnumParam, useUrlOptionalIdParam } from "../lib/url-state";
 
 type Preset = Extract<RangePreset, "3m" | "6m" | "12m" | "all">;
 
@@ -68,8 +69,9 @@ function FinanceSkeleton() {
 }
 
 function FinanceDashboardView() {
-  const [preset, setPreset] = useState<Preset>("6m");
-  const [accountId, setAccountId] = useState<number | undefined>();
+  // En la URL (?periodo=12m&cuenta=2): compartible y no se pierde al volver.
+  const [preset, setPreset] = useUrlEnumParam<Preset>("periodo", ["3m", "6m", "12m", "all"], "6m");
+  const [accountId, setAccountId] = useUrlOptionalIdParam("cuenta");
 
   const filters = useMemo<FinanceAnalyticsFilters>(() => {
     const range = presetRange(preset);
