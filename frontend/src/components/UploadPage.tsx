@@ -82,7 +82,13 @@ function QueueRow({ item, onRemove, onRetry, disabled }: {
             </>
           )}
         </p>
-        {item.state === "done" && r?.duplicateOfId && (
+        {item.state === "done" && r?.alreadyUploaded && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Este PDF ya estaba subido: no se ha guardado otra vez.{" "}
+            <a href={`/app/payslips?nomina=${r.id}`} className="font-medium whitespace-nowrap text-foreground underline underline-offset-2">Ver nómina</a>
+          </p>
+        )}
+        {item.state === "done" && r?.duplicateOfId && !r.alreadyUploaded && (
           // Antes era un aviso que desaparecía a los pocos segundos.
           <p className="mt-1 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
             <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
@@ -132,7 +138,7 @@ function QueueRow({ item, onRemove, onRetry, disabled }: {
 
 // ─── Resumen de resultados ──────────────────────────────────────
 function ResultsSummary({ items }: { items: QueueItem[] }) {
-  const done = items.filter((i) => i.state === "done" && i.result);
+  const done = items.filter((i) => i.state === "done" && i.result && !i.result.alreadyUploaded);
   const review = done.filter((i) => i.result!.parsingStatus !== "parsed");
   const failed = items.filter((i) => i.state === "failed");
   if (done.length + failed.length === 0) return null;

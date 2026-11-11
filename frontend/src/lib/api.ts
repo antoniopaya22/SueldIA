@@ -198,6 +198,8 @@ export interface Payslip {
   /** Solo presente en la respuesta de /payslips/upload: id de otra nómina ya
    *  existente con el mismo perfil, periodo y tipo, o null si no hay ninguna. */
   duplicateOfId?: number | null;
+  /** Solo en /payslips/upload: el mismo PDF ya estaba subido en este perfil y no se ha guardado otra vez. */
+  alreadyUploaded?: boolean;
   /** Solo presente en el detalle (GET /payslips/:id). */
   linkedTransaction?: PayslipLinkCandidate | null;
   warnings?: PayslipWarning[];

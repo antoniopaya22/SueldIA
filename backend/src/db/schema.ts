@@ -70,6 +70,9 @@ export const payslips = pgTable(
     // El reprocesado masivo se la salta para no pisar esas correcciones;
     // reprocesarla una a una (con confirmación) lo vuelve a poner a false.
     manuallyEdited: boolean("manually_edited").notNull().default(false),
+    // sha256 (hex) del texto extraído: subir dos veces el mismo PDF no crea
+    // otra nómina (contaba doble en totales, IRPF y medias).
+    contentHash: text("content_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -80,6 +83,7 @@ export const payslips = pgTable(
       table.periodYear,
       table.periodMonth,
     ),
+    profileHashIdx: index("payslips_profile_hash_idx").on(table.profileId, table.contentHash),
   }),
 ).enableRLS();
 

@@ -5,7 +5,8 @@ import { eq, and, asc, desc, ilike, or, ne, isNull, inArray } from "drizzle-orm"
 import { sql } from "drizzle-orm";
 import { upload, validatePdfMagicBytes, fixFilenameEncoding } from "../middleware/upload.js";
 import { parsePayslip } from "../parsers/parser-engine.js";
-import { matchConcepts, detectPayslipType } from "../parsers/concept-matcher.js";
+import { matchConcepts, detectPayslipType, type ParsedPayslip } from "../parsers/concept-matcher.js";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { logger } from "../logger.js";
@@ -59,53 +60,70 @@ payslipsRouter.post(
       const results = [];
 
       for (const file of files) {
-        const [payslip] = await db
-          .insert(payslips)
-          .values({
-            profileId,
-            fileName: file.originalname,
-            payslipType: manualType,
-            parsingStatus: "pending",
-          })
-          .returning();
+        // 1. Analizar en memoria. Antes se insertaba primero una fila
+        //    "pending" y, si la función moría a mitad de tanda, quedaba así
+        //    para siempre (sin texto, ni siquiera se podía reprocesar).
+        let parsed: ParsedPayslip | null = null;
+        try {
+          parsed = await parsePayslip(file.buffer);
+        } catch (err) {
+          logger.error({ err, fileName: file.originalname }, "Parse error");
+        }
+        const contentHash = parsed ? hashText(parsed.rawText) : null;
 
-        await processPayslip(payslip.id, file.buffer);
-
-        let [updated] = await db.select().from(payslips).where(eq(payslips.id, payslip.id));
+        // 2. El mismo PDF ya subido a este perfil: no se guarda otra vez.
+        if (contentHash) {
+          const [existing] = await db
+            .select()
+            .from(payslips)
+            .where(and(eq(payslips.profileId, profileId), eq(payslips.contentHash, contentHash)))
+            .limit(1);
+          if (existing) {
+            const concepts = await db.select().from(payslipConcepts).where(eq(payslipConcepts.payslipId, existing.id));
+            results.push({ ...existing, concepts, duplicateOfId: existing.id, alreadyUploaded: true });
+            continue;
+          }
+        }
 
         // Auto-detección de paga extra: solo al subir, y solo para
         // "ascender" de ordinal a extra si el propio texto de la nómina lo
         // indica — nunca al revés. Así no pisa una corrección manual
-        // posterior (PATCH /:id/type) en un reprocess/reparse futuro, que
-        // no vuelve a pasar por aquí.
-        if (manualType === "ordinal" && updated?.rawText && detectPayslipType(updated.rawText) === "extra") {
-          [updated] = await db
-            .update(payslips)
-            .set({ payslipType: "extra" })
-            .where(eq(payslips.id, payslip.id))
+        // posterior (PATCH /:id/type) en un reprocess/reparse futuro.
+        const payslipType: "ordinal" | "extra" =
+          manualType === "ordinal" && parsed && detectPayslipType(parsed.rawText) === "extra" ? "extra" : manualType;
+
+        // 3. Una sola inserción, nómina y conceptos juntos.
+        const { payslip: created, concepts } = await db.transaction(async (tx) => {
+          const [payslip] = await tx
+            .insert(payslips)
+            .values({
+              profileId,
+              fileName: file.originalname,
+              payslipType,
+              contentHash,
+              ...(parsed ? parsedPayslipValues(parsed) : { parsingStatus: "error" as const }),
+            })
             .returning();
-        }
+          const concepts = parsed && parsed.concepts.length > 0
+            ? await tx.insert(payslipConcepts).values(parsed.concepts.map((c) => ({ ...c, payslipId: payslip.id }))).returning()
+            : [];
+          return { payslip, concepts };
+        });
 
-        const concepts = await db
-          .select()
-          .from(payslipConcepts)
-          .where(eq(payslipConcepts.payslipId, payslip.id));
-
-        // Aviso de posible duplicado (mismo perfil + periodo + tipo) — no
-        // bloquea la subida (podría ser una nómina corregida a propósito),
-        // solo se lo indicamos al frontend para que lo muestre.
+        // Aviso de posible duplicado (mismo perfil + periodo + tipo, contenido
+        // distinto) — no bloquea (puede ser una nómina corregida a propósito).
         let duplicateOfId: number | null = null;
-        if (updated?.periodYear && updated.periodMonth && updated.parsingStatus !== "error") {
+        if (created.periodYear && created.periodMonth && created.parsingStatus !== "error") {
           const [dup] = await db
             .select({ id: payslips.id })
             .from(payslips)
             .where(
               and(
                 eq(payslips.profileId, profileId),
-                eq(payslips.periodYear, updated.periodYear),
-                eq(payslips.periodMonth, updated.periodMonth),
-                eq(payslips.payslipType, updated.payslipType),
-                ne(payslips.id, updated.id),
+                eq(payslips.periodYear, created.periodYear),
+                eq(payslips.periodMonth, created.periodMonth),
+                eq(payslips.payslipType, created.payslipType),
+                ne(payslips.id, created.id),
               ),
             )
             .orderBy(payslips.id)
@@ -113,7 +131,7 @@ payslipsRouter.post(
           duplicateOfId = dup?.id ?? null;
         }
 
-        results.push({ ...updated, concepts, duplicateOfId });
+        results.push({ ...created, concepts, duplicateOfId, alreadyUploaded: false });
       }
 
       // Best-effort: si falla, la subida ya ha ido bien y no debe reportarse
@@ -540,18 +558,7 @@ async function applyParsedResult(payslipId: number, result: ReturnType<typeof ma
   await db.transaction(async (tx) => {
     await tx
       .update(payslips)
-      .set({
-        rawText: result.rawText,
-        grossSalary: result.grossSalary,
-        netSalary: result.netSalary,
-        periodMonth: result.periodMonth,
-        periodYear: result.periodYear,
-        company: result.company,
-        // Sin conceptos o sin periodo, la nómina necesita que el usuario la mire.
-        parsingStatus:
-          result.concepts.length > 0 && result.periodMonth && result.periodYear ? "parsed" : "review",
-        manuallyEdited: false,
-      })
+      .set({ ...parsedPayslipValues(result), manuallyEdited: false })
       .where(eq(payslips.id, payslipId));
 
     await tx.delete(payslipConcepts).where(eq(payslipConcepts.payslipId, payslipId));
@@ -564,16 +571,20 @@ async function applyParsedResult(payslipId: number, result: ReturnType<typeof ma
   });
 }
 
-// Procesa un PDF recién subido: extrae texto + conceptos y los persiste.
-async function processPayslip(payslipId: number, fileBuffer: Buffer) {
-  try {
-    const result = await parsePayslip(fileBuffer);
-    await applyParsedResult(payslipId, result);
-  } catch (err) {
-    logger.error({ payslipId, err }, "Parse error");
-    await db
-      .update(payslips)
-      .set({ parsingStatus: "error" })
-      .where(eq(payslips.id, payslipId));
-  }
+/** Columnas de la nómina a partir del resultado del analizador (subida y reprocesado). */
+function parsedPayslipValues(result: ParsedPayslip) {
+  return {
+    rawText: result.rawText,
+    grossSalary: result.grossSalary,
+    netSalary: result.netSalary,
+    periodMonth: result.periodMonth,
+    periodYear: result.periodYear,
+    company: result.company,
+    // Sin conceptos o sin periodo, la nómina necesita que el usuario la mire.
+    parsingStatus: (result.concepts.length > 0 && result.periodMonth && result.periodYear ? "parsed" : "review") as "parsed" | "review",
+  };
+}
+
+function hashText(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
 }

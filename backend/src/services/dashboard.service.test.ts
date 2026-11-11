@@ -18,6 +18,7 @@ function createPayslip(overrides: Partial<AnnualPayslip>): AnnualPayslip {
     parsingStatus: "parsed",
     payslipType: "ordinal",
     manuallyEdited: false,
+    contentHash: null,
     createdAt: new Date("2025-01-31T00:00:00.000Z"),
     ...overrides,
   };

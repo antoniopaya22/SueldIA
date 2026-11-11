@@ -248,6 +248,22 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect((await db.select().from(s.profiles)).map((p) => p.name)).not.toContain("C");
   });
 
+  it("subir el mismo PDF dos veces no crea otra nómina", async () => {
+    const pdf = minimalPdf(["ABRIL 2026", "SALARIO BASE   2.000,00"]);
+    const upload = async () => {
+      const form = new FormData();
+      form.append("profileId", String(ids.profile));
+      form.append("files", new Blob([pdf], { type: "application/pdf" }), "Nómina abril.pdf");
+      const res = await fetch(`${api}/api/payslips/upload`, { method: "POST", headers: { Authorization: `Bearer ${tokens.a}` }, body: form });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as Array<{ id: number; fileName: string; periodMonth: number; parsingStatus: string; alreadyUploaded: boolean }>)[0];
+    };
+    const first = await upload();
+    expect(first).toMatchObject({ fileName: "Nómina abril.pdf", periodMonth: 4, parsingStatus: "parsed", alreadyUploaded: false });
+    const second = await upload();
+    expect(second).toMatchObject({ id: first.id, alreadyUploaded: true });
+  });
+
   it("los datos de A siguen intactos", async () => {
     expect((await call("a", "GET", `/profiles/${ids.profile}`)).json).toMatchObject({ name: "A" });
     expect((await call("a", "GET", `/accounts/${ids.account}`)).json).toMatchObject({ name: "Banco A", archived: false });
@@ -264,3 +280,26 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect(cats.flatMap((g) => g.categories.map((c) => c.name))).toEqual(["Cat A"]);
   });
 });
+
+/** PDF mínimo de una página con una línea de texto por elemento (Helvetica). */
+function minimalPdf(lines: string[]): string {
+  const text = lines.map((l, i) => `${i === 0 ? "" : "0 -20 Td "}(${l}) Tj`).join(" ");
+  const stream = `BT /F1 12 Tf 72 720 Td ${text} ET`;
+  const objects = [
+    "<</Type/Catalog/Pages 2 0 R>>",
+    "<</Type/Pages/Kids[3 0 R]/Count 1>>",
+    "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>",
+    `<</Length ${stream.length}>>stream\n${stream}\nendstream`,
+    "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+  ];
+  let out = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+  out += `trailer<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF`;
+  return out; // ASCII puro: el Blob lo codifica tal cual
+}
