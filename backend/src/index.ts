@@ -67,12 +67,18 @@ const globalLimiter = rateLimit({
 });
 app.use("/api", globalLimiter);
 
-const authLimiter = rateLimit({
+// El login lo hace Supabase, no esta API: /api/auth solo tiene GET/PUT/DELETE
+// /me. El límite estricto se aplica a las escrituras (cambiar nombre, borrar
+// la cuenta); GET /me se pide en cada carga de página y con el límite de 20
+// cada 15 min un uso normal acababa en 429 (sin nombre en la interfaz y el
+// login atascado tras volver de Google).
+const authWriteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Demasiados intentos de login, intenta más tarde" },
+  skip: (req) => req.method === "GET",
+  message: { error: "Demasiadas peticiones, intenta más tarde" },
 });
 
 // ─── Public routes ──────────────────────────────────────────────
@@ -85,7 +91,7 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-app.use("/api/auth", authLimiter, authRouter);
+app.use("/api/auth", authWriteLimiter, authRouter);
 // Sin authMiddleware: la invoca Vercel Cron (sin JWT de usuario), protegida
 // por su propio CRON_SECRET — ver routes/cron.ts.
 app.use("/api/cron", cronRouter);

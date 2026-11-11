@@ -36,54 +36,78 @@ interface SupabasePayload {
   user_metadata?: { full_name?: string; name?: string };
 }
 
+/** Olvida el usuario cacheado (p. ej. tras eliminar su cuenta). */
+export function forgetCachedUser(supabaseUserId: string): void {
+  userCache.delete(supabaseUserId);
+}
+
+/**
+ * Busca el usuario por su id de Supabase o lo crea la primera vez. Idempotente:
+ * al cargar una página se lanzan varias peticiones a la vez y, para un usuario
+ * nuevo, todas intentaban insertarlo — la segunda violaba la clave única y
+ * acababa en 401, cerrando la sesión en el primer acceso.
+ */
+async function findOrCreateUser(payload: SupabasePayload & { email: string }): Promise<AuthPayload> {
+  const [existing] = await db
+    .select({ id: users.id, email: users.email })
+    .from(users)
+    .where(eq(users.supabaseUserId, payload.sub));
+  if (existing) return { userId: existing.id, email: existing.email };
+
+  await db
+    .insert(users)
+    .values({
+      supabaseUserId: payload.sub,
+      email: payload.email,
+      name: payload.user_metadata?.full_name ?? payload.user_metadata?.name ?? payload.email,
+    })
+    .onConflictDoNothing({ target: users.supabaseUserId });
+  const [created] = await db
+    .select({ id: users.id, email: users.email })
+    .from(users)
+    .where(eq(users.supabaseUserId, payload.sub));
+  return { userId: created.id, email: created.email };
+}
+
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) {
     return res.status(401).json({ error: "Token requerido" });
   }
 
+  // 1. Verificar el token: cualquier fallo aquí sí es un 401 (el frontend
+  //    cierra la sesión y manda a /login).
+  let payload: SupabasePayload;
   try {
-    const token = header.slice(7);
-    const { payload } = await jwtVerify<SupabasePayload>(token, JWKS, {
+    ({ payload } = await jwtVerify<SupabasePayload>(header.slice(7), JWKS, {
       issuer: `${env.SUPABASE_URL}/auth/v1`,
       // Los JWT de Supabase Auth siempre llevan aud: "authenticated" — lo
       // comprobamos explícitamente para no aceptar tokens emitidos para
       // otro fin (p. ej. un token de servicio) que compartan emisor.
       audience: "authenticated",
-    });
+    }));
+  } catch {
+    return res.status(401).json({ error: "Token inválido o expirado" });
+  }
 
-    if (!payload.sub || !payload.email) {
-      return res.status(401).json({ error: "Token inválido" });
-    }
+  if (!payload.sub || !payload.email) {
+    return res.status(401).json({ error: "Token inválido" });
+  }
 
-    const cached = userCache.get(payload.sub);
-    if (cached && cached.expires > Date.now()) {
-      req.user = cached.user;
-      return next();
-    }
+  const cached = userCache.get(payload.sub);
+  if (cached && cached.expires > Date.now()) {
+    req.user = cached.user;
+    return next();
+  }
 
-    const [existing] = await db
-      .select()
-      .from(users)
-      .where(eq(users.supabaseUserId, payload.sub));
-
-    const user =
-      existing ??
-      (
-        await db
-          .insert(users)
-          .values({
-            supabaseUserId: payload.sub,
-            email: payload.email,
-            name: payload.user_metadata?.full_name ?? payload.user_metadata?.name ?? payload.email,
-          })
-          .returning()
-      )[0];
-
-    req.user = { userId: user.id, email: user.email };
+  // 2. Resolver el usuario en la BBDD. Un fallo aquí NO es un problema del
+  //    token: antes también acababa en 401 y una caída breve de la base de
+  //    datos echaba a todo el mundo de su sesión. Ahora va al errorHandler (500).
+  try {
+    req.user = await findOrCreateUser({ ...payload, email: payload.email });
     userCache.set(payload.sub, { user: req.user, expires: Date.now() + USER_CACHE_TTL_MS });
     next();
-  } catch {
-    res.status(401).json({ error: "Token inválido o expirado" });
+  } catch (err) {
+    next(err);
   }
 }

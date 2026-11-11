@@ -14,7 +14,10 @@ import { pgTable, text, integer, serial, boolean, doublePrecision, timestamp, un
 // ─── Users ──────────────────────────────────────────────────────
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
-  email: text("email").notNull().unique(),
+  // Sin unique: la identidad es supabase_user_id. Con unique, una identidad
+  // nueva de Supabase con el mismo correo que una fila antigua no podía darse
+  // de alta nunca (el insert fallaba y el usuario recibía un 401 sin más).
+  email: text("email").notNull(),
   name: text("name").notNull(),
   supabaseUserId: text("supabase_user_id").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

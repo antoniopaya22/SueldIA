@@ -92,6 +92,13 @@
       "when": 1794386843892,
       "tag": "0012_payslip_manually_edited",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794387387991,
+      "tag": "0013_users_email_not_unique",
+      "breakpoints": true
     }
   ]
 }

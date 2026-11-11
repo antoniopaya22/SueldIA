@@ -177,7 +177,10 @@ function useShellUser(): ShellUser | null {
         avatarUrl: meta.avatar_url ?? meta.picture,
       });
     });
-    getMe()
+    // Misma query ["me"] y mismo cliente que AuthProvider: las dos peticiones
+    // simultáneas de cada carga de página se quedan en una.
+    appQueryClient
+      .fetchQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 60_000 })
       .then((me) => {
         if (!cancelled && !fromSession) setUser({ name: me.name, email: me.email });
       })
