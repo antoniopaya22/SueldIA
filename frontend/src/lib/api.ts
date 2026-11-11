@@ -1896,3 +1896,15 @@ export interface TaxSummary {
 
 export const getTaxSummary = (profileId: number, year: number) =>
   request<TaxSummary>(`/payslips/tax-summary?profileId=${profileId}&year=${year}`);
+
+// ─── Registro de actividad ──────────────────────────────────────
+export interface ActivityEntry {
+  id: number;
+  entity: string;
+  entityId: number | null;
+  summary: string;
+  createdAt: string;
+}
+
+export const getActivity = (before?: number, limit = 30) =>
+  request<{ data: ActivityEntry[]; nextBefore: number | null }>(`/activity?limit=${limit}${before ? `&before=${before}` : ""}`);

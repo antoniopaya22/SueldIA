@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { formatEur } from "../utils/format.js";
 import { and, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { categories, transactions } from "../db/schema.js";
@@ -60,7 +61,7 @@ export const financeAlertConfigSchemas = {
 
 export type FinanceAlertType = keyof typeof financeAlertConfigSchemas;
 
-const eur = (n: number) => n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+const eur = formatEur;
 
 function monthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);

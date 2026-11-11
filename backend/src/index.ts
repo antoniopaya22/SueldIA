@@ -32,6 +32,8 @@ import { clientErrorsRouter } from "./routes/client-errors.js";
 import { pushRouter } from "./routes/push.js";
 import { savingsGoalsRouter } from "./routes/savings-goals.js";
 import { demoRouter } from "./routes/demo.js";
+import { activityRouter } from "./routes/activity.js";
+import { activityMiddleware } from "./services/activity.service.js";
 import { db, client } from "./db/index.js";
 
 const app = express();
@@ -96,6 +98,9 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
+// Registro de actividad: apunta lo que cambia cuando la petición termina bien.
+app.use("/api", activityMiddleware);
+
 app.use("/api/auth", authWriteLimiter, authRouter);
 // Sin authMiddleware: la invoca Vercel Cron (sin JWT de usuario), protegida
 // por su propio CRON_SECRET — ver routes/cron.ts.
@@ -122,6 +127,7 @@ app.use("/api/tags", authMiddleware, tagsRouter);
 app.use("/api/push", authMiddleware, pushRouter);
 app.use("/api/savings-goals", authMiddleware, savingsGoalsRouter);
 app.use("/api/demo", authMiddleware, demoRouter);
+app.use("/api/activity", authMiddleware, activityRouter);
 app.use("/api/client-errors", authMiddleware, clientErrorsRouter);
 
 // ─── Error handler (must be last) ──────────────────────────────

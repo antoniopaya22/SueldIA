@@ -487,7 +487,7 @@ export async function buildFullExport(userId: number) {
   const payslipIds = userPayslips.map((p) => p.id);
   const none = payslipIds.length === 0;
 
-  const [concepts, notes, payslipTagLinks, tags, accounts, groups, categories, transactions, recurring, rules, history, budgets, targets, catRules, prefs, skips, goals, valuations] =
+  const [concepts, notes, payslipTagLinks, tags, accounts, groups, categories, transactions, recurring, rules, history, budgets, targets, catRules, prefs, skips, goals, valuations, activity] =
     await Promise.all([
       none ? [] : db.select().from(s.payslipConcepts).where(inArray(s.payslipConcepts.payslipId, payslipIds)),
       none ? [] : db.select().from(s.payslipNotes).where(inArray(s.payslipNotes.payslipId, payslipIds)),
@@ -519,6 +519,11 @@ export async function buildFullExport(userId: number) {
         .select({ accountId: s.accountValuations.accountId, date: s.accountValuations.date, value: s.accountValuations.value })
         .from(s.accountValuations)
         .where(eq(s.accountValuations.userId, userId)),
+      db
+        .select({ entity: s.activityLog.entity, summary: s.activityLog.summary, createdAt: s.activityLog.createdAt })
+        .from(s.activityLog)
+        .where(eq(s.activityLog.userId, userId))
+        .orderBy(s.activityLog.id),
     ]);
 
   return {
@@ -541,6 +546,8 @@ export async function buildFullExport(userId: number) {
     recurringSkips: skips,
     savingsGoals: goals,
     accountValuations: valuations,
+    // Solo para consultar: al restaurar no se carga (el registro sigue con lo de esta cuenta).
+    activityLog: activity,
     alertRules: rules.map((r) => ({ ...r, config: safeJson(r.config) })),
     alertHistory: history,
     budgets,

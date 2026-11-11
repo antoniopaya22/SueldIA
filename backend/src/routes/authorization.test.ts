@@ -4,6 +4,12 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { describeDb, resetDb } from "../test/db.js";
 
+interface RouterLayer {
+  regexp: RegExp;
+  route?: { path: string; methods: Record<string, boolean> };
+  handle?: { stack?: RouterLayer[] };
+}
+
 // Autorización entre usuarios, contra la API real (Express + Postgres): el
 // usuario B no puede leer, modificar ni borrar nada del usuario A por ninguna
 // ruta que reciba un id. Es la clase de error que no se ve a simple vista y
@@ -14,6 +20,7 @@ import { describeDb, resetDb } from "../test/db.js";
 describeDb("autorización entre usuarios (integración)", () => {
   let jwksServer: http.Server;
   let apiServer: http.Server;
+  let expressApp: { _router: { stack: RouterLayer[] } };
   let api: string;
   let privateKey: CryptoKey;
   let issuer: string;
@@ -72,6 +79,7 @@ describeDb("autorización entre usuarios (integración)", () => {
     process.env.VAPID_PRIVATE_KEY = vapid.privateKey;
     await resetDb();
     const { default: app } = await import("../index.js");
+    expressApp = app as unknown as typeof expressApp;
     apiServer = app.listen(0, "127.0.0.1");
     await new Promise((r) => apiServer.once("listening", r));
     api = `http://127.0.0.1:${(apiServer.address() as AddressInfo).port}`;
@@ -236,6 +244,34 @@ describeDb("autorización entre usuarios (integración)", () => {
     const total = (await call("a", "GET", "/finance/forecast?days=30")).json as { startBalance: number };
     expect(total.startBalance).toBeGreaterThan(-50_000);
     expect(((await call("a", "GET", `/finance/forecast?days=30&accountId=${hipoteca}`)).json as { startBalance: number }).startBalance).toBe(-100_000);
+  });
+
+  it("registro de actividad: apunta lo que cambia, solo lo de cada usuario", async () => {
+    const acc = (await ok<{ id: number }>("POST", "/accounts", { name: "Cuenta registro", type: "bank" })).id;
+    await ok("PUT", `/accounts/${acc}`, { name: "Cuenta registro 2", type: "bank" });
+    await call("a", "POST", "/accounts", { name: "" }); // falla: no se apunta
+    // El apunte se hace al terminar la respuesta: un instante para que llegue.
+    await new Promise((r) => setTimeout(r, 100));
+    const list = (await call("a", "GET", "/activity?limit=5")).json as { data: Array<{ summary: string; entity: string; entityId: number | null }> };
+    expect(list.data.slice(0, 2).map((e) => e.summary)).toEqual(["Cuenta editada: Cuenta registro 2", "Cuenta creada: Cuenta registro"]);
+    expect(list.data[1]).toMatchObject({ entity: "account", entityId: acc });
+    const other = (await call("b", "GET", "/activity?limit=200")).json as { data: Array<{ summary: string }> };
+    expect(JSON.stringify(other)).not.toContain("Cuenta registro");
+  });
+
+  it("cada ruta del registro de actividad existe", async () => {
+    const { ACTIVITY } = await import("../services/activity.service.js");
+    const routes = new Set<string>();
+    for (const layer of expressApp._router.stack) {
+      if (!layer.handle?.stack) continue;
+      // /^\/api\/accounts\/?(?=\/|$)/i → /api/accounts
+      const base = layer.regexp.source.replace(/^\^/, "").replace(/\\\/\?\(\?=\\\/\|\$\)$/, "").replace(/\\\//g, "/");
+      for (const r of layer.handle.stack) {
+        if (!r.route) continue;
+        for (const method of Object.keys(r.route.methods)) routes.add(`${method.toUpperCase()} ${base}${r.route.path}`);
+      }
+    }
+    expect(Object.keys(ACTIVITY).filter((k) => !routes.has(k))).toEqual([]);
   });
 
   it("nóminas: búsqueda en notas y conceptos, filtro por etiqueta y reprocesado con vista previa", async () => {

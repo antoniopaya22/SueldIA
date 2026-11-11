@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { supabase } from "../lib/supabase";
 import { PageHeader, SectionCard } from "./app";
 import { ProfileDot } from "./payroll/shared";
+import { ActivitySection } from "./settings/ActivitySection";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -665,6 +666,8 @@ function SettingsView() {
         <NotificationsSection />
 
         <DataSection />
+
+        <ActivitySection />
 
         <SectionCard title="Sesión">
           <SettingRow title="Cerrar sesión" description="Saldrás de SueldIA en este navegador.">

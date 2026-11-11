@@ -265,6 +265,29 @@ export const accounts = pgTable(
   }),
 ).enableRLS();
 
+// ─── Registro de actividad ──────────────────────────────────────
+// «Qué ha cambiado y cuándo»: una fila por acción que modifica datos (la
+// apunta un middleware, ver services/activity.service.ts). Se podan las de
+// más de 180 días en el cron diario.
+export const activityLog = pgTable(
+  "activity_log",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // "transaction", "account", "payslip", "import"…
+    entity: text("entity").notNull(),
+    entityId: integer("entity_id"),
+    // Texto para el usuario, en español.
+    summary: text("summary").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userCreatedIdx: index("activity_log_user_created_idx").on(table.userId, table.createdAt),
+  }),
+).enableRLS();
+
 // ─── Valoraciones de cuentas (inversiones) ─────────────────────
 // «Actualizar valor» sin crear un movimiento: desde esa fecha el saldo es el
 // valor apuntado más los movimientos posteriores. No cuenta como ingreso ni

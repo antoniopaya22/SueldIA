@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { Router } from "express";
+import { pruneActivity } from "../services/activity.service.js";
 import { env } from "../config.js";
 import { logger } from "../logger.js";
 import { evaluateAllRules } from "../services/alerts.service.js";
@@ -59,6 +60,14 @@ cronRouter.get("/daily", async (req, res, next) => {
     } catch (err) {
       errors.push("alerts");
       logger.error({ err }, "Falló la evaluación diaria de alertas");
+    }
+
+    // El registro de actividad guarda 180 días.
+    try {
+      const pruned = await pruneActivity();
+      if (pruned) logger.info({ pruned }, "Registro de actividad podado");
+    } catch (err) {
+      logger.warn({ err }, "No se pudo podar el registro de actividad");
     }
 
     const partial = errors.length > 0 || (recurring?.usersFailed ?? 0) > 0;
