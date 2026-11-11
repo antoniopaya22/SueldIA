@@ -9,6 +9,7 @@ import { useSeedDefaultCategories } from "./categories/useSeedDefaultCategories"
 import { Providers } from "./Providers";
 import { toast } from "sonner";
 import { DeleteCategoryDialog } from "./categories/DeleteCategoryDialog";
+import { toIsoDate } from "../lib/dates";
 import { EmptyState } from "./ui/EmptyState";
 import {
   PageHeader, StatCard, StatGrid, PageHeaderSkeleton, StatCardSkeleton,
@@ -36,9 +37,7 @@ import { cn } from "cn";
 // Ventana de actividad que se muestra junto a cada categoría.
 const ACTIVITY_MONTHS = 3;
 
-function isoDate(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+const isoDate = toIsoDate;
 
 function activityRange() {
   const now = new Date();

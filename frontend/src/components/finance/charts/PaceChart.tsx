@@ -8,6 +8,7 @@ import { ChartTooltip } from "../../ui/ChartTooltip";
 import { chartAxis, chartColors, chartCursor, chartGrid } from "../../app";
 import { ChartEmpty, ChartLegend } from "../finance-ui";
 import { cn } from "cn";
+import { toIsoDate } from "../../../lib/dates";
 
 interface Props {
   accountId?: number;
@@ -16,7 +17,7 @@ interface Props {
   expanded: boolean;
 }
 
-const localIso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const localIso = toIsoDate;
 
 /**
  * Gasto acumulado de este mes día a día, frente al mes pasado y a la media de

@@ -10,13 +10,11 @@ import { chartAxis, chartCursor, chartGrid } from "../../app";
 import { ChartEmpty, ChartLegend, shortenLabel } from "../finance-ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "cn";
+import { currentMonthKey } from "../../../lib/dates";
 
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const monthName = (m: string) => `${MONTHS[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
-const currentMonth = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-};
+const currentMonth = () => currentMonthKey();
 
 /** Lo presupuestado frente a lo gastado de cada categoría en un mes (en rojo, las que se han pasado). */
 export function BudgetVsActualChart({ limit, expanded }: { limit: number; expanded: boolean }) {

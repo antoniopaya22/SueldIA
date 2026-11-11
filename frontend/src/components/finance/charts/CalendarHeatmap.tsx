@@ -6,6 +6,7 @@ import { formatCurrency } from "../../../lib/format";
 import { transactionsHref } from "../../../lib/transaction-filters";
 import { ChartEmpty } from "../finance-ui";
 import { cn } from "cn";
+import { toIsoDate } from "../../../lib/dates";
 
 interface Props {
   accountId?: number;
@@ -18,7 +19,7 @@ interface Props {
 }
 
 const WEEKDAYS = ["L", "", "X", "", "V", "", "D"];
-const localIso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const localIso = toIsoDate;
 const dayLabel = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
 /** Intensidad 0-4 según el importe del día frente al máximo (raíz cuadrada: un día enorme no apaga a los demás). */

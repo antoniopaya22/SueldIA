@@ -12,6 +12,7 @@ import {
 import { cn } from "cn";
 import { darkBoost } from "../../../lib/color";
 import { normalizeSearch } from "../../../lib/text";
+import { todayIso } from "../../../lib/dates";
 
 export type TxType = "expense" | "income" | "transfer";
 
@@ -55,10 +56,8 @@ export const ACCOUNT_ICONS: Record<Account["type"], LucideIcon> = {
 export const CADENCE_LABELS: Record<RecurringCadence, string> = { weekly: "Semanal", monthly: "Mensual", yearly: "Anual" };
 
 // ─── Fechas ─────────────────────────────────────────────────────
-export function getTodayIsoDate(): string {
-  const value = new Date();
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-}
+/** Hoy en hora local ("YYYY-MM-DD"). Alias de lib/dates para no tocar a quien ya lo importa de aquí. */
+export const getTodayIsoDate = (): string => todayIso();
 
 export function getYesterdayIsoDate(reference = new Date()): string {
   const y = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate() - 1);

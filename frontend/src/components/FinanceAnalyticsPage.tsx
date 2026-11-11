@@ -48,6 +48,7 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "cn";
+import { useAnalyticsSettings } from "../hooks/use-analytics-settings";
 import { setUrlParams, useUrlEnumParam, useUrlOptionalIdParam, useUrlParam } from "../lib/url-state";
 
 // Los paneles que son un gráfico con controles (todos menos las "lecturas rápidas", que es una tarjeta aparte).
@@ -174,86 +175,84 @@ function FinanceAnalyticsView() {
   const [expandedPanel, setExpandedPanel] = useState<ChartPanelKey | null>(null);
 
   // Lo que cada panel recuerda (tipo de gráfico, métrica, "Top N"): se guarda en la cuenta y se valida al leerlo.
-  const [storedSettings, setStoredSettings] = usePreference<unknown>("analytics-settings", DEFAULT_PANEL_SETTINGS);
-  const settings = useMemo(() => normalizePanelSettings(storedSettings), [storedSettings]);
-  const setting = <K extends keyof PanelSettings>(key: K) => (value: PanelSettings[K]) =>
-    setStoredSettings((prev: unknown) => ({ ...normalizePanelSettings(prev), [key]: value }));
-  const trendMetric = settings.trendMetric;
-  const setTrendMetric = setting("trendMetric");
-  const trendView = settings.trendView;
-  const setTrendView = setting("trendView");
-  const distributionMetric = settings.distributionMetric;
-  const setDistributionMetric = setting("distributionMetric");
-  const distributionScope = settings.distributionScope;
-  const setDistributionScope = setting("distributionScope");
-  const distributionView = settings.distributionView;
-  const setDistributionView = setting("distributionView");
-  const distributionValue = settings.distributionValue;
-  const setDistributionValue = setting("distributionValue");
-  const distributionLimit = settings.distributionLimit;
-  const setDistributionLimit = setting("distributionLimit");
-  const payeeMetric = settings.payeeMetric;
-  const setPayeeMetric = setting("payeeMetric");
-  const payeeValue = settings.payeeValue;
-  const setPayeeValue = setting("payeeValue");
-  const payeeLimit = settings.payeeLimit;
-  const setPayeeLimit = setting("payeeLimit");
-  const stackGrouping = settings.stackGrouping;
-  const setStackGrouping = setting("stackGrouping");
-  const stackMetric = settings.stackMetric;
-  const setStackMetric = setting("stackMetric");
-  const stackView = settings.stackView;
-  const setStackView = setting("stackView");
-  const stackLimit = settings.stackLimit;
-  const setStackLimit = setting("stackLimit");
-  const weekdayMetric = settings.weekdayMetric;
-  const setWeekdayMetric = setting("weekdayMetric");
-  const weekdayView = settings.weekdayView;
-  const setWeekdayView = setting("weekdayView");
-  const accountMetric = settings.accountMetric;
-  const setAccountMetric = setting("accountMetric");
-  const accountView = settings.accountView;
-  const setAccountView = setting("accountView");
-  const accountLimit = settings.accountLimit;
-  const setAccountLimit = setting("accountLimit");
-  const cumulativeMetric = settings.cumulativeMetric;
-  const setCumulativeMetric = setting("cumulativeMetric");
-  const cumulativeView = settings.cumulativeView;
-  const setCumulativeView = setting("cumulativeView");
-  const efficiencyMetric = settings.efficiencyMetric;
-  const setEfficiencyMetric = setting("efficiencyMetric");
-  const compareScope = settings.compareScope;
-  const setCompareScope = setting("compareScope");
-  const compareValue = settings.compareValue;
-  const setCompareValue = setting("compareValue");
-  const compareLimit = settings.compareLimit;
-  const setCompareLimit = setting("compareLimit");
-  const matrixScope = settings.matrixScope;
-  const setMatrixScope = setting("matrixScope");
-  const matrixMetric = settings.matrixMetric;
-  const setMatrixMetric = setting("matrixMetric");
-  const matrixLimit = settings.matrixLimit;
-  const setMatrixLimit = setting("matrixLimit");
-  const calendarMetric = settings.calendarMetric;
-  const setCalendarMetric = setting("calendarMetric");
-  const treemapMetric = settings.treemapMetric;
-  const setTreemapMetric = setting("treemapMetric");
-  const sankeyLimit = settings.sankeyLimit;
-  const setSankeyLimit = setting("sankeyLimit");
-  const waterfallLimit = settings.waterfallLimit;
-  const setWaterfallLimit = setting("waterfallLimit");
-  const yoyMetric = settings.yoyMetric;
-  const setYoyMetric = setting("yoyMetric");
-  const amountsMetric = settings.amountsMetric;
-  const setAmountsMetric = setting("amountsMetric");
-  const amountsView = settings.amountsView;
-  const setAmountsView = setting("amountsView");
-  const multiplesMetric = settings.multiplesMetric;
-  const setMultiplesMetric = setting("multiplesMetric");
-  const multiplesLimit = settings.multiplesLimit;
-  const setMultiplesLimit = setting("multiplesLimit");
-  const budgetLimit = settings.budgetLimit;
-  const setBudgetLimit = setting("budgetLimit");
+  const {
+    trendMetric,
+    setTrendMetric,
+    trendView,
+    setTrendView,
+    distributionMetric,
+    setDistributionMetric,
+    distributionScope,
+    setDistributionScope,
+    distributionView,
+    setDistributionView,
+    distributionValue,
+    setDistributionValue,
+    distributionLimit,
+    setDistributionLimit,
+    payeeMetric,
+    setPayeeMetric,
+    payeeValue,
+    setPayeeValue,
+    payeeLimit,
+    setPayeeLimit,
+    stackGrouping,
+    setStackGrouping,
+    stackMetric,
+    setStackMetric,
+    stackView,
+    setStackView,
+    stackLimit,
+    setStackLimit,
+    weekdayMetric,
+    setWeekdayMetric,
+    weekdayView,
+    setWeekdayView,
+    accountMetric,
+    setAccountMetric,
+    accountView,
+    setAccountView,
+    accountLimit,
+    setAccountLimit,
+    cumulativeMetric,
+    setCumulativeMetric,
+    cumulativeView,
+    setCumulativeView,
+    efficiencyMetric,
+    setEfficiencyMetric,
+    compareScope,
+    setCompareScope,
+    compareValue,
+    setCompareValue,
+    compareLimit,
+    setCompareLimit,
+    matrixScope,
+    setMatrixScope,
+    matrixMetric,
+    setMatrixMetric,
+    matrixLimit,
+    setMatrixLimit,
+    calendarMetric,
+    setCalendarMetric,
+    treemapMetric,
+    setTreemapMetric,
+    sankeyLimit,
+    setSankeyLimit,
+    waterfallLimit,
+    setWaterfallLimit,
+    yoyMetric,
+    setYoyMetric,
+    amountsMetric,
+    setAmountsMetric,
+    amountsView,
+    setAmountsView,
+    multiplesMetric,
+    setMultiplesMetric,
+    multiplesLimit,
+    setMultiplesLimit,
+    budgetLimit,
+    setBudgetLimit,
+  } = useAnalyticsSettings();
 
   const { data: accounts = [], isLoading: loadingAccounts, error: accountsError } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const { data: categoryGroups = [], isLoading: loadingCategories, error: categoriesError } = useQuery({ queryKey: ["categories"], queryFn: getCategories });

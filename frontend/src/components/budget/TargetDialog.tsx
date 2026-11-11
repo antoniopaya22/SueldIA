@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { Segmented } from "../app";
 import type { BudgetTargetInput, BudgetTargetType, CategoryBudget } from "../../lib/api";
+import { shiftMonth } from "../../lib/dates";
 
 interface Props {
   category: CategoryBudget | null;
@@ -18,11 +19,6 @@ interface Props {
   onRemove: () => void;
 }
 
-function addMonths(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
 /** Crear, cambiar o quitar el objetivo de una categoría. */
 export function TargetDialog({ category, month, pending, onClose, onSave, onRemove }: Props) {
@@ -40,7 +36,7 @@ function TargetForm({ category, month, pending, onClose, onSave, onRemove }: Omi
   const existing = category.target;
   const [type, setType] = useState<BudgetTargetType>(existing?.type ?? "monthly");
   const [amount, setAmount] = useState(existing ? String(existing.amount) : "");
-  const [targetMonth, setTargetMonth] = useState(existing?.targetMonth ?? addMonths(month, 3));
+  const [targetMonth, setTargetMonth] = useState(existing?.targetMonth ?? shiftMonth(month, 3));
   const [error, setError] = useState("");
 
   const submit = (e: React.FormEvent) => {

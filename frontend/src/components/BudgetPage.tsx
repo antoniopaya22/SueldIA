@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeftRight, Bell, ChevronLeft, ChevronRight, PiggyBank, Receipt, Tags, Target } from "lucide-react";
+import { AlertTriangle, ArrowLeftRight, Bell, PiggyBank, Receipt, Tags, Target } from "lucide-react";
 import { toast } from "sonner";
 import { Providers } from "./Providers";
-import { PageHeader, StatCard, StatGrid, SectionCard, PageHeaderSkeleton, ListCardSkeleton } from "./app";
+import { PageHeader, StatCard, StatGrid, SectionCard, PageHeaderSkeleton, ListCardSkeleton, MonthSwitcher } from "./app";
 import { EmptyState } from "./ui/EmptyState";
 import { BudgetTable } from "./budget/BudgetTable";
 import { CoverDialog, READY_TO_ASSIGN } from "./budget/CoverDialog";
@@ -21,27 +21,11 @@ import { cn } from "cn";
 import { useUrlParam } from "../lib/url-state";
 import { MoveMoneyDialog } from "./budget/MoveMoneyDialog";
 import { monthRange, transactionsHref } from "../lib/transaction-filters";
+import { currentMonthKey, isMonthKey, monthLabel } from "../lib/dates";
 
-const MONTHS_FULL = [
-  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
-];
 
-function currentMonth(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
 
-function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
-function monthLabel(month: string): string {
-  const [y, m] = month.split("-");
-  return `${MONTHS_FULL[Number(m) - 1]} ${y}`;
-}
 
 const AUTO_EMPTY_MESSAGE: Record<AutoAssignMode, string> = {
   "copy-previous": "Nada que copiar: el mes anterior no tenía importes, o esas categorías ya tienen asignación este mes.",
@@ -53,9 +37,9 @@ const AUTO_EMPTY_MESSAGE: Record<AutoAssignMode, string> = {
 function BudgetView() {
   const queryClient = useQueryClient();
   // El mes va en la URL (?mes=2026-08): un enlace o una recarga abren ese mes.
-  const thisMonth = useMemo(currentMonth, []);
+  const thisMonth = useMemo(() => currentMonthKey(), []);
   const [monthParam, setMonthParam] = useUrlParam("mes", thisMonth);
-  const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(monthParam) ? monthParam : thisMonth;
+  const month = isMonthKey(monthParam) ? monthParam : thisMonth;
   const setMonth = (next: string) => setMonthParam(next);
   const [targetFor, setTargetFor] = useState<CategoryBudget | null>(null);
   const [coverFor, setCoverFor] = useState<CategoryBudget | null>(null);
@@ -147,22 +131,7 @@ function BudgetView() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const monthSwitcher = (
-    <div className="flex items-center gap-1">
-      <Button variant="outline" size="icon-sm" onClick={() => setMonth(shiftMonth(month, -1))} aria-label="Mes anterior">
-        <ChevronLeft className="size-4" />
-      </Button>
-      <span className="min-w-32 px-1 text-center text-sm font-medium text-foreground tabular-nums">
-        {monthLabel(month)}
-      </span>
-      <Button variant="outline" size="icon-sm" onClick={() => setMonth(shiftMonth(month, 1))} aria-label="Mes siguiente">
-        <ChevronRight className="size-4" />
-      </Button>
-      {month !== thisMonth && (
-        <Button variant="ghost" size="sm" onClick={() => setMonth(thisMonth)}>Hoy</Button>
-      )}
-    </div>
-  );
+  const monthSwitcher = <MonthSwitcher month={month} onChange={setMonth} />;
 
   if (error && !isLoading) {
     return (

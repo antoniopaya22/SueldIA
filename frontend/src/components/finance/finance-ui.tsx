@@ -8,6 +8,7 @@ import {
 import { cn } from "cn";
 import { adaptiveColor } from "../../lib/color";
 import { changeTrend } from "../../lib/analytics-compare";
+import { toIsoDate } from "../../lib/dates";
 
 // ─── Colores ────────────────────────────────────────────────────
 // Mismo criterio que Inicio: ingresos en verde de marca, gastos en navy y el
@@ -53,9 +54,7 @@ export function shortenLabel(value: string, maxLength = 18): string {
 }
 
 // ─── Periodos ───────────────────────────────────────────────────
-function toDateInput(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
+const toDateInput = toIsoDate;
 
 export type RangePreset = "3m" | "6m" | "12m" | "ytd" | "all";
 

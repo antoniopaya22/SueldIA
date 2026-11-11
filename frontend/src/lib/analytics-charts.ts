@@ -4,11 +4,8 @@
 const pad = (n: number) => String(n).padStart(2, "0");
 const roundCents = (n: number) => Math.round(n * 100) / 100;
 
-export function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const abs = y * 12 + (m - 1) + delta;
-  return `${Math.floor(abs / 12)}-${pad((abs % 12) + 1)}`;
-}
+import { shiftMonth } from "./dates";
+export { shiftMonth };
 
 export function daysInMonth(month: string): number {
   const [y, m] = month.split("-").map(Number);

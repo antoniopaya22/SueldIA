@@ -1,4 +1,5 @@
 import { writeUrl } from "./url-state";
+import { toIsoDate } from "./dates";
 
 // Los filtros de Transacciones viven en la URL (?cuenta=2&categoria=7&desde=…):
 // se pueden compartir, sobreviven a un refresco y, sobre todo, permiten que
@@ -91,7 +92,7 @@ export function writeTxFilters(filters: TxUrlFilters) {
 
 // ─── Periodos ───────────────────────────────────────────────────
 const pad = (n: number) => String(n).padStart(2, "0");
-const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const iso = toIsoDate;
 
 /** Primer y último día de un mes "YYYY-MM". */
 export function monthRange(month: string): { from: string; to: string } {
