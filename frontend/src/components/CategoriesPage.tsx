@@ -204,7 +204,7 @@ function GroupCard({
                   </div>
                   <RowActions
                     itemLabel={cat.name}
-                    className="opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100 sm:focus-visible:opacity-100 data-popup-open:opacity-100"
+                    className="opacity-100 pointer-fine:opacity-0 pointer-fine:group-hover/row:opacity-100 pointer-fine:focus-visible:opacity-100 data-popup-open:opacity-100"
                     actions={[
                       { label: "Renombrar", icon: Pencil, onSelect: () => onStartEditCat(cat) },
                       { label: "Mover a otro grupo", icon: ArrowRightLeft, onSelect: () => onMoveCat(cat) },

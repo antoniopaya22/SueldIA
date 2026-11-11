@@ -245,7 +245,7 @@ function TagsCard({ payslipId }: { payslipId: number }) {
               <button
                 type="button"
                 onClick={() => removeMut.mutate(t.id)}
-                className="flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="flex size-5 cursor-pointer items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:size-7"
                 aria-label={`Quitar etiqueta ${t.name}`}
               >
                 <X className="size-3" />

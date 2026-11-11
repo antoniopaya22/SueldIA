@@ -36,8 +36,8 @@ export function Segmented<T extends string>({ value, onChange, options, size = "
             onClick={() => onChange(opt.value)}
             className={cn(
               "inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-md font-medium transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-              size === "sm" ? "h-7 px-2.5 text-xs" : "h-8 px-3 text-sm",
-              iconOnly && (size === "sm" ? "w-7 px-0" : "w-8 px-0"),
+              size === "sm" ? "h-7 px-2.5 text-xs pointer-coarse:h-9" : "h-8 px-3 text-sm pointer-coarse:h-10",
+              iconOnly && (size === "sm" ? "w-7 px-0 pointer-coarse:w-9" : "w-8 px-0 pointer-coarse:w-10"),
               selected ? "bg-card text-foreground shadow-sm ring-1 ring-border" : "text-muted-foreground hover:text-foreground",
             )}
           >
