@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { importYnab, type ImportResult } from "../lib/api";
 import { Providers } from "./Providers";
+import { invalidateFinance } from "../lib/finance-cache";
 import { toast } from "sonner";
 import { PageHeader, SectionCard } from "./app";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -131,10 +132,8 @@ function ImportView() {
       setPreview(null);
       setFile(null);
       toast.success("Importación completada correctamente");
-      queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["categories"] });
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      queryClient.invalidateQueries({ queryKey: ["finance-analytics"] });
+      invalidateFinance(queryClient);
     },
     onError: (err: Error) => {
       setError(err.message);

@@ -255,11 +255,9 @@ function TransactionsView() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const invalidateRecurring = () => {
-    queryClient.invalidateQueries({ queryKey: ["recurring-suggestions"] });
-    queryClient.invalidateQueries({ queryKey: ["transactions"] });
-    queryClient.invalidateQueries({ queryKey: ["recurring-transactions"] });
-  };
+  // Crear/editar/pausar una regla genera o borra movimientos: refresca todo lo
+  // que depende de ellos (saldos de las cuentas, "Sin liquidar"…), no solo la lista.
+  const invalidateRecurring = () => invalidateFinance(queryClient);
 
   const createRecurringMut = useMutation({
     mutationFn: createRecurringTransaction,

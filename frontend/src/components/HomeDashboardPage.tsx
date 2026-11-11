@@ -24,6 +24,7 @@ import {
 } from "./app";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
+import { getTodayIsoDate } from "./finance-manage/transactions/shared";
 
 // ─── Helpers ────────────────────────────────────────────────────
 const MONTHS_FULL = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -234,9 +235,13 @@ function HomeDashboardView() {
   const { data: finance, isLoading: loadingFinance, error: financeError, refetch: refetchFinance } = useQuery({ queryKey: ["finance-summary"], queryFn: getFinanceSummary });
   const { data: trends = [] } = useQuery({ queryKey: ["finance-trends"], queryFn: () => getFinanceTrends() });
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
+  const today = useMemo(getTodayIsoDate, []);
   const { data: txData } = useQuery({
-    queryKey: ["transactions", { limit: 10, page: 1 }],
-    queryFn: () => getTransactions({ limit: 10, page: 1 }),
+    // Hasta hoy: las ocurrencias futuras de las recurrentes ya están generadas
+    // y, ordenadas por fecha, ocupaban todos los puestos — la lista salía vacía
+    // habiendo movimientos (o enseñaba como "recientes" gastos de la semana que viene).
+    queryKey: ["transactions", { limit: 10, page: 1, to: today }],
+    queryFn: () => getTransactions({ limit: 10, page: 1, to: today }),
   });
   const { data: latestPayslips } = useQuery({
     queryKey: ["payslips", { latest: true }],
