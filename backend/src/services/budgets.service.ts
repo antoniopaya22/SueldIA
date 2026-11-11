@@ -2,6 +2,7 @@ import { and, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { accounts, budgets, categories, categoryGroups, categoryTargets, transactions } from "../db/schema.js";
 import { effectiveTransaction } from "./transaction-filters.js";
+import { lastDayOfMonth } from "../utils/dates.js";
 
 // Presupuesto simplificado estilo YNAB: "asignar lo que ya tienes". No es
 // una réplica completa (sin cuentas fuera-de-presupuesto, sin "importe
@@ -116,12 +117,10 @@ export function planFill(
   return plan;
 }
 
-// Comparación léxica sobre fechas ISO en texto: "YYYY-MM-31" es mayor que
-// cualquier fecha real de ese mes (28/29/30/31), así que sirve como límite
-// superior inclusivo sin tener que calcular el último día real del mes —
-// mismo truco que ya se usa en dashboard.service.ts/transactions.ts.
+// Límite superior inclusivo del mes: su último día real (las fechas son tipo
+// date; el antiguo truco «YYYY-MM-31» de comparar texto ya no vale).
 function monthEndBoundary(month: string): string {
-  return `${month}-31`;
+  return lastDayOfMonth(month);
 }
 
 // Solo los gastos son "actividad" de una categoría. Los ingresos ya entran
@@ -405,7 +404,7 @@ export async function autoAssign(userId: number, month: string, mode: AutoAssign
       const [spent, monthsRow] = await Promise.all([
         activityByCategory(userId, end, start),
         db
-          .select({ n: sql<number>`count(distinct substr(${transactions.date}, 1, 7))::int` })
+          .select({ n: sql<number>`count(distinct to_char(${transactions.date}, 'YYYY-MM'))::int` })
           .from(transactions)
           .where(
             and(

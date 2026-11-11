@@ -1,4 +1,4 @@
-import { pgTable, text, integer, serial, boolean, doublePrecision, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, serial, boolean, doublePrecision, timestamp, uniqueIndex, index, date } from "drizzle-orm/pg-core";
 
 // Nota: las columnas de dinero usan doublePrecision (float8) en vez de numeric.
 // numeric devuelve string en el driver de Postgres (para no perder precisión
@@ -304,7 +304,7 @@ export const transactions = pgTable(
       enum: ["expense", "income", "transfer"],
     }).notNull(),
     amount: doublePrecision("amount").notNull(),
-    date: text("date").notNull(),
+    date: date("date", { mode: "string" }).notNull(),
     recurringTransactionId: integer("recurring_transaction_id").references(
       () => recurringTransactions.id,
       { onDelete: "set null" },
@@ -314,7 +314,7 @@ export const transactions = pgTable(
     // nunca se crea ni se enlaza solo). Si se borra la nómina, la
     // transacción se queda, solo pierde el enlace.
     payslipId: integer("payslip_id").references(() => payslips.id, { onDelete: "set null" }),
-    scheduledFor: text("scheduled_for"),
+    scheduledFor: date("scheduled_for", { mode: "string" }),
     payee: text("payee"),
     memo: text("memo"),
     cleared: boolean("cleared").notNull().default(false),
@@ -380,8 +380,8 @@ export const recurringTransactions = pgTable(
       .notNull()
       .default("monthly"),
     intervalCount: integer("interval_count").notNull().default(1),
-    startDate: text("start_date").notNull(),
-    endDate: text("end_date"),
+    startDate: date("start_date", { mode: "string" }).notNull(),
+    endDate: date("end_date", { mode: "string" }),
     payee: text("payee"),
     memo: text("memo"),
     flag: text("flag"),
@@ -410,7 +410,7 @@ export const recurringSkips = pgTable(
       .notNull()
       .references(() => recurringTransactions.id, { onDelete: "cascade" }),
     // "YYYY-MM-DD": la fecha prevista de la ocurrencia (scheduled_for).
-    scheduledFor: text("scheduled_for").notNull(),
+    scheduledFor: date("scheduled_for", { mode: "string" }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -532,7 +532,7 @@ export const savingsGoals = pgTable(
     name: text("name").notNull(),
     targetAmount: doublePrecision("target_amount").notNull(),
     // "YYYY-MM-DD", opcional: sin fecha no hay aportación mensual sugerida.
-    targetDate: text("target_date"),
+    targetDate: date("target_date", { mode: "string" }),
     accountId: integer("account_id").references(() => accounts.id, { onDelete: "set null" }),
     savedAmount: doublePrecision("saved_amount").notNull().default(0),
     color: text("color").notNull().default("#2a8558"),

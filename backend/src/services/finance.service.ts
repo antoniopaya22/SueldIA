@@ -3,6 +3,7 @@ import { accounts, transactions, categories, categoryGroups } from "../db/schema
 import { eq, and, sql, gte, lte, asc } from "drizzle-orm";
 import { effectiveTransaction } from "./transaction-filters.js";
 import { getTodayIsoDate } from "./recurring-transactions.service.js";
+import { lastDayOfMonth } from "../utils/dates.js";
 
 type FinanceFlowType = "income" | "expense";
 
@@ -429,7 +430,7 @@ export async function getFinanceSummary(userId: number): Promise<FinanceSummary>
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const monthStart = `${currentMonth}-01`;
-  const monthEnd = `${currentMonth}-31`;
+  const monthEnd = lastDayOfMonth(currentMonth);
 
   const trends = await getMonthlyTrends({ userId, from: monthStart, to: monthEnd });
   const current = trends.find((item) => item.month === currentMonth);

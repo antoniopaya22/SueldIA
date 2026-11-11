@@ -72,6 +72,7 @@ Métricas de calidad: `payslips.parser_format` y `payslips.parse_ms`, más la l�
 
 - **Toda tabla lleva `.enableRLS()`** (sin políticas): cierra la Data API de Supabase. `db:migrate` falla si falta.
 - **Fechas**: `isoDateSchema` / `monthKeySchema` de `utils/dates.ts` (rechazan fechas que no existen) y `todayIso()` para "hoy" en hora de Madrid. Nunca una regex suelta ni `new Date().toISOString()` para el día.
+  Las columnas de fecha (`transactions.date`, `scheduled_for`, `start_date`/`end_date`, `target_date`) son tipo `date` (Drizzle `mode: "string"`: llegan como «YYYY-MM-DD»). Para el fin de mes usa `lastDayOfMonth("YYYY-MM")`: el antiguo truco de comparar con «YYYY-MM-31» ya no vale (Postgres rechaza la fecha). Para agrupar por mes, `to_char(fecha, 'YYYY-MM')`.
 - **Importes**: `moneySchema` / `positiveMoneySchema` de `utils/validation.ts` (finitos y acotados).
 - **CSV**: `toCsv()` de `utils/csv.ts` (escapa y neutraliza fórmulas).
 - **Altas**: `assertUnderLimit()` de `utils/limits.ts` para los topes por usuario.

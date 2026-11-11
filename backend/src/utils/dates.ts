@@ -62,3 +62,10 @@ export const isoDateSchema = z
 export const monthKeySchema = z
   .string()
   .refine(isValidMonthKey, { message: "Mes inválido (formato YYYY-MM)" });
+
+/** Último día real de un mes «YYYY-MM» («2026-02» → «2026-02-28»). Las fechas son tipo date: «-31» ya no vale como tope. */
+export function lastDayOfMonth(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  const day = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${month}-${String(day).padStart(2, "0")}`;
+}

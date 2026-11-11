@@ -183,6 +183,13 @@
       "when": 1794407908022,
       "tag": "0025_savings_goals",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794409683134,
+      "tag": "0026_dates_as_date",
+      "breakpoints": true
     }
   ]
 }

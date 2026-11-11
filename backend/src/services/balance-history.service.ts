@@ -74,12 +74,12 @@ export async function getBalanceHistory(userId: number, count = 12): Promise<Bal
     db
       .select({
         accountId: transactions.accountId,
-        month: sql<string>`substr(${transactions.date}, 1, 7)`,
+        month: sql<string>`to_char(${transactions.date}, 'YYYY-MM')`,
         net: sql<number>`sum(${signedAmountSql})`,
       })
       .from(transactions)
       .where(and(eq(transactions.userId, userId), effectiveTransaction()))
-      .groupBy(transactions.accountId, sql`substr(${transactions.date}, 1, 7)`),
+      .groupBy(transactions.accountId, sql`to_char(${transactions.date}, 'YYYY-MM')`),
   ]);
   return buildBalanceHistory(
     accountRows.map((a) => ({

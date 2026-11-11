@@ -380,12 +380,12 @@ export async function evalUnusualCategorySpend(
     .select({
       categoryId: transactions.categoryId,
       name: categories.name,
-      month: sql<string>`substr(${transactions.date}, 1, 7)`,
+      month: sql<string>`to_char(${transactions.date}, 'YYYY-MM')`,
       spent: sql<number>`sum(${transactions.amount})::float8`,
     })
     .from(transactions)
     .innerJoin(categories, eq(transactions.categoryId, categories.id))
     .where(and(eq(transactions.userId, userId), eq(transactions.type, "expense"), gte(transactions.date, from)))
-    .groupBy(transactions.categoryId, categories.name, sql`substr(${transactions.date}, 1, 7)`);
+    .groupBy(transactions.categoryId, categories.name, sql`to_char(${transactions.date}, 'YYYY-MM')`);
   return unusualSpendCandidates(rows.map((r) => ({ ...r, categoryId: r.categoryId! })), config, month, ruleId);
 }
