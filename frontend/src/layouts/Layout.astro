@@ -50,6 +50,9 @@ const currentPath = Astro.url.pathname;
         // ClientRouter sustituye los atributos de <html> por los de la página
         // nueva (sin la clase dark): se reaplica antes de pintar.
         document.addEventListener("astro:after-swap", applyTheme);
+        // Al imprimir, siempre en claro (fondo blanco); después, el tema de siempre.
+        window.addEventListener("beforeprint", function () { document.documentElement.classList.remove("dark"); });
+        window.addEventListener("afterprint", applyTheme);
       })();
     </script>
     <!-- Navegación sin recarga completa entre páginas de /app: el JS y la

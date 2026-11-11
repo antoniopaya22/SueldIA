@@ -430,7 +430,7 @@ function AppHeader({ currentPath, onOpenSearch }: { currentPath: string; onOpenS
   const ActionIcon = action.icon;
 
   return (
-    <header className="sticky top-0 z-20 flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-border/70 bg-background/80 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md supports-backdrop-filter:bg-background/65 sm:px-5">
+    <header data-app-header className="sticky top-0 z-20 flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-border/70 bg-background/80 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md supports-backdrop-filter:bg-background/65 sm:px-5">
       {/* En móvil el panel se abre desde "Más" en la barra inferior. */}
       <SidebarTrigger className="-ml-1 hidden text-muted-foreground hover:text-foreground md:inline-flex" />
       <div aria-hidden="true" className="mr-1 hidden h-4 w-px shrink-0 bg-border md:block" />

@@ -9,6 +9,7 @@ import {
   getFinanceAnalytics,
 } from "../services/finance.service.js";
 import { getMonthReport } from "../services/month-report.service.js";
+import { getYearReport } from "../services/year-report.service.js";
 import { getBalanceHistory } from "../services/balance-history.service.js";
 import { getForecast } from "../services/forecast.service.js";
 import { getAmountDistribution, getDailySeries } from "../services/chart-series.service.js";
@@ -168,6 +169,17 @@ financeRouter.get("/report", async (req, res, next) => {
       return res.status(400).json({ error: "Parámetros de consulta inválidos", details: parsed.error.flatten().fieldErrors });
     }
     res.json(await getMonthReport(userId, parsed.data.month ?? getTodayIsoDate().slice(0, 7)));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Informe de un año (o de lo que va de año), comparado con el anterior.
+financeRouter.get("/report/year", async (req, res, next) => {
+  try {
+    const parsed = z.object({ year: z.coerce.number().int().min(2000).max(2100).optional() }).safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: "Año no válido", details: parsed.error.flatten().fieldErrors });
+    res.json(await getYearReport(req.user!.userId, parsed.data.year ?? Number(getTodayIsoDate().slice(0, 4))));
   } catch (err) {
     next(err);
   }

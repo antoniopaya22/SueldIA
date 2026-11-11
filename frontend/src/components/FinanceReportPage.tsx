@@ -9,13 +9,14 @@ import { monthRange, transactionsHref } from "../lib/transaction-filters";
 import { Providers } from "./Providers";
 import { EmptyState } from "./ui/EmptyState";
 import {
-  PageHeader, StatCard, StatGrid, SectionCard, PageHeaderSkeleton, StatCardSkeleton, ListCardSkeleton, type StatDelta,
+  PageHeader, StatCard, StatGrid, SectionCard, PageHeaderSkeleton, StatCardSkeleton, ListCardSkeleton, Segmented, type StatDelta,
   MonthSwitcher,
 } from "./app";
 import { Button } from "@/components/ui/button";
 import { cn } from "cn";
 import { currentMonthKey, isMonthKey } from "../lib/dates";
-import { useUrlParam } from "../lib/url-state";
+import { useUrlEnumParam, useUrlIntParam, useUrlParam } from "../lib/url-state";
+import { YearReportView } from "./finance/YearReport";
 
 
 
@@ -259,6 +260,31 @@ function ReportBody({ report, month }: { report: MonthReport; month: string }) {
 }
 
 function ReportView() {
+  const [view, setView] = useUrlEnumParam("vista", ["mensual", "anual"] as const, "mensual");
+  const thisYear = Number(currentMonthKey().slice(0, 4));
+  const [yearParam, setYearParam] = useUrlIntParam("anio", thisYear);
+  const viewToggle = (
+    <Segmented
+      aria-label="Periodo del informe"
+      value={view}
+      onChange={(v) => setView(v)}
+      options={[{ value: "mensual", label: "Mes" }, { value: "anual", label: "Año" }]}
+    />
+  );
+  if (view === "anual") {
+    return (
+      <div>
+        <PageHeader title="Informe" accent="del año." description="Cómo ha ido el año: ingresos, gastos, ahorro y en qué se fue el dinero, frente al año anterior.">
+          <div className="print:hidden">{viewToggle}</div>
+        </PageHeader>
+        <YearReportView year={Math.min(yearParam, thisYear)} onYearChange={(y) => setYearParam(y)} thisYear={thisYear} />
+      </div>
+    );
+  }
+  return <MonthReportView viewToggle={viewToggle} />;
+}
+
+function MonthReportView({ viewToggle }: { viewToggle: React.ReactNode }) {
   // ?mes=YYYY-MM en la URL (compartible); por defecto, el mes en curso.
   const thisMonth = currentMonthKey();
   const [monthParam, setMonthParam] = useUrlParam("mes", thisMonth);
@@ -282,7 +308,7 @@ function ReportView() {
       accent="del mes."
       description="Cómo ha ido el mes frente a tu media: qué ha subido, qué ha bajado y qué se sale de lo habitual."
     >
-      {switcher}
+      <div className="flex flex-wrap items-center gap-2">{viewToggle}{switcher}</div>
     </PageHeader>
   );
 

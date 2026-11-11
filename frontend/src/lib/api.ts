@@ -1685,6 +1685,23 @@ export const updateSavingsGoal = (id: number, data: SavingsGoalInput) =>
   request<SavingsGoal>(`/savings-goals/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 export const deleteSavingsGoal = (id: number) => request<{ ok: boolean }>(`/savings-goals/${id}`, { method: "DELETE" });
 
+// ─── Informe anual ──────────────────────────────────────────────
+export interface YearTotals { income: number; expense: number; net: number; savingsRate: number | null }
+export interface YearReport {
+  year: number;
+  partial: boolean;
+  throughMonth: number;
+  totals: YearTotals;
+  previousTotals: YearTotals;
+  months: Array<{ month: string } & YearTotals>;
+  bestMonth: { month: string; net: number } | null;
+  worstMonth: { month: string; net: number } | null;
+  categories: Array<{ categoryId: number | null; name: string; groupName: string; spent: number; previous: number; diffPct: number | null }>;
+  topPayees: Array<{ payee: string; spent: number; count: number }>;
+  biggestExpenses: Array<{ id: number; date: string; payee: string; amount: number; categoryName: string }>;
+}
+export const getYearReport = (year: number) => request<YearReport>(`/finance/report/year?year=${year}`);
+
 // ─── Datos de ejemplo ───────────────────────────────────────────
 export const getDemoStatus = () => request<{ loaded: boolean }>("/demo");
 export const loadDemoData = () => request<{ loaded: boolean }>("/demo", { method: "POST" });
