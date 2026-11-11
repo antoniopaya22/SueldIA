@@ -422,3 +422,79 @@ export async function restoreBackup(userId: number, b: Backup): Promise<BackupCo
   }
   return countBackup(b);
 }
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+/**
+ * Todos los datos del usuario (derecho de portabilidad RGPD y copia de
+ * seguridad): lo que hay en cada tabla que cuelga de su cuenta, sin filtrar ni
+ * resumir. Es lo que lee `readBackupFile`. `null` si el usuario no existe.
+ */
+export async function buildFullExport(userId: number) {
+  const [user] = await db
+    .select({ id: s.users.id, email: s.users.email, name: s.users.name, createdAt: s.users.createdAt })
+    .from(s.users)
+    .where(eq(s.users.id, userId));
+  if (!user) return null;
+
+  const userProfiles = await db.select().from(s.profiles).where(eq(s.profiles.userId, userId));
+  const profileIds = userProfiles.map((p) => p.id);
+  const userPayslips = profileIds.length ? await db.select().from(s.payslips).where(inArray(s.payslips.profileId, profileIds)) : [];
+  const payslipIds = userPayslips.map((p) => p.id);
+  const none = payslipIds.length === 0;
+
+  const [concepts, notes, payslipTagLinks, tags, accounts, groups, categories, transactions, recurring, rules, history, budgets, targets, catRules, prefs] =
+    await Promise.all([
+      none ? [] : db.select().from(s.payslipConcepts).where(inArray(s.payslipConcepts.payslipId, payslipIds)),
+      none ? [] : db.select().from(s.payslipNotes).where(inArray(s.payslipNotes.payslipId, payslipIds)),
+      none ? [] : db.select().from(s.payslipTags).where(inArray(s.payslipTags.payslipId, payslipIds)),
+      db.select().from(s.tags).where(eq(s.tags.userId, userId)),
+      db.select().from(s.accounts).where(eq(s.accounts.userId, userId)),
+      db.select().from(s.categoryGroups).where(eq(s.categoryGroups.userId, userId)),
+      db
+        .select({ category: s.categories })
+        .from(s.categories)
+        .innerJoin(s.categoryGroups, eq(s.categories.groupId, s.categoryGroups.id))
+        .where(eq(s.categoryGroups.userId, userId))
+        .then((rows) => rows.map((r) => r.category)),
+      db.select().from(s.transactions).where(eq(s.transactions.userId, userId)),
+      db.select().from(s.recurringTransactions).where(eq(s.recurringTransactions.userId, userId)),
+      db.select().from(s.alertRules).where(eq(s.alertRules.userId, userId)),
+      db.select().from(s.alertHistory).where(eq(s.alertHistory.userId, userId)),
+      db.select().from(s.budgets).where(eq(s.budgets.userId, userId)),
+      db.select().from(s.categoryTargets).where(eq(s.categoryTargets.userId, userId)),
+      db.select().from(s.categoryRules).where(eq(s.categoryRules.userId, userId)),
+      db.select().from(s.userPreferences).where(eq(s.userPreferences.userId, userId)),
+    ]);
+
+  return {
+    // Para poder restaurarla (Ajustes → Restaurar una copia).
+    format: BACKUP_FORMAT,
+    version: BACKUP_VERSION,
+    exportedAt: new Date().toISOString(),
+    user,
+    profiles: userProfiles,
+    payslips: userPayslips,
+    payslipConcepts: concepts,
+    payslipNotes: notes,
+    payslipTags: payslipTagLinks,
+    tags,
+    accounts,
+    categoryGroups: groups,
+    categories,
+    transactions,
+    recurringTransactions: recurring,
+    alertRules: rules.map((r) => ({ ...r, config: safeJson(r.config) })),
+    alertHistory: history,
+    budgets,
+    categoryTargets: targets,
+    categoryRules: catRules,
+    userPreferences: prefs.map((p) => ({ ...p, value: safeJson(p.value) })),
+  };
+}

@@ -3,28 +3,17 @@ import { z } from "zod";
 import { toCsv } from "../utils/csv.js";
 import { amountRangeValid, amountRangeIssue, buildConditions, transactionFilterFields } from "../services/transaction-query.js";
 import { db } from "../db/index.js";
-import { BACKUP_FORMAT, BACKUP_VERSION } from "../services/backup-restore.service.js";
+import { buildFullExport } from "../services/backup-restore.service.js";
 import {
   payslips,
   payslipConcepts,
-  payslipNotes,
-  payslipTags,
   profiles,
   transactions,
   accounts,
   categories,
   categoryGroups,
-  tags,
-  recurringTransactions,
-  alertRules,
-  alertHistory,
-  budgets,
-  categoryTargets,
-  categoryRules,
-  userPreferences,
-  users,
 } from "../db/schema.js";
-import { eq, and, sql, gte, lte, like, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, sql, asc } from "drizzle-orm";
 
 export const exportRouter = Router();
 
@@ -35,88 +24,14 @@ export const exportRouter = Router();
 exportRouter.get("/all", async (req, res, next) => {
   try {
     const { userId } = req.user!;
-
-    const [user] = await db
-      .select({ id: users.id, email: users.email, name: users.name, createdAt: users.createdAt })
-      .from(users)
-      .where(eq(users.id, userId));
-    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
-
-    const userProfiles = await db.select().from(profiles).where(eq(profiles.userId, userId));
-    const profileIds = userProfiles.map((p) => p.id);
-
-    const userPayslips = profileIds.length
-      ? await db.select().from(payslips).where(inArray(payslips.profileId, profileIds))
-      : [];
-    const payslipIds = userPayslips.map((p) => p.id);
-
-    const [concepts, notes, payslipTagLinks, userTags, userAccounts, groups, cats, txs, recurring, rules, history, userBudgets, targets, catRules, prefs] =
-      await Promise.all([
-        payslipIds.length
-          ? db.select().from(payslipConcepts).where(inArray(payslipConcepts.payslipId, payslipIds))
-          : Promise.resolve([]),
-        payslipIds.length
-          ? db.select().from(payslipNotes).where(inArray(payslipNotes.payslipId, payslipIds))
-          : Promise.resolve([]),
-        payslipIds.length
-          ? db.select().from(payslipTags).where(inArray(payslipTags.payslipId, payslipIds))
-          : Promise.resolve([]),
-        db.select().from(tags).where(eq(tags.userId, userId)),
-        db.select().from(accounts).where(eq(accounts.userId, userId)),
-        db.select().from(categoryGroups).where(eq(categoryGroups.userId, userId)),
-        db
-          .select({ category: categories })
-          .from(categories)
-          .innerJoin(categoryGroups, eq(categories.groupId, categoryGroups.id))
-          .where(eq(categoryGroups.userId, userId))
-          .then((rows) => rows.map((r) => r.category)),
-        db.select().from(transactions).where(eq(transactions.userId, userId)),
-        db.select().from(recurringTransactions).where(eq(recurringTransactions.userId, userId)),
-        db.select().from(alertRules).where(eq(alertRules.userId, userId)),
-        db.select().from(alertHistory).where(eq(alertHistory.userId, userId)),
-        db.select().from(budgets).where(eq(budgets.userId, userId)),
-        db.select().from(categoryTargets).where(eq(categoryTargets.userId, userId)),
-        db.select().from(categoryRules).where(eq(categoryRules.userId, userId)),
-        db.select().from(userPreferences).where(eq(userPreferences.userId, userId)),
-      ]);
-
+    const data = await buildFullExport(userId);
+    if (!data) return res.status(404).json({ error: "Usuario no encontrado" });
     res.setHeader("Content-Disposition", `attachment; filename="sueldia-datos-${userId}.json"`);
-    res.json({
-      // Para poder restaurarla (Ajustes → Restaurar una copia).
-      format: BACKUP_FORMAT,
-      version: BACKUP_VERSION,
-      exportedAt: new Date().toISOString(),
-      user,
-      profiles: userProfiles,
-      payslips: userPayslips,
-      payslipConcepts: concepts,
-      payslipNotes: notes,
-      payslipTags: payslipTagLinks,
-      tags: userTags,
-      accounts: userAccounts,
-      categoryGroups: groups,
-      categories: cats,
-      transactions: txs,
-      recurringTransactions: recurring,
-      alertRules: rules.map((r) => ({ ...r, config: JSON.parse(r.config) })),
-      alertHistory: history,
-      budgets: userBudgets,
-      categoryTargets: targets,
-      categoryRules: catRules,
-      userPreferences: prefs.map((p) => ({ ...p, value: safeJson(p.value) })),
-    });
+    res.json(data);
   } catch (err) {
     next(err);
   }
 });
-
-function safeJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
 
 const PAYSLIP_CSV_HEADERS = [
   "Perfil", "Tipo", "Periodo", "Empresa", "Salario Bruto", "Salario Neto", "Devengos", "Deducciones", "Archivo", "Fecha Subida",

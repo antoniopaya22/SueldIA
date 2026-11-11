@@ -1,10 +1,14 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, Download, LogOut, Monitor, Moon, ShieldCheck, Sun, Loader2, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Download, LogOut, Monitor, Moon, ShieldCheck, Sun, Loader2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Providers } from "./Providers";
 import { useAuth } from "./AuthProvider";
-import { clearAuth, deleteMyAccount, exportAllData, exportData, getMe, getProfiles, updateUserProfile } from "../lib/api";
+import {
+  clearAuth, deleteMyAccount, exportAllData, exportData, getMe, getProfiles, previewBackup, restoreBackup, updateUserProfile,
+  type BackupCounts, type BackupPreview,
+} from "../lib/api";
+import { plural } from "../lib/format";
 import { supabase } from "../lib/supabase";
 import { PageHeader, SectionCard } from "./app";
 import { ProfileDot } from "./payroll/shared";
@@ -262,6 +266,127 @@ function ProfileSection() {
   );
 }
 
+const BACKUP_ROWS: Array<{ key: keyof BackupCounts; label: string }> = [
+  { key: "profiles", label: "Perfiles" },
+  { key: "payslips", label: "Nóminas" },
+  { key: "accounts", label: "Cuentas" },
+  { key: "categories", label: "Categorías" },
+  { key: "transactions", label: "Movimientos" },
+  { key: "recurringTransactions", label: "Recurrentes" },
+  { key: "budgets", label: "Asignaciones de presupuesto" },
+  { key: "categoryRules", label: "Reglas de categoría" },
+  { key: "alertRules", label: "Reglas de alerta" },
+];
+
+/** Restaurar una copia de «Exportar todos mis datos»: vista previa y confirmación antes de sustituir nada. */
+function RestoreBackupRow() {
+  const queryClient = useQueryClient();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<{ file: File; preview: BackupPreview } | null>(null);
+
+  const previewMut = useMutation({
+    mutationFn: (file: File) => previewBackup(file).then((preview) => ({ file, preview })),
+    onSuccess: setPending,
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const restoreMut = useMutation({
+    mutationFn: (file: File) => restoreBackup(file),
+    onSuccess: ({ restored }) => {
+      setPending(null);
+      // Las preferencias tienen copia local: fuera, para que manden las de la copia.
+      try {
+        for (const key of Object.keys(window.localStorage)) if (key.startsWith("sueldia:pref:")) window.localStorage.removeItem(key);
+      } catch {
+        // Sin almacenamiento local: nada que limpiar.
+      }
+      void queryClient.invalidateQueries();
+      toast.success(`Copia restaurada: ${plural(restored.payslips, "nómina", "nóminas")} y ${plural(restored.transactions, "movimiento", "movimientos")}.`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const exportedAt = pending?.preview.exportedAt ? new Date(pending.preview.exportedAt) : null;
+  const busy = previewMut.isPending || restoreMut.isPending;
+
+  return (
+    <>
+      <SettingRow
+        title="Restaurar una copia"
+        description="Carga un archivo de «Exportar todos mis datos» para recuperar tu cuenta o llevarla a otra. Antes de cambiar nada verás qué contiene."
+      >
+        <div className="flex sm:justify-end">
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".json,.gz,application/json"
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) previewMut.mutate(file);
+            }}
+          />
+          <Button variant="outline" onClick={() => inputRef.current?.click()} disabled={busy} className="gap-1.5">
+            {previewMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            Restaurar una copia…
+          </Button>
+        </div>
+      </SettingRow>
+
+      <AlertDialog open={pending !== null} onOpenChange={(o) => { if (!o && !restoreMut.isPending) setPending(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Sustituir tus datos por esta copia?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {exportedAt && !Number.isNaN(exportedAt.getTime())
+                ? <>Copia del {exportedAt.toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}. </>
+                : null}
+              Se borrará todo lo que hay ahora en tu cuenta y se cargará lo de la copia. No se puede deshacer: si quieres conservar lo actual, expórtalo antes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {pending && (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground">
+                  <th className="py-1.5 font-medium">Datos</th>
+                  <th className="py-1.5 text-right font-medium">Ahora</th>
+                  <th className="py-1.5 text-right font-medium">En la copia</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {BACKUP_ROWS.filter((r) => pending.preview.current[r.key] > 0 || pending.preview.backup[r.key] > 0).map((r) => (
+                  <tr key={r.key}>
+                    <td className="py-1.5">{r.label}</td>
+                    <td className="py-1.5 text-right tabular-nums text-muted-foreground">{pending.preview.current[r.key].toLocaleString("es-ES")}</td>
+                    <td className="py-1.5 text-right font-medium tabular-nums">{pending.preview.backup[r.key].toLocaleString("es-ES")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoreMut.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={restoreMut.isPending}
+              className="gap-1.5"
+              onClick={(e) => {
+                e.preventDefault();
+                if (pending) restoreMut.mutate(pending.file);
+              }}
+            >
+              {restoreMut.isPending && <Loader2 className="size-4 animate-spin" />}
+              Sustituir mis datos
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
 function DataSection() {
   const { data: profiles = [], isLoading } = useQuery({ queryKey: ["profiles"], queryFn: getProfiles });
   const [busy, setBusy] = useState<string | null>(null);
@@ -322,7 +447,7 @@ function DataSection() {
       <div className="mt-5 border-t border-border pt-5">
         <SettingRow
           title="Exportar todos mis datos"
-          description="Toda la información de tu cuenta en un único archivo JSON: perfiles, nóminas, conceptos, notas, cuentas, categorías, movimientos y alertas. Es tu derecho de portabilidad."
+          description="Toda la información de tu cuenta en un único archivo JSON: perfiles, nóminas, conceptos, notas, cuentas, categorías, movimientos y alertas. Es tu derecho de portabilidad y te sirve de copia de seguridad (los PDF no se guardan)."
         >
           <div className="flex sm:justify-end">
             <Button variant="outline" onClick={handleExportAll} disabled={exportingAll} className="gap-1.5">
@@ -331,6 +456,9 @@ function DataSection() {
             </Button>
           </div>
         </SettingRow>
+      </div>
+      <div className="mt-5 border-t border-border pt-5">
+        <RestoreBackupRow />
       </div>
       <div className="mt-5 flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-3.5">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary-600 dark:text-primary" aria-hidden="true" />

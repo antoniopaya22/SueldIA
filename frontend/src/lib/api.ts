@@ -1580,6 +1580,48 @@ export const importBankCsv = (file: File, accountId: number, headerIndex: number
   return postForm<BankCsvResult>(`/import/csv${dryRun ? "?dryRun=true" : ""}`, form);
 };
 
+// ─── Restaurar una copia («Exportar todos mis datos») ───────────
+export interface BackupCounts {
+  profiles: number;
+  payslips: number;
+  accounts: number;
+  categories: number;
+  transactions: number;
+  recurringTransactions: number;
+  budgets: number;
+  categoryRules: number;
+  alertRules: number;
+}
+export interface BackupPreview {
+  exportedAt: string | null;
+  backup: BackupCounts;
+  current: BackupCounts;
+}
+
+/** Vercel no admite peticiones de más de 4,5 MB: la copia va comprimida (un JSON baja ~10 veces). */
+const MAX_BACKUP_UPLOAD = 4 * 1024 * 1024;
+
+async function backupForm(file: File): Promise<FormData> {
+  let blob: Blob = file;
+  let name = file.name;
+  if (typeof CompressionStream !== "undefined" && !name.toLowerCase().endsWith(".gz")) {
+    blob = await new Response(file.stream().pipeThrough(new CompressionStream("gzip"))).blob();
+    name += ".gz";
+  }
+  if (blob.size > MAX_BACKUP_UPLOAD) {
+    throw new ApiError(413, "La copia es demasiado grande para subirla (más de 4 MB comprimida).");
+  }
+  const form = new FormData();
+  form.append("file", blob, name);
+  return form;
+}
+
+export const previewBackup = async (file: File) => postForm<BackupPreview>("/import/backup?dryRun=true", await backupForm(file));
+
+/** Sustituye TODOS los datos de la cuenta por los de la copia. */
+export const restoreBackup = async (file: File) =>
+  postForm<{ restored: BackupCounts }>("/import/backup?replace=true", await backupForm(file));
+
 // ─── Comparar nóminas y resumen para la Renta ───────────────────
 export interface ConceptDiff {
   name: string;

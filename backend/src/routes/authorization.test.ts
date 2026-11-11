@@ -346,6 +346,28 @@ describeDb("autorización entre usuarios (integración)", () => {
     await call("a", "DELETE", `/import/batches/${done.body.batchId}`);
   });
 
+  it("restaurar una copia: vista previa, confirmación y solo en la propia cuenta", async () => {
+    const backup = (await call("a", "GET", "/export/all")).json as Record<string, any>;
+    expect(backup).toMatchObject({ format: "sueldia-backup", version: 1 });
+    const send = async (user: "a" | "b", query: string) => {
+      const form = new FormData();
+      form.append("file", new Blob([JSON.stringify(backup)], { type: "application/json" }), "copia.json");
+      const res = await fetch(`${api}/api/import/backup${query}`, { method: "POST", headers: { Authorization: `Bearer ${tokens[user]}` }, body: form });
+      return { status: res.status, body: (await res.json()) as Record<string, any> };
+    };
+    const preview = await send("b", "?dryRun=true");
+    expect(preview.status).toBe(200);
+    expect(preview.body.backup).toMatchObject({ profiles: backup.profiles.length, transactions: backup.transactions.length });
+    // Sin confirmar no se toca nada.
+    expect((await send("b", "")).status).toBe(400);
+    // B restaura en SU cuenta una copia de A: ids nuevos, A no cambia.
+    const done = await send("b", "?replace=true");
+    expect(done.status).toBe(200);
+    const bAccounts = (await call("b", "GET", "/accounts")).json.data as Array<{ id: number; name: string }>;
+    expect(bAccounts.map((x) => x.name)).toContain("Banco A");
+    expect(bAccounts.map((x) => x.id)).not.toContain(ids.account);
+  });
+
   it("los datos de A siguen intactos", async () => {
     expect((await call("a", "GET", `/profiles/${ids.profile}`)).json).toMatchObject({ name: "A" });
     expect((await call("a", "GET", `/accounts/${ids.account}`)).json).toMatchObject({ name: "Banco A", archived: false });

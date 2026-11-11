@@ -72,6 +72,7 @@ No hay `tesseract.js`/`canvas` ni disco para PDFs — decisión deliberada (ver 
 - **Importes**: `moneySchema` / `positiveMoneySchema` de `utils/validation.ts` (finitos y acotados).
 - **CSV**: `toCsv()` de `utils/csv.ts` (escapa y neutraliza fórmulas).
 - **Altas**: `assertUnderLimit()` de `utils/limits.ts` para los topes por usuario.
+- **Copia de seguridad**: `services/backup-restore.service.ts` genera `/export/all` (`buildFullExport`) y lo restaura (`POST /import/backup`, reasignando ids). Una tabla o columna nueva con datos del usuario debe añadirse a los dos sitios (y a `backup-restore.integration.test.ts`), o se perderá al restaurar.
 - **Pruebas de integración**: `src/test/` + `TEST_DATABASE_URL`. Toda ruta nueva que reciba un id debe añadirse a `routes/authorization.test.ts`.
 
 ## Configuración
