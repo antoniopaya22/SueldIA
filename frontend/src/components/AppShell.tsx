@@ -50,9 +50,14 @@ import { CommandMenu } from "@/components/app/CommandMenu";
 import { PreferencesBoot } from "@/components/app/PreferencesBoot";
 import { MobileTabBar } from "@/components/app/MobileTabBar";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { TransactionFormDialog } from "@/components/finance-manage/transactions/TransactionFormDialog";
 import type { TxForm } from "@/components/finance-manage/transactions/TransactionDialog";
 import { appQueryClient } from "@/lib/query-client";
+
+// El formulario de «Nueva transacción» (y sus selectores) no hace falta para
+// pintar la página: se descarga aparte, en un momento ocioso tras cargar, para
+// que al abrirlo no haya espera.
+const loadTransactionFormDialog = () => import("@/components/finance-manage/transactions/TransactionFormDialog");
+const TransactionFormDialog = React.lazy(() => loadTransactionFormDialog().then((m) => ({ default: m.TransactionFormDialog })));
 import { installGlobalErrorReporting } from "@/lib/error-reporting";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { NEW_TRANSACTION_EVENT, openNewTransaction, type NewTransactionType } from "@/lib/new-transaction";
@@ -545,6 +550,8 @@ function AppShellInner({ currentPath, children }: AppShellProps) {
 
     window.addEventListener(NEW_TRANSACTION_EVENT, onRequest);
     window.addEventListener("keydown", onKey);
+    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 2000));
+    idle(() => { void loadTransactionFormDialog().catch(() => undefined); });
     return () => {
       window.removeEventListener(NEW_TRANSACTION_EVENT, onRequest);
       window.removeEventListener("keydown", onKey);
@@ -608,12 +615,14 @@ function AppShellInner({ currentPath, children }: AppShellProps) {
         <QueryClientProvider client={appQueryClient}>
           <PreferencesBoot />
           {txDialog.mounted && (
-            <TransactionFormDialog
-              open={txDialog.open}
-              onClose={() => setTxDialog((d) => ({ ...d, open: false }))}
-              editing={null}
-              initial={txDialog.initial}
-            />
+            <React.Suspense fallback={null}>
+              <TransactionFormDialog
+                open={txDialog.open}
+                onClose={() => setTxDialog((d) => ({ ...d, open: false }))}
+                editing={null}
+                initial={txDialog.initial}
+              />
+            </React.Suspense>
           )}
         </QueryClientProvider>
       </SidebarProvider>
