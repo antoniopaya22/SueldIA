@@ -20,7 +20,7 @@ import {
   type SubscriptionSuggestion,
   getTransactions,
   setRecurringTransactionActive,
-  toggleCleared,
+  setCleared,
   splitTransaction,
   unsplitTransaction,
   updateRecurringTransaction,
@@ -247,7 +247,7 @@ function TransactionsView() {
   });
 
   const clearMut = useMutation({
-    mutationFn: toggleCleared,
+    mutationFn: ({ id, cleared }: { id: number; cleared: boolean }) => setCleared(id, cleared),
     onSuccess: () => {
       invalidateTx();
       queryClient.invalidateQueries({ queryKey: ["recurring-transactions"] });
@@ -845,7 +845,7 @@ function TransactionsView() {
                   onSort={toggleSort}
                   today={today}
                   onEdit={openEditForm}
-                  onToggleCleared={(tx) => clearMut.mutate(tx.id)}
+                  onToggleCleared={(tx) => clearMut.mutate({ id: tx.id, cleared: !tx.cleared })}
                   onSchedule={openRecurringFromTransaction}
                   onDuplicate={openDuplicateForm}
                   onSettle={setSettleTarget}

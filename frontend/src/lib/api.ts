@@ -778,8 +778,9 @@ export const updateTransaction = (
 export const deleteTransaction = (id: number) =>
   request<{ ok: boolean }>(`/transactions/${id}`, { method: "DELETE" });
 
-export const toggleCleared = (id: number) =>
-  request<Transaction>(`/transactions/${id}/clear`, { method: "PATCH" });
+// Con el valor explícito, un reintento de red no deshace el cambio.
+export const setCleared = (id: number, cleared: boolean) =>
+  request<Transaction>(`/transactions/${id}/clear`, { method: "PATCH", body: JSON.stringify({ cleared }) });
 
 // ─── Recurring Transactions ────────────────────────────────────
 export type RecurringCadence = "weekly" | "monthly" | "yearly";

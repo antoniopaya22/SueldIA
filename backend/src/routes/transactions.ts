@@ -722,17 +722,21 @@ transactionsRouter.patch("/:id/clear", async (req, res, next) => {
       .where(and(eq(transactions.id, id), eq(transactions.userId, userId)));
     if (!existing) return res.status(404).json({ error: "Transacción no encontrada" });
 
-    // Todas las partes de un gasto dividido se liquidan a la vez.
+    // `{ cleared }` explícito hace la petición idempotente (un reintento de
+    // red no deshace el cambio); sin cuerpo, se alterna como antes.
+    const body = z.object({ cleared: z.boolean().optional() }).safeParse(req.body ?? {});
+    const cleared = body.success && body.data.cleared !== undefined ? body.data.cleared : !existing.cleared;
+
+    // Misma lógica que la acción en lote: arrastra la otra pata de un traspaso
+    // y todas las partes de un gasto dividido. Antes solo cambiaba la fila
+    // pedida y un traspaso quedaba liquidado en una cuenta y pendiente en la
+    // otra — el dinero salía de una sin entrar en la otra.
+    await applyBatch(userId, { action: "set-cleared", ids: [id], cleared });
     const [updated] = await db
-      .update(transactions)
-      .set({ cleared: !existing.cleared })
-      .where(
-        existing.splitGroupId
-          ? and(eq(transactions.userId, userId), eq(transactions.splitGroupId, existing.splitGroupId))
-          : eq(transactions.id, id),
-      )
-      .returning();
-    res.json(existing.splitGroupId ? (await db.select().from(transactions).where(eq(transactions.id, id)))[0] : updated);
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.id, id), eq(transactions.userId, userId)));
+    res.json(updated);
   } catch (err) {
     next(err);
   }
