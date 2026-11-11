@@ -87,21 +87,25 @@ export async function extractTextFromPdfBuffer(data: Uint8Array): Promise<string
   // isEvalSupported: false — defensa adicional (desde pdfjs 4.2 ya no hace
   // falta contra CVE-2024-4367): el PDF lo sube cualquier usuario y se procesa
   // en el mismo proceso que tiene DATABASE_URL. No cambia el texto extraído.
-  const doc = await pdfjs.getDocument({ data: safeData, useSystemFonts: true, isEvalSupported: false } as never).promise;
-  const allLines: string[] = [];
-  const pageCount = Math.min(doc.numPages, MAX_PAGES);
+  const loadingTask = pdfjs.getDocument({ data: safeData, useSystemFonts: true, isEvalSupported: false } as never);
+  try {
+    const doc = await loadingTask.promise;
+    const allLines: string[] = [];
+    const pageCount = Math.min(doc.numPages, MAX_PAGES);
 
-  for (let i = 1; i <= pageCount; i++) {
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    const items: PositionedItem[] = content.items.map((item) => {
-      const textItem = item as { str: string; transform: number[] };
-      return { str: textItem.str, x: textItem.transform[4], y: Math.round(textItem.transform[5]) };
-    });
-    allLines.push(...reconstructPageText(items));
-    page.cleanup();
+    for (let i = 1; i <= pageCount; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      const items: PositionedItem[] = content.items.map((item) => {
+        const textItem = item as { str: string; transform: number[] };
+        return { str: textItem.str, x: textItem.transform[4], y: Math.round(textItem.transform[5]) };
+      });
+      allLines.push(...reconstructPageText(items));
+      page.cleanup();
+    }
+    return allLines.join("\n");
+  } finally {
+    // En pdfjs 6 se libera desde la tarea de carga (también si la lectura falla).
+    await loadingTask.destroy();
   }
-
-  await doc.destroy();
-  return allLines.join("\n");
 }
