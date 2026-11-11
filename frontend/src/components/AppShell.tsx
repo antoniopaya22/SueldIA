@@ -52,6 +52,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { TransactionFormDialog } from "@/components/finance-manage/transactions/TransactionFormDialog";
 import type { TxForm } from "@/components/finance-manage/transactions/TransactionDialog";
 import { appQueryClient } from "@/lib/query-client";
+import { installGlobalErrorReporting } from "@/lib/error-reporting";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { NEW_TRANSACTION_EVENT, openNewTransaction, type NewTransactionType } from "@/lib/new-transaction";
 import {
   HOME_ITEM,
@@ -488,7 +490,18 @@ interface AppShellProps {
   children?: React.ReactNode;
 }
 
-export function AppShell({ currentPath, children }: AppShellProps) {
+// El shell está en todas las páginas de /app: si falla, se ve el aviso de
+// ErrorBoundary en vez de una página en blanco, y el error llega a los logs.
+export function AppShell(props: AppShellProps) {
+  React.useEffect(() => installGlobalErrorReporting(), []);
+  return (
+    <ErrorBoundary>
+      <AppShellInner {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function AppShellInner({ currentPath, children }: AppShellProps) {
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [searchOpen, setSearchOpen] = React.useState(false);
   // Nueva transacción global: el diálogo se monta la primera vez que se pide
