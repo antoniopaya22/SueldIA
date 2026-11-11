@@ -6,39 +6,59 @@ applyTo: 'frontend/src/components/**'
 
 # Patrones React — Frontend
 
+Fuente de verdad: [`frontend/AGENTS.md`](../../frontend/AGENTS.md). Referencias reales: `HomeDashboardPage.tsx`, `DashboardPage.tsx`.
+
 ## Estructura de Componente de Página
 
 Cada componente de página tiene dos partes:
 
 ### 1. Inner View (named function)
-Contiene toda la lógica, data fetching y UI:
+Contiene toda la lógica, data fetching y UI, construida con el sistema de diseño de `./app`:
 ```tsx
-function NombreView() {
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { AlertTriangle, Users } from 'lucide-react';
+import { getProfiles, createProfile } from '../lib/api';
+import { PageHeader, SectionCard, PageHeaderSkeleton, ListCardSkeleton } from './app';
+import { EmptyState } from './ui/EmptyState';
+
+function ProfilesView() {
   const queryClient = useQueryClient();
-  const { data, isLoading, error } = useQuery({ queryKey: ['key'], queryFn: apiFn });
+  const { data, isLoading, error } = useQuery({ queryKey: ['profiles'], queryFn: getProfiles });
 
   const mutation = useMutation({
-    mutationFn: apiMutationFn,
+    mutationFn: createProfile,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['key'] });
-      toast.success('Operación exitosa');
+      queryClient.invalidateQueries({ queryKey: ['profiles'] });
+      toast.success('Perfil creado');
     },
-    onError: () => toast.error('Error en la operación'),
+    onError: (err: Error) => toast.error(err.message || 'No se pudo crear el perfil'),
   });
 
-  if (isLoading) return <LoadingSkeleton />;
-  if (error) return <ErrorState message="Error al cargar datos" />;
+  if (isLoading) return <><PageHeaderSkeleton /><ListCardSkeleton /></>;
+  if (error) {
+    return <EmptyState icon={AlertTriangle} title="No se pudieron cargar los perfiles" description="Vuelve a intentarlo en unos segundos." />;
+  }
 
-  return (/* JSX */);
+  return (
+    <div>
+      <PageHeader title="Perfiles" description="Personas cuyas nóminas gestionas." />
+      {data?.length ? (
+        <SectionCard className="mt-6" title="Todos">{/* lista */}</SectionCard>
+      ) : (
+        <EmptyState icon={Users} title="Aún no hay perfiles" description="Crea uno para empezar a subir nóminas." />
+      )}
+    </div>
+  );
 }
 ```
 
 ### 2. Default Export (wrapper con Providers)
 ```tsx
-export default function NombrePage() {
+export default function ProfilesPage() {
   return (
     <Providers>
-      <NombreView />
+      <ProfilesView />
     </Providers>
   );
 }
@@ -57,43 +77,45 @@ export default function NombrePage() {
 
 Toda vista que carga datos DEBE manejar estos 3 estados:
 
-1. **Loading**: skeleton o spinner (usar clase `.skeleton`)
-2. **Error**: mensaje claro en español con opción de reintentar si aplica
-3. **Empty**: mensaje cuando no hay datos ("No hay nóminas subidas")
+1. **Loading**: skeletons de `./app` (`PageHeaderSkeleton`, `StatCardSkeleton`, `ChartCardSkeleton`, `ListCardSkeleton`) con la misma geometría que lo real
+2. **Error**: `EmptyState` (o mensaje) claro en español, con opción de reintentar si aplica
+3. **Empty**: `EmptyState` con CTA cuando no hay datos ("Sube tu primera nómina")
 
 ## Toast Notifications
 
+Con `sonner` (el `<Toaster />` ya está en `Providers`). No existe `useToast`/`ToastProvider`:
+
 ```tsx
-const toast = useToast();
-// Éxito
+import { toast } from 'sonner';
+
 toast.success('Nómina subida correctamente');
-// Error
-toast.error('Error al procesar la nómina');
-// Info
+toast.error('No se pudo procesar la nómina');
 toast.info('Procesando archivos...');
 ```
 
 ## Estilado
 
-- Tailwind utility-first: no crear CSS custom para layouts simples
-- Usar clases de componente cuando existan: `.card`, `.btn-primary`, `.input`, `.badge`
-- Responsive: mobile-first (`sm:`, `md:`, `lg:`)
-- Espaciado consistente: `space-y-4`, `space-y-6`, `gap-4`, `gap-6`
-- Dark mode: usar clases `dark:` para colores que cambien en modo oscuro
+- Componentes de `@/components/ui/*` (shadcn sobre **Base UI**: polimorfismo con la prop `render`, no `asChild`; para un enlace con pinta de botón, `buttonVariants({...})` sobre `<a>`)
+- Tokens semánticos que se adaptan solos a dark mode: `bg-card`, `text-muted-foreground`, `border-border`, `bg-primary`… Nada de colores hex sueltos ni azul fijo
+- Clases heredadas (`.card`, `.btn-primary`, `.input`, `.badge`, `.skeleton`) solo en páginas que ya las usan
+- Importes con `tabular-nums`; formateo con `lib/format.ts` (`formatCurrency`, `formatPct`…), nunca `toFixed` para mostrar
+- Gráficas con `chart-theme.ts` (`chartGrid`, `chartAxis`, `chartColors`…); colores elegidos por el usuario vía `lib/color.ts` (`adaptiveColor`)
+- Responsive: mobile-first (`sm:`, `md:`, `lg:`); lo fijo abajo suma `var(--mobile-nav-h)`
+- **CSP**: nada de manejadores en línea en HTML/Astro (`onclick="…"`); en React, `onClick={...}` es correcto
 
 ## Iconos
 
 Importar individualmente desde `lucide-react`:
 ```tsx
-import { Upload, Trash2, Edit, Plus, Search, Filter } from 'lucide-react';
+import { Upload, Trash2, Pencil, Plus, Search, Filter } from 'lucide-react';
 // Uso: <Upload className="h-5 w-5" />
 ```
 
 ## Auth
 
-Acceder al estado de autenticación:
+Acceder al estado de autenticación (sesión de Supabase, login con Google):
 ```tsx
-const { user, logout } = useAuth();
+const { user, loading, logout } = useAuth();
 ```
 
-No implementar guardias de ruta en componentes — la protección es a nivel API (401 → redirect automático).
+No implementar guardias de ruta en componentes — la protección es a nivel API (401 → `signOut()` + redirect a `/login` automático desde `lib/api.ts`).

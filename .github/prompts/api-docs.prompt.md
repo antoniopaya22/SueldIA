@@ -79,5 +79,6 @@ El usuario puede especificar:
 - Documentar **solo lo que el código realmente hace** — no inventar funcionalidad
 - Incluir ejemplos realistas basados en el schema de la base de datos
 - Si un endpoint lee query params, documentar todos los filtros soportados
-- Para endpoints de upload, documentar el formato multipart/form-data
+- Para endpoints de upload, documentar el formato multipart/form-data (campo `files`, solo PDF, ~4 MB por petición; el archivo se procesa en memoria y no se guarda)
+- Autenticación: `Authorization: Bearer <access_token de Supabase>`; las rutas sin `authMiddleware` en `backend/src/index.ts` son públicas (`/api/cron` va con `CRON_SECRET`)
 - Mensajes de error en español (así están en el código)

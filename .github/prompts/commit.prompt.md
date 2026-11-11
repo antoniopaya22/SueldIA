@@ -18,7 +18,7 @@ Analiza los cambios staged en git y genera un mensaje de commit siguiendo Conven
 2. Ejecuta `git diff --cached` para ver los cambios detallados
 3. Analiza los cambios y determina:
    - **Tipo**: `feat` (nueva feature), `fix` (bug fix), `refactor` (reorganización), `docs` (documentación), `chore` (mantenimiento), `test` (tests), `style` (formato), `perf` (performance)
-   - **Scope**: `backend`, `frontend`, `db`, `parsers`, `auth`, `api`, `ui`, `docker`, `deps`
+   - **Scope**: `backend`, `frontend`, `db`, `parsers`, `auth`, `api`, `ui`, `deps` (los de `AGENTS.md`)
    - **Descripción**: resumen breve en **español**
 4. Si los cambios son complejos, incluye un cuerpo con más detalle
 

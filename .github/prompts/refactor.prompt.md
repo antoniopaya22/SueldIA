@@ -33,10 +33,12 @@ Analiza el código proporcionado o el archivo actual y propone refactorings que 
 
 ### Patrones del Proyecto
 - Backend: ¿sigue el patrón de handler async + try/catch + next(err)?
-- Backend: ¿usa Zod para validación?
+- Backend: ¿usa Zod para validación, con los helpers compartidos (`isoDateSchema`, `moneySchema`, `toCsv`, `assertUnderLimit`) en vez de reimplementarlos?
+- Backend: ¿queries Drizzle asíncronas (`const [row] = await ...`, `.returning()`) y filtradas por `userId`?
 - Frontend: ¿usa React Query para data fetching (no useEffect+fetch)?
 - Frontend: ¿maneja loading/error/empty states?
 - Frontend: ¿envuelve con Providers?
+- Frontend: ¿usa el sistema de diseño de `components/app/` y los componentes de `components/ui/` en vez de markup suelto?
 
 ### TypeScript
 - `any` → reemplazar con tipo específico o `unknown`
@@ -56,7 +58,7 @@ Analiza el código proporcionado o el archivo actual y propone refactorings que 
 3. **Priorizar** por impacto (legibilidad > performance > estilo)
 4. **Presentar** los cambios propuestos con justificación
 5. **Implementar** los cambios aprobados
-6. **Verificar** que compila: `npm run build`
+6. **Verificar** que compila y pasa las pruebas: `npm run build`, `npm run typecheck`, `npm test`
 
 ## Formato de Propuesta
 

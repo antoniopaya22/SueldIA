@@ -32,10 +32,11 @@ applyTo: '**/*.ts,**/*.tsx'
 ## Exports
 - **Named exports** por defecto en todo el proyecto
 - **Default exports** solo para componentes React de página (el wrapper con Providers)
-- Un archivo = un dominio cohesivo. No crear archivos barrel (`index.ts` que solo re-exportan)
+- Un archivo = un dominio cohesivo. No crear archivos barrel nuevos (`index.ts` que solo re-exportan); la excepción existente es `frontend/src/components/app/index.ts` (sistema de diseño)
 
 ## Error Handling
-- Backend: `try/catch` + `next(err)` en handlers async
+- Backend: `try/catch` + `next(err)` en handlers async; errores operacionales con `AppError` (`middleware/error-handler.ts`)
+- Backend: las queries de Drizzle (`postgres-js`) son asíncronas — siempre `await`, y desestructurar la fila: `const [row] = await db.select()...`
 - Frontend: React Query maneja errores automáticamente vía `error` state
 - Nunca silenciar errores con `catch` vacíos
 - Usar tipos discriminados para resultados: `{ success: true, data } | { success: false, error }`
@@ -44,3 +45,5 @@ applyTo: '**/*.ts,**/*.tsx'
 - Definir schemas junto a la ruta que los usa (no en archivo separado)
 - Usar `.safeParse()` para inputs del usuario (devuelve resultado, no lanza excepción)
 - Schemas reutilizables: exportar solo si se usan en más de un lugar
+- Reutilizar los compartidos en vez de redefinirlos: `isoDateSchema`/`monthKeySchema` (`backend/src/utils/dates.ts`), `moneySchema`/`positiveMoneySchema`/`idSchema` (`backend/src/utils/validation.ts`)
+- Variables de entorno solo vía `backend/src/config.ts` (validadas con Zod) — nunca `process.env` suelto en el código de la app (salvo las variables de plataforma `VERCEL`/`VERCEL_ENV`)

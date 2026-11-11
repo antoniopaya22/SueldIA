@@ -34,19 +34,20 @@ Si faltan, crearlas siguiendo el patrón existente.
 
 ### 2. Crear componente React
 
-Crear `frontend/src/components/NombrePage.tsx`:
+Crear `frontend/src/components/NombrePage.tsx` con el sistema de diseño de `./app` (referencia: `HomeDashboardPage.tsx`, `DashboardPage.tsx`):
 
 ```tsx
-import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { /* funciones API */ } from '../lib/api';
+import { toast } from 'sonner';
+import { AlertTriangle, Inbox, Plus } from 'lucide-react';
+import { getNombres, createNombre } from '../lib/api';
 import { Providers } from './Providers';
-import { useToast } from './Toast';
-import { /* iconos */ } from 'lucide-react';
+import { PageHeader, SectionCard, PageHeaderSkeleton, ListCardSkeleton } from './app';
+import { EmptyState } from './ui/EmptyState';
+import { Button } from '@/components/ui/button';
 
 function NombreView() {
   const queryClient = useQueryClient();
-  const toast = useToast();
 
   // Queries
   const { data, isLoading, error } = useQuery({
@@ -61,41 +62,49 @@ function NombreView() {
       queryClient.invalidateQueries({ queryKey: ['nombre'] });
       toast.success('Elemento creado correctamente');
     },
-    onError: () => toast.error('Error al crear elemento'),
+    onError: (err: Error) => toast.error(err.message || 'No se pudo crear el elemento'),
   });
 
-  // Loading state
+  // Loading state (misma geometría que lo real)
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <div className="skeleton h-8 w-48" />
-        <div className="skeleton h-32 w-full" />
-      </div>
+      <>
+        <PageHeaderSkeleton />
+        <ListCardSkeleton />
+      </>
     );
   }
 
   // Error state
   if (error) {
     return (
-      <div className="card p-8 text-center">
-        <p className="text-danger-400">Error al cargar los datos</p>
-      </div>
-    );
-  }
-
-  // Empty state
-  if (!data?.length) {
-    return (
-      <div className="card p-8 text-center">
-        <p className="text-surface-400">No hay elementos todavía</p>
-      </div>
+      <EmptyState
+        icon={AlertTriangle}
+        title="No se pudieron cargar los datos"
+        description="Vuelve a intentarlo en unos segundos."
+      />
     );
   }
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Título</h1>
-      {/* Contenido */}
+    <div>
+      <PageHeader
+        title="Título"
+        description="Qué ves en esta página."
+        actions={
+          <Button onClick={() => createMutation.mutate({ name: 'Nuevo' })} disabled={createMutation.isPending}>
+            <Plus className="h-4 w-4" /> Nuevo
+          </Button>
+        }
+      />
+      {data?.length ? (
+        <SectionCard className="mt-6" title="Bloque">
+          {/* Contenido */}
+        </SectionCard>
+      ) : (
+        // Empty state
+        <EmptyState icon={Inbox} title="No hay elementos todavía" description="Crea el primero para empezar." />
+      )}
     </div>
   );
 }
@@ -111,23 +120,25 @@ export default function NombrePage() {
 
 ### 3. Crear página Astro
 
-Crear `frontend/src/pages/nombre.astro`:
+Las páginas de la aplicación van siempre bajo `/app`. Crear `frontend/src/pages/app/nombre.astro`:
 
 ```astro
 ---
-import Layout from '../layouts/Layout.astro';
-import NombrePage from '../components/NombrePage.tsx';
+import Layout from '../../layouts/Layout.astro';
+import NombrePage from '../../components/NombrePage.tsx';
 ---
 <Layout title="Título de Página">
   <NombrePage client:load />
 </Layout>
 ```
 
+No añadir `<script>` con manejadores en línea (`onclick="…"`): la CSP con hashes (`frontend/scripts/csp.mjs`) hace fallar el build.
+
 ### 4. Actualizar navegación (si aplica)
 
-Si la nueva página necesita aparecer en el menú, actualizar la lista de links en `frontend/src/layouts/Layout.astro`.
+Si la nueva página necesita aparecer en el menú, añadirla en `frontend/src/components/app/navigation.ts` (única fuente de verdad: aparece sola en sidebar, breadcrumbs y ⌘K). Enlaces internos siempre con `/app/...`.
 
 ## Verificación Final
 
-1. Compilar frontend: `npm run build --workspace=frontend`
-2. Verificar que la página carga correctamente en dev
+1. Compilar frontend: `npm run build --workspace=frontend` (incluye la CSP)
+2. Verificar que la página carga correctamente en dev, en claro y oscuro, y en móvil
