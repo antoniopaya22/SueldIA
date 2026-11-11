@@ -872,6 +872,7 @@ function TransactionsView() {
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {visibleRecurringRules.map((rule) => (
                   <RecurringRuleCard
+                    accountName={(id) => accounts.find((acc) => acc.id === id)?.name}
                     key={rule.id}
                     rule={rule}
                     onEdit={() => recurring.openEdit(rule)}

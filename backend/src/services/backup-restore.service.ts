@@ -116,7 +116,8 @@ const recurringRow = z.object({
   id,
   accountId: id,
   categoryId: id.nullable(),
-  type: z.enum(["expense", "income"]),
+  type: z.enum(["expense", "income", "transfer"]),
+  targetAccountId: id.nullable().optional(),
   amount: moneySchema,
   cadence: z.enum(["weekly", "monthly", "yearly"]),
   intervalCount: z.number().int().min(1).max(365),
@@ -242,7 +243,9 @@ function checkReferences(b: Backup): void {
   if (b.payslipTags.some((t) => !payslips.has(t.payslipId) || !tags.has(t.tagId))) fail("etiquetas de nómina sueltas");
   if (b.categories.some((c) => !groups.has(c.groupId))) fail("una categoría sin su grupo");
   if (b.transactions.some((t) => !accounts.has(t.accountId))) fail("movimientos sin su cuenta");
-  if (b.recurringTransactions.some((r) => !accounts.has(r.accountId))) fail("recurrentes sin su cuenta");
+  if (b.recurringTransactions.some((r) => !accounts.has(r.accountId) || (r.targetAccountId != null && !accounts.has(r.targetAccountId)))) {
+    fail("recurrentes sin su cuenta");
+  }
   const recurring = ids(b.recurringTransactions);
   if (b.recurringSkips.some((k) => !recurring.has(k.recurringTransactionId))) fail("ocurrencias saltadas sin su recurrente");
   if ([...b.budgets, ...b.categoryTargets, ...b.categoryRules].some((r) => !categories.has(r.categoryId))) {
@@ -393,6 +396,7 @@ export async function restoreBackup(userId: number, b: Backup): Promise<BackupCo
       await insertChunked(tx, s.categories, b.categories.map((c) => ({ ...c, id: must(categories, c.id), groupId: must(groups, c.groupId) })));
       await insertChunked(tx, s.recurringTransactions, b.recurringTransactions.map((r) => ({
         ...r, id: must(recurring, r.id), userId, accountId: must(accounts, r.accountId), categoryId: pick(categories, r.categoryId),
+        targetAccountId: pick(accounts, r.targetAccountId),
       })));
       await insertChunked(tx, s.recurringSkips, b.recurringSkips.map((k) => ({ recurringTransactionId: must(recurring, k.recurringTransactionId), scheduledFor: k.scheduledFor })));
       await insertChunked(tx, s.transactions, b.transactions.map((t) => ({

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { flagSchema } from "../utils/flags.js";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getSubscriptionSuggestions } from "../services/subscriptions.service.js";
 import { validateIdParam } from "../middleware/params.js";
@@ -33,7 +33,9 @@ const recurringTransactionSchema = z
   .object({
     accountId: z.number().int().positive("Cuenta requerida"),
     categoryId: z.number().int().positive().nullish(),
-    type: z.enum(["expense", "income"]),
+    type: z.enum(["expense", "income", "transfer"]),
+    // Traspasos: la cuenta que recibe.
+    targetAccountId: z.number().int().positive().nullish(),
     amount: positiveMoneySchema("Importe debe ser positivo"),
     cadence: z.enum(["weekly", "monthly", "yearly"]),
     intervalCount: z.number().int().min(1).max(12).default(1),
@@ -46,6 +48,10 @@ const recurringTransactionSchema = z
     // Solo al crear con una fecha de inicio pasada: false = no generar las
     // ocurrencias anteriores a hoy («desde hoy»). Por compatibilidad, true.
     backfill: z.boolean().default(true),
+  })
+  .refine((v) => v.type !== "transfer" || (v.targetAccountId != null && v.targetAccountId !== v.accountId), {
+    message: "Elige la cuenta que recibe el traspaso (distinta de la de origen)",
+    path: ["targetAccountId"],
   })
   .refine(
     (value) => !value.endDate || value.endDate >= value.startDate,
@@ -85,6 +91,7 @@ recurringTransactionsRouter.get("/", async (req, res, next) => {
         categoryName: sql<string>`coalesce(${categories.name}, '')`,
         groupName: sql<string>`coalesce(${categoryGroups.name}, '')`,
         type: recurringTransactions.type,
+        targetAccountId: recurringTransactions.targetAccountId,
         amount: recurringTransactions.amount,
         cadence: recurringTransactions.cadence,
         intervalCount: recurringTransactions.intervalCount,
@@ -166,6 +173,15 @@ recurringTransactionsRouter.post("/", async (req, res, next) => {
       }
     }
 
+    const isTransfer = parsed.data.type === "transfer";
+    if (isTransfer) {
+      const [target] = await db
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(and(eq(accounts.id, parsed.data.targetAccountId!), eq(accounts.userId, userId)));
+      if (!target) return res.status(404).json({ error: "Cuenta de destino no encontrada" });
+    }
+
     // Crear la regla y generar sus ocurrencias es una sola unidad: si la
     // generación falla, no debe quedar guardada una regla activa a medias
     // (que luego el cron diario volvería a intentar cada día).
@@ -175,7 +191,9 @@ recurringTransactionsRouter.post("/", async (req, res, next) => {
         .values({
           userId,
           accountId: parsed.data.accountId,
-          categoryId: parsed.data.categoryId ?? null,
+          // Un traspaso no tiene categoría; un gasto o ingreso no tiene cuenta de destino.
+          categoryId: isTransfer ? null : parsed.data.categoryId ?? null,
+          targetAccountId: isTransfer ? parsed.data.targetAccountId! : null,
           type: parsed.data.type,
           amount: parsed.data.amount,
           cadence: parsed.data.cadence,
@@ -220,7 +238,7 @@ recurringTransactionsRouter.post("/skip-occurrence", async (req, res, next) => {
     const parsed = skipSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
     const [tx] = await db
-      .select({ id: transactions.id, ruleId: transactions.recurringTransactionId, scheduledFor: transactions.scheduledFor, cleared: transactions.cleared })
+      .select({ id: transactions.id, ruleId: transactions.recurringTransactionId, scheduledFor: transactions.scheduledFor, cleared: transactions.cleared, transferId: transactions.transferId })
       .from(transactions)
       .where(and(eq(transactions.id, parsed.data.transactionId), eq(transactions.userId, userId)));
     if (!tx || tx.ruleId == null || tx.scheduledFor == null) {
@@ -229,7 +247,9 @@ recurringTransactionsRouter.post("/skip-occurrence", async (req, res, next) => {
     if (tx.cleared) return res.status(409).json({ error: "Ya está liquidado: si no ocurrió, márcalo como pendiente primero" });
     await db.transaction(async (dbTx) => {
       await dbTx.insert(recurringSkips).values({ recurringTransactionId: tx.ruleId!, scheduledFor: tx.scheduledFor! }).onConflictDoNothing();
-      await dbTx.delete(transactions).where(and(eq(transactions.id, tx.id), eq(transactions.userId, userId)));
+      // Con la otra pata si es un traspaso.
+      const ids = tx.transferId ? [tx.id, tx.transferId] : [tx.id];
+      await dbTx.delete(transactions).where(and(inArray(transactions.id, ids), eq(transactions.userId, userId)));
     });
     res.json({ ok: true });
   } catch (err) {
@@ -272,6 +292,15 @@ recurringTransactionsRouter.put("/:id", async (req, res, next) => {
       }
     }
 
+    const isTransfer = parsed.data.type === "transfer";
+    if (isTransfer) {
+      const [target] = await db
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(and(eq(accounts.id, parsed.data.targetAccountId!), eq(accounts.userId, userId)));
+      if (!target) return res.status(404).json({ error: "Cuenta de destino no encontrada" });
+    }
+
     // Cambiar la regla y regenerar sus ocurrencias futuras es una sola
     // unidad: a medias, se quedarían ocurrencias pendientes que ya no
     // corresponden a la regla nueva.
@@ -280,7 +309,9 @@ recurringTransactionsRouter.put("/:id", async (req, res, next) => {
         .update(recurringTransactions)
         .set({
           accountId: parsed.data.accountId,
-          categoryId: parsed.data.categoryId ?? null,
+          // Un traspaso no tiene categoría; un gasto o ingreso no tiene cuenta de destino.
+          categoryId: isTransfer ? null : parsed.data.categoryId ?? null,
+          targetAccountId: isTransfer ? parsed.data.targetAccountId! : null,
           type: parsed.data.type,
           amount: parsed.data.amount,
           cadence: parsed.data.cadence,

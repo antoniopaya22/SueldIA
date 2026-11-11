@@ -169,6 +169,13 @@
       "when": 1794407230205,
       "tag": "0023_recurring_skips",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794407660555,
+      "tag": "0024_recurring_transfers",
+      "breakpoints": true
     }
   ]
 }

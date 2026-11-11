@@ -1,0 +1,2 @@
+ALTER TABLE "recurring_transactions" ADD COLUMN "target_account_id" integer;--> statement-breakpoint
+ALTER TABLE "recurring_transactions" ADD CONSTRAINT "recurring_transactions_target_account_id_accounts_id_fk" FOREIGN KEY ("target_account_id") REFERENCES "public"."accounts"("id") ON DELETE cascade ON UPDATE no action;

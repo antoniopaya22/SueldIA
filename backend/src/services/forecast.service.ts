@@ -154,6 +154,8 @@ export async function getForecast(userId: number, days = 90): Promise<Forecast> 
   }));
 
   for (const { rule } of rules) {
+    // Un traspaso entre cuentas propias no cambia el saldo total.
+    if (rule.type === "transfer") continue;
     const dates = listOccurrenceDates(
       { startDate: rule.startDate, endDate: rule.endDate, cadence: rule.cadence, intervalCount: rule.intervalCount },
       horizon,

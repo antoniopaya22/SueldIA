@@ -942,7 +942,9 @@ export interface RecurringTransaction {
   categoryId: number | null;
   categoryName: string;
   groupName: string;
-  type: "expense" | "income";
+  type: "expense" | "income" | "transfer";
+  /** Traspasos: la cuenta que recibe. */
+  targetAccountId?: number | null;
   amount: number;
   cadence: RecurringCadence;
   intervalCount: number;
@@ -972,7 +974,8 @@ export const getRecurringTransactions = () =>
 export const createRecurringTransaction = (data: {
   accountId: number;
   categoryId?: number | null;
-  type: "expense" | "income";
+  type: "expense" | "income" | "transfer";
+  targetAccountId?: number | null;
   amount: number;
   cadence: RecurringCadence;
   intervalCount?: number;
@@ -1006,7 +1009,8 @@ export const updateRecurringTransaction = (
   data: {
     accountId: number;
     categoryId?: number | null;
-    type: "expense" | "income";
+    type: "expense" | "income" | "transfer";
+    targetAccountId?: number | null;
     amount: number;
     cadence: RecurringCadence;
     intervalCount?: number;

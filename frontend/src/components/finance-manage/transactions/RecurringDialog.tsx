@@ -12,8 +12,10 @@ import {
 import { AccountSelect, CategorySelect, CADENCE_LABELS, TypeToggle, amountInputClass, formatCadence, getTodayIsoDate } from "./shared";
 
 export interface RecurringForm {
-  type: "expense" | "income";
+  type: "expense" | "income" | "transfer";
   accountId: number | "";
+  /** Traspasos: la cuenta que recibe. */
+  targetAccountId?: number | "";
   categoryId: number | "";
   amount: string;
   cadence: RecurringCadence;
@@ -40,7 +42,7 @@ interface Props {
   onSubmit: () => void;
 }
 
-const TYPES = ["expense", "income"] as const;
+const TYPES = ["expense", "income", "transfer"] as const;
 const UNIT: Record<RecurringCadence, [string, string]> = {
   weekly: ["semana", "semanas"],
   monthly: ["mes", "meses"],
@@ -82,17 +84,34 @@ export function RecurringDialog({ open, editing, form, setForm, accounts, groups
                 </div>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="rec-payee">Beneficiario</Label>
-                <Input id="rec-payee" value={form.payee} onChange={(e) => setForm({ ...form, payee: e.target.value })} placeholder="Ej: Alquiler o Nómina" />
+                <Label htmlFor="rec-payee">{form.type === "transfer" ? "Concepto" : "Beneficiario"}</Label>
+                <Input
+                  id="rec-payee"
+                  value={form.payee}
+                  onChange={(e) => setForm({ ...form, payee: e.target.value })}
+                  placeholder={form.type === "transfer" ? "Opcional: «Ahorro del mes»…" : "Ej: Alquiler o Nómina"}
+                />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="rec-account">Cuenta</Label>
+                <Label htmlFor="rec-account">{form.type === "transfer" ? "Desde la cuenta" : "Cuenta"}</Label>
                 <AccountSelect id="rec-account" value={form.accountId} onChange={(v) => setForm({ ...form, accountId: v })} accounts={accounts} />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="rec-category">Categoría</Label>
-                <CategorySelect id="rec-category" value={form.categoryId} onChange={(v) => setForm({ ...form, categoryId: v })} groups={groups} />
-              </div>
+              {form.type === "transfer" ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="rec-target">A la cuenta</Label>
+                  <AccountSelect
+                    id="rec-target"
+                    value={form.targetAccountId ?? ""}
+                    onChange={(v) => setForm({ ...form, targetAccountId: v })}
+                    accounts={accounts.filter((a) => a.id !== form.accountId)}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label htmlFor="rec-category">Categoría</Label>
+                  <CategorySelect id="rec-category" value={form.categoryId} onChange={(v) => setForm({ ...form, categoryId: v })} groups={groups} />
+                </div>
+              )}
             </div>
 
             <fieldset className="space-y-3 rounded-xl border border-border bg-muted/30 p-4">

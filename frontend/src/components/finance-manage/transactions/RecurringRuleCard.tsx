@@ -12,9 +12,10 @@ interface Props {
   onDelete: () => void;
 }
 
-export function RecurringRuleCard({ rule, onEdit, onToggleActive, onDelete }: Props) {
+export function RecurringRuleCard({ rule, onEdit, onToggleActive, onDelete, accountName }: Props & { accountName?: (id: number) => string | undefined }) {
   const meta = TYPE_META[rule.type];
   const isIncome = rule.type === "income";
+  const isTransfer = rule.type === "transfer";
   return (
     <article
       className={cn(
@@ -29,7 +30,7 @@ export function RecurringRuleCard({ rule, onEdit, onToggleActive, onDelete }: Pr
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h3 className={cn("truncate text-sm font-semibold", rule.active ? "text-foreground" : "text-muted-foreground")}>
-              {rule.payee || (isIncome ? "Ingreso recurrente" : "Pago recurrente")}
+              {rule.payee || (isTransfer ? "Traspaso recurrente" : isIncome ? "Ingreso recurrente" : "Pago recurrente")}
             </h3>
             {!rule.active && (
               <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Pausada</span>
@@ -37,7 +38,9 @@ export function RecurringRuleCard({ rule, onEdit, onToggleActive, onDelete }: Pr
           </div>
           <p className="truncate text-xs text-muted-foreground">
             {rule.accountName}
-            {rule.categoryName ? ` · ${rule.categoryName}` : ""}
+            {isTransfer
+              ? ` → ${(rule.targetAccountId && accountName?.(rule.targetAccountId)) || "otra cuenta"}`
+              : rule.categoryName ? ` · ${rule.categoryName}` : ""}
           </p>
         </div>
         <RowActions
@@ -51,7 +54,7 @@ export function RecurringRuleCard({ rule, onEdit, onToggleActive, onDelete }: Pr
       </div>
 
       <p className={cn("mt-4 text-xl font-semibold tracking-tight tabular-nums", isIncome ? TYPE_META.income.text : "text-foreground", !rule.active && "text-muted-foreground")}>
-        {isIncome ? "+" : "−"}{formatCurrency(rule.amount)}
+        {isTransfer ? "" : isIncome ? "+" : "−"}{formatCurrency(rule.amount)}
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">

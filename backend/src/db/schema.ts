@@ -369,8 +369,10 @@ export const recurringTransactions = pgTable(
       onDelete: "set null",
     }),
     type: text("type", {
-      enum: ["expense", "income"],
+      enum: ["expense", "income", "transfer"],
     }).notNull(),
+    // Solo en los traspasos recurrentes: la cuenta que recibe el dinero.
+    targetAccountId: integer("target_account_id").references(() => accounts.id, { onDelete: "cascade" }),
     amount: doublePrecision("amount").notNull(),
     cadence: text("cadence", {
       enum: ["weekly", "monthly", "yearly"],

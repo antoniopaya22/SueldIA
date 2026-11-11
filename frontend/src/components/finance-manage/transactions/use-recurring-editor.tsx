@@ -66,7 +66,7 @@ export function useRecurringEditor({ today, selectedAccountId, accounts, categor
 
   const createMut = useMutation({
     mutationFn: createRecurringTransaction,
-    onSuccess: () => { invalidate(); close(); toast.success("Pago recurrente programado"); },
+    onSuccess: (_, vars) => { invalidate(); close(); toast.success(vars.type === "transfer" ? "Traspaso recurrente programado" : "Pago recurrente programado"); },
     onError: (e: Error) => toast.error(e.message),
   });
   const updateMut = useMutation({
@@ -91,6 +91,7 @@ export function useRecurringEditor({ today, selectedAccountId, accounts, categor
     openWith({
       type: rule.type,
       accountId: rule.accountId,
+      targetAccountId: rule.targetAccountId ?? "",
       categoryId: rule.categoryId ?? "",
       amount: rule.amount.toFixed(2),
       cadence: rule.cadence,
@@ -141,9 +142,14 @@ export function useRecurringEditor({ today, selectedAccountId, accounts, categor
       toast.error("Selecciona una cuenta e importe");
       return;
     }
+    if (form.type === "transfer" && (!form.targetAccountId || form.targetAccountId === Number(accountId))) {
+      toast.error("Elige la cuenta que recibe el traspaso");
+      return;
+    }
     const payload = {
       accountId: Number(accountId),
-      categoryId: form.categoryId ? Number(form.categoryId) : null,
+      categoryId: form.type === "transfer" ? null : form.categoryId ? Number(form.categoryId) : null,
+      targetAccountId: form.type === "transfer" ? Number(form.targetAccountId) : null,
       type: form.type,
       amount: Number(form.amount),
       cadence: form.cadence,
