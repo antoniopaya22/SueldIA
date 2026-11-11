@@ -628,8 +628,23 @@ export const createCategoryGroup = (data: { name: string; icon?: string | null }
 export const updateCategoryGroup = (id: number, data: { name: string; icon?: string | null }) =>
   request<CategoryGroup>(`/categories/groups/${id}`, { method: "PUT", body: JSON.stringify(data) });
 
-export const deleteCategoryGroup = (id: number) =>
-  request<{ ok: boolean }>(`/categories/groups/${id}`, { method: "DELETE" });
+/** Lo que se vería afectado al borrar una categoría o un grupo. */
+export interface CategoryUsage {
+  transactions: number;
+  recurring: number;
+  budgetMonths: number;
+  rules: number;
+  targets: number;
+  /** Solo para grupos: número de categorías que contiene. */
+  categories?: number;
+}
+
+export const getCategoryGroupUsage = (id: number) => request<CategoryUsage>(`/categories/groups/${id}/usage`);
+export const getCategoryUsage = (id: number) => request<CategoryUsage>(`/categories/${id}/usage`);
+
+/** Con `reassignTo`, mueve antes movimientos, recurrentes, reglas y presupuesto a esa categoría. */
+export const deleteCategoryGroup = (id: number, reassignTo?: number) =>
+  request<{ ok: boolean }>(`/categories/groups/${id}${reassignTo ? `?reassignTo=${reassignTo}` : ""}`, { method: "DELETE" });
 
 export const createCategory = (data: { groupId: number; name: string }) =>
   request<Category>("/categories", { method: "POST", body: JSON.stringify(data) });
@@ -637,8 +652,8 @@ export const createCategory = (data: { groupId: number; name: string }) =>
 export const updateCategory = (id: number, data: { name?: string; groupId?: number }) =>
   request<Category>(`/categories/${id}`, { method: "PUT", body: JSON.stringify(data) });
 
-export const deleteCategory = (id: number) =>
-  request<{ ok: boolean }>(`/categories/${id}`, { method: "DELETE" });
+export const deleteCategory = (id: number, reassignTo?: number) =>
+  request<{ ok: boolean }>(`/categories/${id}${reassignTo ? `?reassignTo=${reassignTo}` : ""}`, { method: "DELETE" });
 
 // ─── Transactions ───────────────────────────────────────────────
 export interface Transaction {

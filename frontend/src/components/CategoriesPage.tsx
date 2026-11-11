@@ -8,7 +8,7 @@ import { CategoryRulesCard } from "./categories/CategoryRulesCard";
 import { useSeedDefaultCategories } from "./categories/useSeedDefaultCategories";
 import { Providers } from "./Providers";
 import { toast } from "sonner";
-import { ConfirmModal } from "./ui/ConfirmModal";
+import { DeleteCategoryDialog } from "./categories/DeleteCategoryDialog";
 import { EmptyState } from "./ui/EmptyState";
 import {
   PageHeader, StatCard, StatGrid, PageHeaderSkeleton, StatCardSkeleton,
@@ -26,8 +26,8 @@ import {
 } from "@/components/ui/select";
 import {
   getCategories, getFinanceAnalytics,
-  createCategoryGroup, updateCategoryGroup, deleteCategoryGroup,
-  createCategory, updateCategory, deleteCategory,
+  createCategoryGroup, updateCategoryGroup,
+  createCategory, updateCategory,
   type CategoryGroup, type Category,
 } from "../lib/api";
 import { formatCurrency } from "../lib/format";
@@ -277,12 +277,6 @@ function CategoriesView() {
     onError: () => toast.error("Error al actualizar grupo"),
   });
 
-  const deleteGroupMut = useMutation({
-    mutationFn: (id: number) => deleteCategoryGroup(id),
-    onSuccess: () => { invalidate(); toast.success("Grupo eliminado"); },
-    onError: () => toast.error("Error al eliminar grupo (puede tener categorías con transacciones)"),
-  });
-
   const createCatMut = useMutation({
     mutationFn: ({ groupId, name }: { groupId: number; name: string }) => createCategory({ groupId, name }),
     onSuccess: () => { invalidate(); toast.success("Categoría creada"); setAddingToGroupId(null); },
@@ -298,12 +292,6 @@ function CategoriesView() {
       setMoveTarget(null);
     },
     onError: () => toast.error("Error al actualizar categoría"),
-  });
-
-  const deleteCatMut = useMutation({
-    mutationFn: (id: number) => deleteCategory(id),
-    onSuccess: () => { invalidate(); toast.success("Categoría eliminada"); },
-    onError: () => toast.error("Error al eliminar categoría (puede tener transacciones asignadas)"),
   });
 
   const activity = useMemo(() => {
@@ -349,13 +337,6 @@ function CategoriesView() {
     if (!name || !groupDialog) return;
     if (groupDialog.mode === "create") createGroupMut.mutate(name);
     else updateGroupMut.mutate({ id: groupDialog.group.id, name });
-  };
-
-  const handleConfirmDelete = () => {
-    if (!confirm) return;
-    if (confirm.type === "group") deleteGroupMut.mutate(confirm.id);
-    else deleteCatMut.mutate(confirm.id);
-    setConfirm(null);
   };
 
   if (isLoading) {
@@ -549,15 +530,7 @@ function CategoriesView() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmModal
-        open={!!confirm}
-        title={`Eliminar ${confirm?.type === "group" ? "grupo" : "categoría"}`}
-        message={`¿Seguro que quieres eliminar "${confirm?.name ?? ""}"? Esta acción no se puede deshacer.`}
-        confirmLabel="Eliminar"
-        variant="danger"
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setConfirm(null)}
-      />
+      <DeleteCategoryDialog target={confirm} groups={groups} onClose={() => setConfirm(null)} />
     </div>
   );
 }
