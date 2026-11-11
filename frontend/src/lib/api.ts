@@ -1170,18 +1170,48 @@ export const getFinanceAnalytics = (filters?: FinanceAnalyticsFilters) => {
 };
 
 // ─── Import ─────────────────────────────────────────────────────
+export interface ImportPreviewRow {
+  date: string;
+  account: string;
+  payee: string;
+  category: string;
+  /** Con signo: positivo entra, negativo sale. */
+  amount: number;
+  status: "new" | "duplicate" | "skipped";
+}
+
 export interface ImportResult {
   ok: boolean;
   dryRun?: boolean;
+  /** Solo en la importación real: identificador para deshacerla. */
+  batchId?: string;
   summary: {
     accounts: number;
     categoryGroups: number;
     categories: number;
+    /** Movimientos nuevos (los que se crean). */
     transactions: number;
     duplicates?: number;
+    /** Filas con importe 0, que no se importan. */
+    skippedZero?: number;
     dateRange: { from: string; to: string };
   };
+  /** Solo en la vista previa. */
+  newAccounts?: string[];
+  sample?: ImportPreviewRow[];
 }
+
+export interface ImportBatch {
+  batchId: string;
+  importedAt: string;
+  count: number;
+  from: string;
+  to: string;
+}
+
+export const getImportBatches = () => request<{ data: ImportBatch[] }>("/import/batches");
+export const undoImportBatch = (batchId: string) =>
+  request<{ ok: boolean; deleted: number }>(`/import/batches/${batchId}`, { method: "DELETE" });
 
 export const importYnab = async (file: File, dryRun = false): Promise<ImportResult> => {
   const formData = new FormData();

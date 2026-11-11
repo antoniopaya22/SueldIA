@@ -317,6 +317,8 @@ export const transactions = pgTable(
     transferId: integer("transfer_id"),
     flag: text("flag"),
     importedFrom: text("imported_from"),
+    // Lote de importación (uuid): permite ver y deshacer una importación entera.
+    importBatchId: text("import_batch_id"),
     // Un gasto dividido en varias categorías son varias filas reales (cada una con su
     // categoría e importe) enlazadas por este identificador: así saldos, presupuesto e
     // informes no cambian — lo que suma por categoría sigue sumando. Liquidar, borrar o
@@ -342,6 +344,7 @@ export const transactions = pgTable(
     splitGroupIdx: index("transactions_split_group_idx").on(table.splitGroupId),
     // Editar/borrar un traspaso busca su pareja.
     transferIdx: index("transactions_transfer_idx").on(table.transferId),
+    importBatchIdx: index("transactions_import_batch_idx").on(table.userId, table.importBatchId),
   }),
 ).enableRLS();
 

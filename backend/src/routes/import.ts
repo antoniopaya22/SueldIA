@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { accounts, categoryGroups, categories, transactions } from "../db/schema.js";
-import { eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { z } from "zod";
 import { uploadCsv } from "../middleware/upload.js";
 import {
   parseYnabCsv,
@@ -68,9 +70,25 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
       .select({ date: transactions.date, amount: transactions.amount, accountId: transactions.accountId, payee: transactions.payee })
       .from(transactions)
       .where(eq(transactions.userId, userId));
-    const existingSet = new Set(existingTx.map((t) => `${t.date}|${t.amount}|${t.accountId}|${t.payee ?? ""}`));
-    const isDuplicate = (row: YnabRawRow, accountId: number | undefined) =>
-      accountId !== undefined && existingSet.has(`${row.date}|${rowAmount(row)}|${accountId}|${row.payee || ""}`);
+    // Recuento (no conjunto): con un café ya apuntado y dos cafés iguales el
+    // mismo día en el fichero, antes se descartaban los dos.
+    const existingCounts = new Map<string, number>();
+    for (const t of existingTx) {
+      const key = `${t.date}|${t.amount}|${t.accountId}|${t.payee ?? ""}`;
+      existingCounts.set(key, (existingCounts.get(key) ?? 0) + 1);
+    }
+    const makeDuplicateChecker = () => {
+      const remaining = new Map(existingCounts);
+      return (row: YnabRawRow, accountId: number | undefined) => {
+        if (accountId === undefined) return false;
+        const key = `${row.date}|${rowAmount(row)}|${accountId}|${row.payee || ""}`;
+        const n = remaining.get(key) ?? 0;
+        if (n === 0) return false;
+        remaining.set(key, n - 1);
+        return true;
+      };
+    };
+    const isDuplicate = makeDuplicateChecker();
 
     const baseSummary = {
       accounts: parsed.accounts.length,
@@ -80,15 +98,39 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
     };
 
     if (dryRun) {
-      let count = 0;
+      // Vista previa: mismos números que dará la importación real («nuevos»
+      // = los que se van a crear; antes el contador incluía los duplicados)
+      // y una muestra de filas con su estado.
+      let newCount = 0;
       let duplicates = 0;
+      let zero = 0;
+      const sample: Array<{ date: string; account: string; payee: string; category: string; amount: number; status: "new" | "duplicate" | "skipped" }> = [];
       for (const row of parsed.rows) {
-        if (rowAmount(row) === 0) continue;
-        count++;
-        if (isDuplicate(row, accountMap.get(row.account))) duplicates++;
+        const status = rowAmount(row) === 0 ? "skipped" : isDuplicate(row, accountMap.get(row.account)) ? "duplicate" : "new";
+        if (status === "skipped") zero++;
+        else if (status === "duplicate") duplicates++;
+        else newCount++;
+        if (sample.length < 100) {
+          sample.push({
+            date: row.date,
+            account: row.account,
+            payee: row.payee,
+            category: row.category ? `${row.categoryGroup} › ${row.category}` : "",
+            amount: row.inflow > 0 ? row.inflow : -row.outflow,
+            status,
+          });
+        }
       }
-      return res.json({ ok: true, dryRun: true, summary: { ...baseSummary, transactions: count, duplicates } });
+      return res.json({
+        ok: true,
+        dryRun: true,
+        summary: { ...baseSummary, transactions: newCount, duplicates, skippedZero: zero },
+        newAccounts: parsed.accounts.filter((name) => !accountMap.has(name)),
+        sample,
+      });
     }
+
+    const batchId = randomUUID();
 
     const result = await db.transaction(async (tx) => {
       // 1. Cuentas que no existan
@@ -163,6 +205,7 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
         cleared: row.cleared,
         flag: row.flag || null,
         importedFrom: "ynab",
+        importBatchId: batchId,
         ...fields,
       });
 
@@ -239,8 +282,51 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
 
     res.status(201).json({
       ok: true,
+      batchId,
       summary: { ...baseSummary, transactions: result.imported, duplicates: result.skipped },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Importaciones hechas (para poder deshacerlas).
+importRouter.get("/batches", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const rows = await db
+      .select({
+        batchId: transactions.importBatchId,
+        importedAt: sql<string>`min(${transactions.createdAt})`,
+        count: sql<number>`count(*)::int`,
+        from: sql<string>`min(${transactions.date})`,
+        to: sql<string>`max(${transactions.date})`,
+      })
+      .from(transactions)
+      .where(and(eq(transactions.userId, userId), isNotNull(transactions.importBatchId)))
+      .groupBy(transactions.importBatchId)
+      .orderBy(sql`min(${transactions.createdAt}) desc`)
+      .limit(20);
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Deshacer una importación: borra sus movimientos (las dos patas de cada
+// traspaso llevan el mismo lote). Las cuentas y categorías que creó se
+// quedan: pueden tener ya otros movimientos o asignaciones.
+importRouter.delete("/batches/:batchId", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const batchId = z.string().uuid().safeParse(req.params.batchId);
+    if (!batchId.success) return res.status(400).json({ error: "Importación no válida" });
+    const deleted = await db
+      .delete(transactions)
+      .where(and(eq(transactions.userId, userId), eq(transactions.importBatchId, batchId.data)))
+      .returning({ id: transactions.id });
+    if (deleted.length === 0) return res.status(404).json({ error: "Importación no encontrada" });
+    res.json({ ok: true, deleted: deleted.length });
   } catch (err) {
     next(err);
   }

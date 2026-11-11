@@ -1,12 +1,13 @@
 import { useState, useCallback } from "react";
-import { plural } from "../lib/format";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { formatCurrency, plural } from "../lib/format";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import {
   Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, ArrowRight, AlertTriangle,
   Eye, X, Landmark, Tags, Receipt, CalendarRange, Check, RotateCcw,
 } from "lucide-react";
-import { importYnab, type ImportResult } from "../lib/api";
+import { getImportBatches, importYnab, undoImportBatch, type ImportPreviewRow, type ImportResult } from "../lib/api";
+import { ConfirmModal } from "./ui/ConfirmModal";
 import { Providers } from "./Providers";
 import { invalidateFinance } from "../lib/finance-cache";
 import { toast } from "sonner";
@@ -62,7 +63,12 @@ function SummaryTiles({ summary }: { summary: ImportResult["summary"] }) {
   const tiles = [
     { label: "Cuentas", value: summary.accounts, icon: Landmark, hint: summary.accounts === 1 ? "cuenta" : "cuentas" },
     { label: "Categorías", value: summary.categoryGroups + summary.categories, icon: Tags, hint: `${plural(summary.categoryGroups, "grupo", "grupos")} · ${plural(summary.categories, "categoría", "categorías")}` },
-    { label: "Transacciones", value: summary.transactions, icon: Receipt, hint: "movimientos" },
+    {
+      label: "Movimientos nuevos",
+      value: summary.transactions,
+      icon: Receipt,
+      hint: summary.duplicates ? `+ ${plural(summary.duplicates, "ya existente", "ya existentes")}` : "se crearán",
+    },
   ];
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -107,8 +113,92 @@ function DuplicatesNote({ count, done }: { count: number; done: boolean }) {
   );
 }
 
+const STATUS_LABEL: Record<ImportPreviewRow["status"], { label: string; className: string }> = {
+  new: { label: "Nuevo", className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
+  duplicate: { label: "Ya existe", className: "bg-muted text-muted-foreground" },
+  skipped: { label: "Importe 0", className: "bg-muted text-muted-foreground" },
+};
+
+/** Muestra de filas de la vista previa: antes la revisión eran cuatro contadores. */
+function PreviewTable({ rows }: { rows: ImportPreviewRow[] }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-border">
+      <div className="max-h-80 overflow-auto">
+        <table className="w-full text-sm">
+          <caption className="sr-only">Primeras filas del archivo y qué se hará con cada una</caption>
+          <thead className="sticky top-0 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur">
+            <tr>
+              <th scope="col" className="px-3 py-2 font-medium">Fecha</th>
+              <th scope="col" className="px-3 py-2 font-medium">Beneficiario</th>
+              <th scope="col" className="hidden px-3 py-2 font-medium sm:table-cell">Cuenta · categoría</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Importe</th>
+              <th scope="col" className="px-3 py-2 font-medium">Estado</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((r, i) => (
+              <tr key={i} className={cn(r.status !== "new" && "text-muted-foreground")}>
+                <td className="px-3 py-2 whitespace-nowrap tabular-nums">{formatRangeDate(r.date)}</td>
+                <td className="max-w-40 truncate px-3 py-2">{r.payee || "—"}</td>
+                <td className="hidden max-w-56 truncate px-3 py-2 text-xs text-muted-foreground sm:table-cell">{[r.account, r.category].filter(Boolean).join(" · ")}</td>
+                <td className={cn("px-3 py-2 text-right whitespace-nowrap tabular-nums", r.amount > 0 && "text-emerald-700 dark:text-emerald-400")}>
+                  {r.amount > 0 ? "+" : ""}{formatCurrency(r.amount)}
+                </td>
+                <td className="px-3 py-2">
+                  <span className={cn("rounded-md px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap", STATUS_LABEL[r.status].className)}>
+                    {STATUS_LABEL[r.status].label}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {rows.length >= 100 && <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">Se muestran las 100 primeras filas.</p>}
+    </div>
+  );
+}
+
+/** Importaciones anteriores, con «Deshacer». */
+function PastImports({ onUndo }: { onUndo: (batchId: string) => void }) {
+  const { data } = useQuery({ queryKey: ["import-batches"], queryFn: getImportBatches });
+  const batches = data?.data ?? [];
+  if (batches.length === 0) return null;
+  return (
+    <SectionCard title="Importaciones anteriores" flush>
+      <ul className="divide-y divide-border">
+        {batches.map((b) => (
+          <li key={b.batchId} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
+            <div className="min-w-0">
+              <p className="font-medium text-foreground">{plural(b.count, "movimiento", "movimientos")}</p>
+              <p className="text-xs text-muted-foreground">
+                {new Date(b.importedAt).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })} · {formatRangeDate(b.from)} → {formatRangeDate(b.to)}
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => onUndo(b.batchId)} className="shrink-0 text-muted-foreground hover:text-destructive">
+              Deshacer
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </SectionCard>
+  );
+}
+
 function ImportView() {
   const queryClient = useQueryClient();
+  const [undoTarget, setUndoTarget] = useState<string | null>(null);
+  const undoMut = useMutation({
+    mutationFn: undoImportBatch,
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["import-batches"] });
+      invalidateFinance(queryClient);
+      toast.success(`Importación deshecha: ${plural(res.deleted, "movimiento eliminado", "movimientos eliminados")}`);
+      setUndoTarget(null);
+      reset();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportResult | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -135,6 +225,7 @@ function ImportView() {
       toast.success("Importación completada correctamente");
       queryClient.invalidateQueries({ queryKey: ["categories"] });
       invalidateFinance(queryClient);
+      queryClient.invalidateQueries({ queryKey: ["import-batches"] });
     },
     onError: (err: Error) => {
       setError(err.message);
@@ -237,7 +328,8 @@ function ImportView() {
 
                 {file && (
                   <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                    <Button variant="outline" onClick={handleImport} disabled={busy} className="gap-1.5">
+                    {/* Secundario: lo recomendable es revisar antes. */}
+                    <Button variant="ghost" onClick={handleImport} disabled={busy} className="gap-1.5 text-muted-foreground">
                       {importMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
                       {importMut.isPending ? "Importando…" : "Importar sin revisar"}
                     </Button>
@@ -261,6 +353,18 @@ function ImportView() {
                 </div>
                 <SummaryTiles summary={preview.summary} />
                 <DuplicatesNote count={preview.summary.duplicates ?? 0} done={false} />
+                {(preview.newAccounts?.length ?? 0) > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    {preview.newAccounts!.length === 1 ? "Se creará una cuenta nueva" : `Se crearán ${preview.newAccounts!.length} cuentas nuevas`}:{" "}
+                    <span className="font-medium text-foreground">{preview.newAccounts!.join(", ")}</span>. Si ya tienes alguna con otro nombre, renómbrala antes para que se use la tuya.
+                  </p>
+                )}
+                {(preview.summary.skippedZero ?? 0) > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    {plural(preview.summary.skippedZero!, "fila tiene", "filas tienen")} importe 0 y no se importará{preview.summary.skippedZero === 1 ? "" : "n"}.
+                  </p>
+                )}
+                {preview.sample && preview.sample.length > 0 && <PreviewTable rows={preview.sample} />}
                 <div className="flex flex-col-reverse gap-2 border-t border-border pt-5 sm:flex-row sm:justify-between">
                   <Button variant="ghost" onClick={reset} disabled={busy} className="gap-1.5 text-muted-foreground">
                     <RotateCcw className="size-4" /> Elegir otro archivo
@@ -287,6 +391,14 @@ function ImportView() {
                 </div>
                 <SummaryTiles summary={result.summary} />
                 <DuplicatesNote count={result.summary.duplicates ?? 0} done />
+                {result.batchId && (
+                  <p className="text-sm text-muted-foreground">
+                    ¿No era lo que esperabas?{" "}
+                    <button type="button" onClick={() => setUndoTarget(result.batchId!)} className="font-medium text-foreground underline underline-offset-2">
+                      Deshacer esta importación
+                    </button>
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-2 border-t border-border pt-5">
                   <a href="/app/transactions" className={cn(buttonVariants(), "gap-1.5")}>
                     Ver transacciones <ArrowRight className="size-4" />
@@ -330,15 +442,26 @@ function ImportView() {
               ))}
             </ol>
           </SectionCard>
+          <PastImports onUndo={setUndoTarget} />
           <SectionCard title="Qué se importa">
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>Las cuentas y categorías que no existan se crean automáticamente.</li>
               <li>Los movimientos que ya tengas se omiten: puedes reimportar sin duplicar.</li>
+              <li>Cada importación se puede deshacer entera desde esta página.</li>
               <li>El archivo no se guarda: solo se leen sus movimientos.</li>
             </ul>
           </SectionCard>
         </aside>
       </div>
+      <ConfirmModal
+        open={!!undoTarget}
+        title="Deshacer importación"
+        message="Se eliminarán los movimientos de esa importación (también los que hayas editado después). Las cuentas y categorías que se crearon se mantienen."
+        confirmLabel={undoMut.isPending ? "Deshaciendo…" : "Deshacer importación"}
+        variant="danger"
+        onConfirm={() => undoTarget && undoMut.mutate(undoTarget)}
+        onCancel={() => setUndoTarget(null)}
+      />
     </div>
   );
 }

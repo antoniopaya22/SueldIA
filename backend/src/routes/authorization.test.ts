@@ -270,6 +270,44 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect(second).toMatchObject({ id: first.id, alreadyUploaded: true });
   });
 
+  it("importar de YNAB: vista previa coherente, duplicados por recuento y deshacer", async () => {
+    const q = (v: string) => `"${v}"`;
+    const row = (payee: string, amount: string, date = "10/03/2026") =>
+      [q("Cuenta YNAB"), q(""), q(date), q(payee), q("Casa/Super"), q("Casa"), q("Super"), q(""), q(amount), q("0,00€"), q("Cleared")].join("\t");
+    const tsv = ["cabecera", row("Café", "1,50€"), row("Café", "1,50€"), row("Super", "40,00€")].join("\n");
+    const send = async (user: "a" | "b", dryRun: boolean) => {
+      const form = new FormData();
+      form.append("file", new Blob([tsv], { type: "text/tab-separated-values" }), "ynab.tsv");
+      const res = await fetch(`${api}/api/import/ynab${dryRun ? "?dryRun=true" : ""}`, {
+        method: "POST", headers: { Authorization: `Bearer ${tokens[user]}` }, body: form,
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, any> };
+    };
+
+    const preview = await send("a", true);
+    expect(preview.body.summary).toMatchObject({ transactions: 3, duplicates: 0 });
+    expect(preview.body.newAccounts).toEqual(["Cuenta YNAB"]);
+    expect(preview.body.sample).toHaveLength(3);
+
+    const first = await send("a", false);
+    expect(first.status).toBe(201);
+    expect(first.body.summary).toMatchObject({ transactions: 3, duplicates: 0 });
+
+    // Reimportar el mismo fichero: los tres son duplicados (los dos cafés se
+    // cuentan uno a uno, no como un único «Café»).
+    const again = await send("a", true);
+    expect(again.body.summary).toMatchObject({ transactions: 0, duplicates: 3 });
+
+    const batches = (await call("a", "GET", "/import/batches")).json.data as Array<{ batchId: string; count: number }>;
+    expect(batches[0]).toMatchObject({ batchId: first.body.batchId, count: 3 });
+    // B no ve ni puede deshacer la importación de A.
+    expect(((await call("b", "GET", "/import/batches")).json.data as unknown[])).toHaveLength(0);
+    expect((await call("b", "DELETE", `/import/batches/${first.body.batchId}`)).status).toBe(404);
+    // A sí.
+    expect((await call("a", "DELETE", `/import/batches/${first.body.batchId}`)).json).toEqual({ ok: true, deleted: 3 });
+    expect((await send("a", true)).body.summary).toMatchObject({ transactions: 3, duplicates: 0 });
+  });
+
   it("los datos de A siguen intactos", async () => {
     expect((await call("a", "GET", `/profiles/${ids.profile}`)).json).toMatchObject({ name: "A" });
     expect((await call("a", "GET", `/accounts/${ids.account}`)).json).toMatchObject({ name: "Banco A", archived: false });
@@ -286,7 +324,9 @@ describeDb("autorización entre usuarios (integración)", () => {
     const recurring = (await call("a", "GET", "/recurring-transactions")).json.data as Array<{ active: boolean }>;
     expect(recurring[0].active).toBe(true);
     const cats = (await call("a", "GET", "/categories")).json.data as Array<{ name: string; categories: Array<{ name: string }> }>;
-    expect(cats.flatMap((g) => g.categories.map((c) => c.name))).toEqual(["Cat A"]);
+    const catNames = cats.flatMap((g) => g.categories.map((c) => c.name));
+    expect(catNames).toContain("Cat A");
+    expect(catNames).not.toContain("intrusa"); // B no pudo crear categorías en grupos de A
   });
 });
 
