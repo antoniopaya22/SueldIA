@@ -6,6 +6,11 @@ import { pgTable, text, integer, serial, boolean, doublePrecision, timestamp, un
 // dashboard/analytics/finance sobre estos campos. SQLite's `real` ya era un
 // float8 sin precisión decimal exacta, así que esto no es una regresión.
 
+// RLS: toda tabla lleva `.enableRLS()` (sin políticas). La app no usa la Data
+// API de Supabase — el backend se conecta como propietario y no le afecta —,
+// así que esto solo cierra el acceso por la anon key del navegador. Una tabla
+// nueva sin `.enableRLS()` hace fallar `npm run db:migrate` (ver migrate.ts).
+
 // ─── Users ──────────────────────────────────────────────────────
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
@@ -13,7 +18,7 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   supabaseUserId: text("supabase_user_id").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 // ─── Profiles ───────────────────────────────────────────────────
 export const profiles = pgTable("profiles", {
@@ -24,7 +29,7 @@ export const profiles = pgTable("profiles", {
   name: text("name").notNull(),
   color: text("color").notNull().default("#6366f1"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 export const payslips = pgTable(
   "payslips",
@@ -61,7 +66,7 @@ export const payslips = pgTable(
       table.periodMonth,
     ),
   }),
-);
+).enableRLS();
 
 export const payslipConcepts = pgTable(
   "payslip_concepts",
@@ -81,7 +86,7 @@ export const payslipConcepts = pgTable(
     // Toda pantalla que muestra una nómina carga sus conceptos por payslipId.
     payslipIdx: index("payslip_concepts_payslip_idx").on(table.payslipId),
   }),
-);
+).enableRLS();
 
 // ─── Payslip Notes (document management) ────────────────────────
 export const payslipNotes = pgTable("payslip_notes", {
@@ -91,7 +96,7 @@ export const payslipNotes = pgTable("payslip_notes", {
     .references(() => payslips.id, { onDelete: "cascade" }),
   content: text("content").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 // ─── Tags (document organization) ──────────────────────────────
 export const tags = pgTable("tags", {
@@ -101,7 +106,7 @@ export const tags = pgTable("tags", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   color: text("color").notNull().default("#6366f1"),
-});
+}).enableRLS();
 
 export const payslipTags = pgTable(
   "payslip_tags",
@@ -119,7 +124,7 @@ export const payslipTags = pgTable(
     // doble clic en "asignar").
     payslipTagIdx: uniqueIndex("payslip_tags_payslip_tag_idx").on(table.payslipId, table.tagId),
   }),
-);
+).enableRLS();
 
 // ─── Alert Rules (automation) ───────────────────────────────────
 export const alertRules = pgTable("alert_rules", {
@@ -137,7 +142,7 @@ export const alertRules = pgTable("alert_rules", {
   config: text("config").notNull().default("{}"), // JSON config
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 // ─── Alert History ──────────────────────────────────────────────
 export const alertHistory = pgTable(
@@ -163,7 +168,7 @@ export const alertHistory = pgTable(
   (table) => ({
     ruleDedupeIdx: uniqueIndex("alert_history_rule_dedupe_idx").on(table.ruleId, table.dedupeKey),
   }),
-);
+).enableRLS();
 
 // ─── Financial Accounts ─────────────────────────────────────────
 export const accounts = pgTable("accounts", {
@@ -185,7 +190,7 @@ export const accounts = pgTable("accounts", {
   // Orden elegido por el usuario (Transacciones → Ordenar); a igualdad, por nombre.
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 // ─── Category Groups ────────────────────────────────────────────
 export const categoryGroups = pgTable("category_groups", {
@@ -197,7 +202,7 @@ export const categoryGroups = pgTable("category_groups", {
   icon: text("icon"),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 export const categories = pgTable("categories", {
   id: serial("id").primaryKey(),
@@ -207,7 +212,7 @@ export const categories = pgTable("categories", {
   name: text("name").notNull(),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 // ─── Financial Transactions ─────────────────────────────────────
 export const transactions = pgTable(
@@ -268,7 +273,7 @@ export const transactions = pgTable(
     // Localizar las partes de un gasto dividido.
     splitGroupIdx: index("transactions_split_group_idx").on(table.splitGroupId),
   }),
-);
+).enableRLS();
 
 // ─── Recurring Transactions ────────────────────────────────────
 export const recurringTransactions = pgTable("recurring_transactions", {
@@ -302,7 +307,7 @@ export const recurringTransactions = pgTable("recurring_transactions", {
   // pendientes hasta que el usuario las marque).
   autoSettle: boolean("auto_settle").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 // ─── Budgets (presupuesto por categoría y mes, estilo YNAB) ─────
 export const budgets = pgTable(
@@ -325,7 +330,7 @@ export const budgets = pgTable(
     categoryMonthIdx: uniqueIndex("budgets_category_month_idx").on(table.categoryId, table.month),
     userMonthIdx: index("budgets_user_month_idx").on(table.userId, table.month),
   }),
-);
+).enableRLS();
 
 // ─── Objetivos por categoría (presupuesto) ──────────────────────
 // Una categoría tiene como mucho un objetivo:
@@ -351,7 +356,7 @@ export const categoryTargets = pgTable(
     categoryIdx: uniqueIndex("category_targets_category_idx").on(table.categoryId),
     userIdx: index("category_targets_user_idx").on(table.userId),
   }),
-);
+).enableRLS();
 
 // ─── Reglas de categorización automática ────────────────────────
 // "Si el beneficiario contiene `match`, la categoría es `categoryId`".
@@ -373,7 +378,7 @@ export const categoryRules = pgTable(
     // Una regla por texto y usuario: volver a crearla solo cambia su categoría.
     userMatchIdx: uniqueIndex("category_rules_user_match_idx").on(table.userId, table.match),
   }),
-);
+).enableRLS();
 
 // ─── Preferencias del usuario ───────────────────────────────────
 // Pares clave → JSON (texto) para recordar ajustes de interfaz entre sesiones y
@@ -394,4 +399,4 @@ export const userPreferences = pgTable(
   (table) => ({
     userKeyIdx: uniqueIndex("user_preferences_user_key_idx").on(table.userId, table.key),
   }),
-);
+).enableRLS();

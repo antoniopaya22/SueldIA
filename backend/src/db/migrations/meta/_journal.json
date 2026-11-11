@@ -78,6 +78,13 @@
       "when": 1791392133785,
       "tag": "0010_accounts_sort_order",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794386386004,
+      "tag": "0011_enable_rls",
+      "breakpoints": true
     }
   ]
 }

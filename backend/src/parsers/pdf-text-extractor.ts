@@ -86,7 +86,11 @@ export async function extractTextFromPdfBuffer(data: Uint8Array): Promise<string
   // técnicamente un Uint8Array ("Please provide binary data as Uint8Array,
   // rather than Buffer") — Buffer.isBuffer detecta ese caso concreto.
   const safeData = Buffer.isBuffer(data) ? new Uint8Array(data) : data;
-  const doc = await pdfjs.getDocument({ data: safeData, useSystemFonts: true } as never).promise;
+  // isEvalSupported: false — mitigación oficial de CVE-2024-4367 (ejecución de
+  // código con fuentes manipuladas en pdfjs-dist <= 4.1.392). El PDF lo sube
+  // cualquier usuario y se procesa en el mismo proceso que tiene DATABASE_URL.
+  // No cambia el texto extraído: solo desactiva la compilación de glifos con eval.
+  const doc = await pdfjs.getDocument({ data: safeData, useSystemFonts: true, isEvalSupported: false } as never).promise;
   const allLines: string[] = [];
   const pageCount = Math.min(doc.numPages, MAX_PAGES);
 

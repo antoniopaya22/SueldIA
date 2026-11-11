@@ -27,6 +27,21 @@ const { migrate } = await import("drizzle-orm/postgres-js/migrator");
 const { db, client } = await import("./index.js");
 
 await migrate(db, { migrationsFolder: resolve(__dirname, "./migrations") });
+
+// Red de seguridad: ninguna tabla de `public` puede quedar sin RLS (Supabase
+// la expone por la Data API con la anon key, que es pública). Si alguien añade
+// una tabla sin `.enableRLS()` en schema.ts, el despliegue falla aquí.
+const tablesWithoutRls = await client<{ tablename: string }[]>`
+  SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND rowsecurity = false
+`;
 await client.end();
+
+if (tablesWithoutRls.length > 0) {
+  console.error(
+    `❌ Tablas sin Row Level Security: ${tablesWithoutRls.map((t) => t.tablename).join(", ")}. ` +
+      `Añade .enableRLS() a su pgTable en src/db/schema.ts y genera la migración.`,
+  );
+  process.exit(1);
+}
 
 console.log("✅ Migrations applied successfully");
