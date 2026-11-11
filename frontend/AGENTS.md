@@ -90,7 +90,7 @@ export async function uploadPayslips(profileId, files): Promise<Payslip[]>
 
 Reglas:
 - **Nunca** hacer `fetch()` directo en componentes — siempre a través de `api.ts`
-- El token es el `access_token` de la sesión de Supabase (`getAuthToken()`, async) — se inyecta automáticamente en headers; no hay nada en `localStorage` propio
+- El token es el `access_token` de la sesión de Supabase (`getAuthToken()`, async; `lib/supabase.ts` crea solo el cliente de `@supabase/auth-js`, no `supabase-js` entero) — se inyecta automáticamente en headers; no hay nada en `localStorage` propio
 - Error 401 → `clearAuth()` (signOut de Supabase) + `/login?next=…`; los errores son `ApiError` con mensaje en español
 - Formato: `lib/format.ts` (`formatCurrency` agrupa siempre miles, `formatPct` → "77,7 %", `formatCompact` → "2,1k €", `formatMonthLabel` → "Sep 26"). No usar `toFixed` para mostrar porcentajes.
 - Funciones de upload y export usan `fetch` directo (no JSON body)
@@ -117,7 +117,7 @@ Tailwind v4 (config vía `@theme`/`@config` en `src/styles/global.css`, no solo 
 - **Tipografía de la app**: Geist Variable. `font-mono` dentro de `.app-root` se remapea a Geist con cifras tabulares (para importes); en código nuevo usar `tabular-nums` directamente. Acento editorial opcional: clase `font-serif-accent` (Instrument Serif itálica), solo en títulos y con moderación.
 - Componentes reutilizables en `@/components/ui/`: `Button`, `Card`, `Input`, `Label`, `Badge`, `Select`, `Table`, `Tabs`, `DropdownMenu`, `Dialog`, `AlertDialog`, `Avatar`, `Separator`, `Tooltip`, `Popover`, `Checkbox`, `Switch`, `Textarea`, `Sonner` (toasts). Base UI usa la prop `render` para polimorfismo (no `asChild` de Radix); para un link con pinta de botón, usar `buttonVariants({...})` sobre una `<a>` en vez de envolver `<Button>`.
 - Clases de componente heredadas en `global.css` (`.card`, `.btn-primary/secondary/danger/ghost`, `.input`, `.badge`, `.skeleton`) siguen existiendo para las páginas de la app ya construidas — están redefinidas sobre los tokens de shadcn, no reescribir cada página para usar los componentes de `ui/` salvo que se toque esa página de todos modos.
-- **Fuentes**: `font-sans` es Geist Variable (`--font-sans` en `global.css`, texto general y marca/shadcn); dentro de `.app-root` `font-mono` también se remapea a Geist (cifras tabulares en importes). Fira Sans/Fira Code se cargan desde Google Fonts en `global.css:1` pero no se usan en ningún sitio — pendiente de quitar (ver auditoría de rendimiento).
+- **Fuentes**: `font-sans` es Geist Variable (`--font-sans` en `global.css`, texto general y marca/shadcn); dentro de `.app-root` `font-mono` también se remapea a Geist (cifras tabulares en importes). No se carga ninguna fuente de Google Fonts (la CSP tampoco lo permitiría).
 - **Dark mode**: estrategia `class`. Preferencia en `localStorage.theme` (`light`/`dark`; sin clave = sistema). Única fuente de verdad: hook `useTheme()` (`src/hooks/use-theme.ts`) — `{ preference, resolved, setPreference }`; sincroniza entre islas. El script inline de `Layout.astro`/`login.astro` aplica el tema antes de pintar.
 
 ## Layout
