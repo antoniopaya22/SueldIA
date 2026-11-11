@@ -145,6 +145,8 @@ describeDb("autorización entre usuarios (integración)", () => {
     ["PUT", `/accounts/${ids.account}`, { name: "hack", type: "bank" }],
     ["PATCH", `/accounts/${ids.account}/archive`],
     ["DELETE", `/accounts/${ids.account}`],
+    ["GET", `/accounts/${ids.account}/reconcile`],
+    ["POST", `/accounts/${ids.account}/reconcile`, { statementBalance: 0, createAdjustment: true }],
     ["PUT", `/categories/groups/${ids.group}`, { name: "hack" }],
     ["GET", `/categories/groups/${ids.group}/usage`],
     ["DELETE", `/categories/groups/${ids.group}`],

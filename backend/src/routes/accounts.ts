@@ -7,6 +7,7 @@ import { validateIdParam } from "../middleware/params.js";
 import { getAccountsWithBalance } from "../services/finance.service.js";
 import { moneySchema } from "../utils/validation.js";
 import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
+import { clearedBalance, reconcileAccount } from "../services/reconcile.service.js";
 
 export const accountsRouter = Router();
 accountsRouter.param("id", validateIdParam);
@@ -170,6 +171,41 @@ accountsRouter.patch("/:id/archive", async (req, res, next) => {
       .returning();
 
     res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Saldo liquidado de la cuenta, para el diálogo de conciliación.
+accountsRouter.get("/:id/reconcile", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const balance = await clearedBalance(userId, Number(req.params.id));
+    if (balance === null) return res.status(404).json({ error: "Cuenta no encontrada" });
+    res.json({ clearedBalance: balance });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const reconcileSchema = z.object({
+  statementBalance: moneySchema,
+  /** Si el saldo no cuadra: crear un movimiento de ajuste por la diferencia. */
+  createAdjustment: z.boolean().default(false),
+});
+
+accountsRouter.post("/:id/reconcile", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = reconcileSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Datos de conciliación inválidos", details: parsed.error.flatten().fieldErrors });
+    }
+    const result = await reconcileAccount(userId, Number(req.params.id), parsed.data.statementBalance, parsed.data.createAdjustment);
+    if (!result) return res.status(404).json({ error: "Cuenta no encontrada" });
+    // Sin cuadrar y sin ajuste: 409 con la diferencia, para que la interfaz la muestre.
+    if (!result.ok) return res.status(409).json({ error: "El saldo no cuadra", difference: result.difference });
+    res.json(result);
   } catch (err) {
     next(err);
   }

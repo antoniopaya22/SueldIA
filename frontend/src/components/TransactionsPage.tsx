@@ -913,7 +913,7 @@ function TransactionsView() {
                     onToggle: (id) => setSelectedIds((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; }),
                     onToggleAll: (ids, select) => setSelectedIds((cur) => { const next = new Set(cur); for (const id of ids) { if (select) next.add(id); else next.delete(id); } return next; }),
                   } : undefined}
-                  onDelete={(tx) => deleteWithUndo(
+                  onDelete={(tx) => (tx.reconciled && !window.confirm("Este movimiento está conciliado con el banco: borrarlo descuadrará la conciliación. ¿Borrarlo igualmente?")) ? undefined : deleteWithUndo(
                     [tx.id],
                     tx.splitGroupId ? "Gasto dividido eliminado (todas sus partes)"
                       : tx.type === "transfer" ? "Traspaso eliminado (las dos partes)"

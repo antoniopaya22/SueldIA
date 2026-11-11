@@ -640,6 +640,9 @@ export interface Account {
   unclearedCount: number;
   /** Liquidado + sin liquidar. */
   workingBalance: number;
+  /** Última conciliación con el extracto del banco. */
+  lastReconciledAt?: string | null;
+  lastReconciledBalance?: number | null;
   createdAt: string;
 }
 
@@ -740,6 +743,8 @@ export interface Transaction {
   payee: string | null;
   memo: string | null;
   cleared: boolean;
+  /** Liquidado y comprobado contra el extracto del banco. */
+  reconciled?: boolean;
   transferId: number | null;
   targetAccountId: number | null;
   targetAccountName: string;
@@ -1433,3 +1438,14 @@ export interface AmountDistribution {
 
 export const getAmountDistribution = (filters?: FinanceAnalyticsFilters) =>
   request<AmountDistribution>(`/finance/amounts?${filterParams(filters)}`);
+
+// ─── Conciliación ───────────────────────────────────────────────
+export const getAccountClearedBalance = (accountId: number) =>
+  request<{ clearedBalance: number }>(`/accounts/${accountId}/reconcile`);
+
+/** Concilia la cuenta con el saldo del banco. Si no cuadra y no se pide ajuste, lanza ApiError 409. */
+export const reconcileAccount = (accountId: number, statementBalance: number, createAdjustment: boolean) =>
+  request<{ ok: true; difference: number; adjustmentId: number | null; reconciledCount: number }>(
+    `/accounts/${accountId}/reconcile`,
+    { method: "POST", body: JSON.stringify({ statementBalance, createAdjustment }) },
+  );

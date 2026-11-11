@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Wallet, Plus, Pencil, Trash2, CreditCard, Landmark, Banknote, TrendingUp,
   Archive, ArchiveRestore, Download, PiggyBank, AlertTriangle, type LucideIcon,
+  Scale,
 } from "lucide-react";
 import {
   getAccounts, createAccount, updateAccount, deleteAccount, toggleAccountArchive,
@@ -10,7 +11,7 @@ import {
 } from "../lib/api";
 import { Providers } from "./Providers";
 import { toast } from "sonner";
-import { formatCurrency, formatPct } from "../lib/format";
+import { formatCurrency, formatPct, plural } from "../lib/format";
 import { EmptyState } from "./ui/EmptyState";
 import { ConfirmModal } from "./ui/ConfirmModal";
 import {
@@ -19,6 +20,8 @@ import {
 } from "./app";
 import { ColorSwatches, SWATCH_COLORS } from "./finance-manage/ColorSwatches";
 import { RowActions } from "./finance-manage/RowActions";
+import { ReconcileDialog } from "./finance-manage/ReconcileDialog";
+import { transactionsHref } from "../lib/transaction-filters";
 import { darkBoost } from "../lib/color";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -175,10 +178,11 @@ function AccountDialog({
 
 // ─── Tarjeta de cuenta ──────────────────────────────────────────
 function AccountCard({
-  account, share, onEdit, onArchive, onDelete,
+  account, share, onEdit, onArchive, onDelete, onReconcile,
 }: {
   account: Account;
   share: number | null;
+  onReconcile: () => void;
   onEdit: () => void;
   onArchive: () => void;
   onDelete: () => void;
@@ -208,6 +212,7 @@ function AccountCard({
         <RowActions
           itemLabel={account.name}
           actions={[
+            { label: "Conciliar con el banco", icon: Scale, onSelect: onReconcile },
             { label: "Editar", icon: Pencil, onSelect: onEdit },
             { label: account.archived ? "Restaurar" : "Archivar", icon: account.archived ? ArchiveRestore : Archive, onSelect: onArchive },
             { label: "Eliminar", icon: Trash2, onSelect: onDelete, destructive: true, separated: true },
@@ -229,6 +234,18 @@ function AccountCard({
           <div className={cn("h-full rounded-full", darkBoost(account.color))} style={{ width: `${Math.min(100, share)}%`, backgroundColor: account.color }} />
         </div>
       )}
+      <div className="mt-4 flex items-center justify-between gap-2 border-t border-border pt-3 text-xs">
+        <span className="text-muted-foreground">
+          {account.lastReconciledAt
+            ? `Conciliada el ${new Date(account.lastReconciledAt).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}`
+            : "Sin conciliar"}
+          {account.unclearedCount > 0 && ` · ${plural(account.unclearedCount, "pendiente", "pendientes")}`}
+        </span>
+        {/* Antes la tarjeta no llevaba a sus movimientos. */}
+        <a href={transactionsHref({ accountId: account.id })} className="font-medium text-foreground underline-offset-2 hover:underline">
+          Movimientos
+        </a>
+      </div>
     </article>
   );
 }
@@ -241,6 +258,7 @@ function AccountsView() {
     queryFn: getAccounts,
   });
 
+  const [reconcileTarget, setReconcileTarget] = useState<Account | null>(null);
   const [view, setView] = useState<"active" | "archived">("active");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
@@ -468,6 +486,7 @@ function AccountsView() {
                   onEdit={() => openEdit(a)}
                   onArchive={() => archiveMut.mutate(a.id)}
                   onDelete={() => setDeleteTarget(a)}
+                  onReconcile={() => setReconcileTarget(a)}
                 />
               ))}
               {view === "active" && (
@@ -506,6 +525,7 @@ function AccountsView() {
         onConfirm={() => { if (deleteTarget) { deleteMut.mutate(deleteTarget.id); setDeleteTarget(null); } }}
         onCancel={() => setDeleteTarget(null)}
       />
+      <ReconcileDialog account={reconcileTarget} onClose={() => setReconcileTarget(null)} />
     </div>
   );
 }

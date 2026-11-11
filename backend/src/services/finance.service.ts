@@ -325,6 +325,8 @@ export async function getAccountsWithBalance(userId: number): Promise<AccountWit
     icon: acc.icon,
     archived: acc.archived ?? false,
     sortOrder: acc.sortOrder,
+    lastReconciledAt: acc.lastReconciledAt ? acc.lastReconciledAt.toISOString() : null,
+    lastReconciledBalance: acc.lastReconciledBalance,
     balance: roundValue(acc.initialBalance + Number(sumMap.get(acc.id)?.cleared ?? 0)),
     unclearedBalance: roundValue(Number(sumMap.get(acc.id)?.uncleared ?? 0)),
     unclearedCount: Number(sumMap.get(acc.id)?.unclearedCount ?? 0),

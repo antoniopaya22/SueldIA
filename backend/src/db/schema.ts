@@ -236,6 +236,9 @@ export const accounts = pgTable(
     archived: boolean("archived").notNull().default(false),
     // Orden elegido por el usuario (Transacciones → Ordenar); a igualdad, por nombre.
     sortOrder: integer("sort_order").notNull().default(0),
+    // Última conciliación con el extracto del banco (Cuentas → Conciliar).
+    lastReconciledAt: timestamp("last_reconciled_at", { withTimezone: true }),
+    lastReconciledBalance: doublePrecision("last_reconciled_balance"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -309,6 +312,8 @@ export const transactions = pgTable(
     payee: text("payee"),
     memo: text("memo"),
     cleared: boolean("cleared").notNull().default(false),
+    // Liquidado y comprobado contra el extracto del banco (conciliación).
+    reconciled: boolean("reconciled").notNull().default(false),
     transferId: integer("transfer_id"),
     flag: text("flag"),
     importedFrom: text("imported_from"),

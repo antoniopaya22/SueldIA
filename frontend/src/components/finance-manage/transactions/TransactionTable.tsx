@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, type MouseEvent } from "react";
 import {
-  CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock, FileText,
+  CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock, FileText, Lock,
 } from "lucide-react";
 import type { Account, Transaction } from "../../../lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -136,9 +136,14 @@ function ClearedToggle({ tx, onToggle }: { tx: Transaction; onToggle: () => void
 
 function TxBadges({ tx, today }: { tx: Transaction; today: string }) {
   const isFutureRecurring = !!tx.recurringTransactionId && !!tx.scheduledFor && tx.scheduledFor > today && !tx.cleared;
-  if (!tx.recurringTransactionId && !isFutureRecurring && !tx.splitGroupId && !tx.payslipId) return null;
+  if (!tx.recurringTransactionId && !isFutureRecurring && !tx.splitGroupId && !tx.payslipId && !tx.reconciled) return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
+      {tx.reconciled && (
+        <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground" title="Comprobado contra el extracto del banco: cambiarlo descuadra la conciliación">
+          <Lock className="size-2.5" aria-hidden="true" /> Conciliado
+        </span>
+      )}
       {tx.payslipId && (
         // El vínculo nómina ↔ ingreso solo se veía desde la nómina.
         <a
