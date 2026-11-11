@@ -46,6 +46,8 @@ function shortDate(d: string) {
   return new Date(d + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
 }
 
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 function pctDelta(current: number, previous: number | undefined, label: string, invert = false): StatDelta | undefined {
   if (previous == null || previous === 0) return undefined;
   const change = ((current - previous) / Math.abs(previous)) * 100;
@@ -252,9 +254,12 @@ function HomeDashboardView() {
   const latest = latestPayslips?.data[0];
 
   const derived = useMemo(() => {
-    const activeTrends = trends.filter((t) => t.income > 0 || t.expenses > 0);
-    const lastTwo = activeTrends.slice(-2);
-    const prevMonth = lastTwo.length === 2 ? lastTwo[0] : undefined;
+    // El mes anterior por fecha, no "el penúltimo con actividad": si este mes
+    // aún no tenía movimientos, se comparaba con el de hace dos meses.
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevKey = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+    const prevMonth = trends.find((t) => t.month === prevKey);
 
     let netSeries: number[] = [];
     let previousNet: number | undefined;
@@ -300,6 +305,7 @@ function HomeDashboardView() {
 
   const recentTx = (txData?.data ?? []).filter((t) => !t.scheduledFor).slice(0, 8);
   const monthName = MONTHS_FULL[new Date().getMonth()];
+  const prevMonthName = MONTHS_FULL[(new Date().getMonth() + 11) % 12];
 
   return (
     <div>
@@ -331,13 +337,15 @@ function HomeDashboardView() {
               label={`Ingresos de ${monthName}`}
               value={formatCurrency(finance.monthIncome)}
               icon={ArrowUpRight}
-              delta={pctDelta(finance.monthIncome, derived.prevMonth?.income, "vs. mes anterior")}
+              // El mes en curso está a medias: un % frente a un mes entero engaña.
+              // Se da la cifra del mes anterior como referencia.
+              hint={derived.prevMonth ? `${capitalize(prevMonthName)}: ${formatCurrency(derived.prevMonth.income)}` : undefined}
             />
             <StatCard
               label={`Gastos de ${monthName}`}
               value={formatCurrency(finance.monthExpenses)}
               icon={ArrowDownRight}
-              delta={pctDelta(finance.monthExpenses, derived.prevMonth?.expenses, "vs. mes anterior", true)}
+              hint={derived.prevMonth ? `${capitalize(prevMonthName)}: ${formatCurrency(derived.prevMonth.expenses)}` : undefined}
             />
           </>
         )}

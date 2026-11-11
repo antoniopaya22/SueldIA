@@ -37,7 +37,16 @@ const PRESET_OPTIONS: Array<{ value: Preset; label: string }> = [
   { value: "all", label: "Todo" },
 ];
 
-/** Variación del último mes frente al anterior (solo meses con actividad). */
+const currentMonthKey = (() => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+})();
+
+/**
+ * Variación del último mes completo frente al anterior. El mes en curso queda
+ * fuera: a día 5 su total no es comparable con un mes entero y salía, p. ej.,
+ * «−80 %» en verde.
+ */
 function lastMonthDelta(series: number[], invert = false): StatDelta | undefined {
   if (series.length < 2) return undefined;
   const [prev, last] = series.slice(-2);
@@ -46,7 +55,7 @@ function lastMonthDelta(series: number[], invert = false): StatDelta | undefined
   if (!Number.isFinite(change)) return undefined;
   const trend = Math.abs(change) < 0.05 ? "flat" : change > 0 ? "up" : "down";
   const tone = trend === "flat" ? "neutral" : (trend === "up") !== invert ? "positive" : "negative";
-  return { value: `${change > 0 ? "+" : ""}${formatPct(change)}`, trend, tone, label: "último mes" };
+  return { value: `${change > 0 ? "+" : ""}${formatPct(change)}`, trend, tone, label: "último mes completo" };
 }
 
 function FinanceSkeleton() {
@@ -130,6 +139,9 @@ function FinanceDashboardView() {
       balanceSeries,
       incomeSeries: active.map((m) => m.income),
       expenseSeries: active.map((m) => m.expenses),
+      // Para comparar: solo meses ya terminados.
+      completeIncome: active.filter((m) => m.month < currentMonthKey).map((m) => m.income),
+      completeExpenses: active.filter((m) => m.month < currentMonthKey).map((m) => m.expenses),
       categorySlices,
       expenseTotal,
       payees,
@@ -208,7 +220,10 @@ function FinanceDashboardView() {
           label="Saldo actual"
           value={formatCurrency(summary.totalBalance)}
           icon={Wallet}
-          hint={selectedAccount ? selectedAccount.name : `${accounts.filter((a) => !a.archived).length} cuentas`}
+          hint={selectedAccount ? selectedAccount.name : (() => {
+            const n = accounts.filter((a) => !a.archived).length;
+            return `${n} ${n === 1 ? "cuenta" : "cuentas"}`;
+          })()}
           sparkline={lastBalances.length > 2 ? lastBalances : undefined}
           emphasis
         />
@@ -216,7 +231,7 @@ function FinanceDashboardView() {
           label="Ingresos del periodo"
           value={formatCurrency(summary.incomeTotal)}
           icon={ArrowUpRight}
-          delta={lastMonthDelta(derived.incomeSeries)}
+          delta={lastMonthDelta(derived.completeIncome)}
           hint={`Media ${formatCurrency(summary.monthlyAverageIncome)}/mes`}
           sparkline={derived.incomeSeries.length > 2 ? derived.incomeSeries : undefined}
           sparklineColor={flowColors.income}
@@ -225,7 +240,7 @@ function FinanceDashboardView() {
           label="Gastos del periodo"
           value={formatCurrency(summary.expenseTotal)}
           icon={ArrowDownRight}
-          delta={lastMonthDelta(derived.expenseSeries, true)}
+          delta={lastMonthDelta(derived.completeExpenses, true)}
           hint={summary.topExpenseMonth ? `Pico en ${formatMonthLabel(summary.topExpenseMonth.month)}` : `Media ${formatCurrency(summary.monthlyAverageExpenses)}/mes`}
           sparkline={derived.expenseSeries.length > 2 ? derived.expenseSeries : undefined}
           sparklineColor={flowColors.expense}
