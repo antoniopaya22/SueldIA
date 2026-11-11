@@ -9,23 +9,17 @@ import {
   applyCategorySuggestions,
   batchTransactions,
   createCategoryRule,
-  createRecurringTransaction,
-  deleteRecurringTransaction,
   deleteTransaction,
   exportTransactions,
   getAccounts,
   getCategories,
   getRecurringTransactions,
   getSubscriptionSuggestions,
-  type SubscriptionSuggestion,
   getTransactions,
-  setRecurringTransactionActive,
   setCleared,
   splitTransaction,
   unsplitTransaction,
-  updateRecurringTransaction,
   updateTransaction,
-  type RecurringTransaction,
   type Transaction,
   type TransactionFilters,
 } from "../lib/api";
@@ -53,13 +47,11 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { darkBoost } from "../lib/color";
-import {
-  CategorySelect, FilterChip, NONE, getNextMonthlyOccurrence, getTodayIsoDate, type TxType,
-} from "./finance-manage/transactions/shared";
+import { CategorySelect, FilterChip, NONE, getTodayIsoDate, type TxType } from "./finance-manage/transactions/shared";
 import type { TxForm } from "./finance-manage/transactions/TransactionDialog";
 import { TransactionFormDialog } from "./finance-manage/transactions/TransactionFormDialog";
 import { useQuickCategory } from "./finance-manage/transactions/useQuickCategory";
-import { RecurringDialog, type RecurringForm } from "./finance-manage/transactions/RecurringDialog";
+import { monthlyEquivalent, useRecurringEditor } from "./finance-manage/transactions/use-recurring-editor";
 import { SettleDialog } from "./finance-manage/transactions/SettleDialog";
 import { SplitDialog } from "./finance-manage/transactions/SplitDialog";
 import { AmountRangeFilter } from "./finance-manage/transactions/AmountRangeFilter";
@@ -84,19 +76,6 @@ const SORT_OPTIONS: { value: string; label: string; field: SortField; dir: SortD
 ];
 
 const CLEARED_LABELS: Record<string, string> = { [NONE]: "Cualquier estado", true: "Liquidadas", false: "Pendientes" };
-
-function emptyRecurringForm(today: string, accountId: number | null): RecurringForm {
-  return {
-    type: "expense", accountId: accountId ?? "", categoryId: "", amount: "", cadence: "monthly",
-    intervalCount: 1, startDate: today, endDate: "", payee: "", memo: "", autoSettle: false,
-  };
-}
-
-// Importe mensual equivalente de una regla (para el compromiso mensual).
-function monthlyEquivalent(rule: RecurringTransaction) {
-  const perYear = rule.cadence === "weekly" ? 52 : rule.cadence === "yearly" ? 1 : 12;
-  return (rule.amount * perYear) / 12 / Math.max(1, rule.intervalCount);
-}
 
 const SORT_FIELDS: readonly SortField[] = ["date", "payee", "category", "amount", "type"];
 
@@ -146,12 +125,8 @@ function TransactionsView() {
   const [txDialogOpen, setTxDialogOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [txInitial, setTxInitial] = useState<Partial<TxForm> | undefined>(undefined);
-  const [recurringDialogOpen, setRecurringDialogOpen] = useState(false);
-  const [editingRecurringId, setEditingRecurringId] = useState<number | null>(null);
-  const [recurringForm, setRecurringForm] = useState<RecurringForm>(() => emptyRecurringForm(today, null));
   const [settleTarget, setSettleTarget] = useState<Transaction | null>(null);
   const [splitTarget, setSplitTarget] = useState<Transaction | null>(null);
-  const [deleteRecurringTarget, setDeleteRecurringTarget] = useState<RecurringTransaction | null>(null);
 
   const filters: TransactionFilters = useMemo(
     () => ({ ...urlFilters, sortBy, sortDir, page, limit: PAGE_SIZE }),
@@ -189,12 +164,6 @@ function TransactionsView() {
   const invalidateTx = () => invalidateFinance(queryClient);
 
   const closeTxDialog = () => setTxDialogOpen(false);
-
-  const closeRecurringDialog = () => {
-    setRecurringDialogOpen(false);
-    setEditingRecurringId(null);
-    setRecurringForm(emptyRecurringForm(today, selectedAccountId));
-  };
 
   // Quita de la lista (al momento) los movimientos indicados y lo que se borra
   // con ellos: la otra pata de un traspaso y las partes de un gasto dividido.
@@ -332,37 +301,11 @@ function TransactionsView() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  // Crear/editar/pausar una regla genera o borra movimientos: refresca todo lo
-  // que depende de ellos (saldos de las cuentas, "Sin liquidar"…), no solo la lista.
-  const invalidateRecurring = () => invalidateFinance(queryClient);
-
-  const createRecurringMut = useMutation({
-    mutationFn: createRecurringTransaction,
-    onSuccess: () => { invalidateRecurring(); closeRecurringDialog(); toast.success("Pago recurrente programado"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const updateRecurringMut = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Parameters<typeof updateRecurringTransaction>[1] }) => updateRecurringTransaction(id, data),
-    onSuccess: () => { invalidateRecurring(); closeRecurringDialog(); toast.success("Pago recurrente actualizado"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const toggleRecurringActiveMut = useMutation({
-    mutationFn: ({ id, active }: { id: number; active: boolean }) => setRecurringTransactionActive(id, active),
-    onSuccess: (_, v) => { invalidateRecurring(); toast.success(v.active ? "Pago recurrente reactivado" : "Pago recurrente pausado"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const deleteRecurringMut = useMutation({
-    mutationFn: deleteRecurringTransaction,
-    onSuccess: () => { invalidateRecurring(); toast.success("Pago recurrente eliminado"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
+  const recurring = useRecurringEditor({ today, selectedAccountId, accounts: activeAccounts, categoryGroups });
 
   // Alta rápida de categoría desde el menú "⋯" (el formulario de transacción tiene la suya).
   const quickCategory = useQuickCategory(categoryGroups, (category) => {
-    if (recurringDialogOpen) setRecurringForm((f) => ({ ...f, categoryId: category.id }));
+    if (recurring.isOpen) recurring.setCategory(category.id);
   });
 
   // ─── Acciones ────────────────────────────────────────────────
@@ -399,88 +342,7 @@ function TransactionsView() {
 
   const openCreateRecurring = () => {
     setTab("recurring");
-    setEditingRecurringId(null);
-    setRecurringForm(emptyRecurringForm(today, selectedAccountId));
-    setRecurringDialogOpen(true);
-  };
-
-  const openEditRecurring = (rule: RecurringTransaction) => {
-    setEditingRecurringId(rule.id);
-    setRecurringForm({
-      type: rule.type,
-      accountId: rule.accountId,
-      categoryId: rule.categoryId ?? "",
-      amount: rule.amount.toFixed(2),
-      cadence: rule.cadence,
-      intervalCount: rule.intervalCount,
-      startDate: rule.startDate,
-      endDate: rule.endDate ?? "",
-      payee: rule.payee ?? "",
-      memo: rule.memo ?? "",
-      autoSettle: rule.autoSettle,
-    });
-    setRecurringDialogOpen(true);
-  };
-
-  // Una suscripción detectada se programa con lo que ya sabemos de ella; el usuario revisa y confirma.
-  const openRecurringFromSuggestion = (s: SubscriptionSuggestion) => {
-    setEditingRecurringId(null);
-    setRecurringForm({
-      type: "expense",
-      accountId: s.accountId,
-      categoryId: s.categoryId ?? "",
-      amount: s.amount.toFixed(2),
-      cadence: "monthly",
-      intervalCount: 1,
-      startDate: s.nextDate,
-      endDate: "",
-      payee: s.payee,
-      memo: "",
-      autoSettle: false,
-    });
-    setRecurringDialogOpen(true);
-  };
-
-  const openRecurringFromTransaction = (tx: Transaction) => {
-    if (tx.type === "transfer" || tx.recurringTransactionId) return;
-    setEditingRecurringId(null);
-    setRecurringForm({
-      type: tx.type === "income" ? "income" : "expense",
-      accountId: tx.accountId,
-      categoryId: tx.categoryId ?? "",
-      amount: tx.amount.toFixed(2),
-      cadence: "monthly",
-      intervalCount: 1,
-      startDate: getNextMonthlyOccurrence(tx.date, today),
-      endDate: "",
-      payee: tx.payee ?? "",
-      memo: tx.memo ?? "",
-      autoSettle: false,
-    });
-    setRecurringDialogOpen(true);
-  };
-
-  const handleRecurringSubmit = () => {
-    const accountId = recurringForm.accountId || selectedAccountId;
-    if (!accountId || !recurringForm.amount) {
-      toast.error("Selecciona una cuenta e importe");
-      return;
-    }
-    const payload = {
-      accountId: Number(accountId),
-      categoryId: recurringForm.categoryId ? Number(recurringForm.categoryId) : null,
-      type: recurringForm.type,
-      amount: Number(recurringForm.amount),
-      cadence: recurringForm.cadence,
-      intervalCount: recurringForm.intervalCount,
-      startDate: recurringForm.startDate,
-      endDate: recurringForm.endDate || null,
-      payee: recurringForm.payee || null,
-      memo: recurringForm.memo || null,
-      autoSettle: recurringForm.autoSettle,
-    };
-    if (editingRecurringId) updateRecurringMut.mutate({ id: editingRecurringId, data: payload });
-    else createRecurringMut.mutate(payload);
+    recurring.openCreate();
   };
 
   const toggleSort = (field: SortField) => {
@@ -908,7 +770,7 @@ function TransactionsView() {
                   today={today}
                   onEdit={openEditForm}
                   onToggleCleared={(tx) => clearMut.mutate({ id: tx.id, cleared: !tx.cleared })}
-                  onSchedule={openRecurringFromTransaction}
+                  onSchedule={recurring.openFromTransaction}
                   onDuplicate={openDuplicateForm}
                   onSettle={setSettleTarget}
                   onSplit={setSplitTarget}
@@ -959,7 +821,7 @@ function TransactionsView() {
             <StatCard label="Vencidas" value={recurringStats.overdue} icon={ListChecks} hint={recurringStats.overdue > 0 ? "Ya han llegado a su fecha: por liquidar" : "Nada vencido por liquidar"} />
           </StatGrid>
 
-          <SubscriptionSuggestions suggestions={subscriptionSuggestions} onSchedule={openRecurringFromSuggestion} />
+          <SubscriptionSuggestions suggestions={subscriptionSuggestions} onSchedule={recurring.openFromSuggestion} />
 
           <SectionCard
             className="mt-6"
@@ -972,9 +834,9 @@ function TransactionsView() {
                   <RecurringRuleCard
                     key={rule.id}
                     rule={rule}
-                    onEdit={() => openEditRecurring(rule)}
-                    onToggleActive={() => toggleRecurringActiveMut.mutate({ id: rule.id, active: !rule.active })}
-                    onDelete={() => setDeleteRecurringTarget(rule)}
+                    onEdit={() => recurring.openEdit(rule)}
+                    onToggleActive={() => recurring.toggleActive(rule)}
+                    onDelete={() => recurring.askDelete(rule)}
                   />
                 ))}
               </div>
@@ -1000,17 +862,7 @@ function TransactionsView() {
         defaultAccountId={selectedAccountId}
       />
 
-      <RecurringDialog
-        open={recurringDialogOpen}
-        editing={!!editingRecurringId}
-        form={recurringForm}
-        setForm={setRecurringForm}
-        accounts={activeAccounts}
-        groups={categoryGroups}
-        pending={createRecurringMut.isPending || updateRecurringMut.isPending}
-        onClose={closeRecurringDialog}
-        onSubmit={handleRecurringSubmit}
-      />
+      {recurring.dialogs}
 
       {quickCategory.dialog}
 
@@ -1064,15 +916,6 @@ function TransactionsView() {
             batchTransactions({ action: "delete", ids }));
         }}
         onCancel={() => setBulkDeleteOpen(false)}
-      />
-      <ConfirmModal
-        open={!!deleteRecurringTarget}
-        title="Eliminar programación recurrente"
-        message={`¿Eliminar la programación recurrente de ${deleteRecurringTarget?.payee || "este movimiento"}?`}
-        confirmLabel="Eliminar"
-        variant="danger"
-        onConfirm={() => { if (deleteRecurringTarget) deleteRecurringMut.mutate(deleteRecurringTarget.id); setDeleteRecurringTarget(null); }}
-        onCancel={() => setDeleteRecurringTarget(null)}
       />
     </div>
   );
