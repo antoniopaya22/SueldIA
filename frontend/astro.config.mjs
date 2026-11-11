@@ -9,6 +9,10 @@ export default defineConfig({
   // sitemap.
   site: "https://sueldia.vercel.app",
   integrations: [react()],
+  // Cada página de /app es una carga completa: precargar el HTML al pasar el
+  // ratón por un enlace (o al tocarlo en móvil) adelanta la navegación sin
+  // cambiar la arquitectura de islas.
+  prefetch: { prefetchAll: true, defaultStrategy: "hover" },
   server: { port: 4321 },
   vite: {
     plugins: [tailwindcss()],

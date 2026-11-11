@@ -535,7 +535,7 @@ function AppShellInner({ currentPath, children }: AppShellProps) {
     if (params.has("nueva")) {
       params.delete("nueva");
       const query = params.toString();
-      window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
       open();
     }
 

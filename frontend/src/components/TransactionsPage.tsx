@@ -322,7 +322,7 @@ function TransactionsView() {
     }
     if (!changed) return;
     const query = params.toString();
-    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

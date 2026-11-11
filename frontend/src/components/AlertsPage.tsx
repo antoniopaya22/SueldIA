@@ -497,7 +497,7 @@ function AlertsView() {
     if (!requested) return;
     params.delete("tipo");
     const query = params.toString();
-    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
     if (RULE_TYPE_GROUPS.some((g) => g.types.includes(requested as AlertRuleType))) openDialog(null, requested as AlertRuleType);
   }, []);
 

@@ -83,7 +83,7 @@ export function transactionsHref(filters: TxUrlFilters): string {
 export function writeTxFilters(filters: TxUrlFilters) {
   const url = new URL(window.location.href);
   applyFilters(url.searchParams, filters);
-  window.history.replaceState(null, "", url);
+  window.history.replaceState(window.history.state, "", url);
 }
 
 // ─── Periodos ───────────────────────────────────────────────────

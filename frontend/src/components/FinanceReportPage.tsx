@@ -286,7 +286,7 @@ function ReportView() {
     setMonth(next);
     const url = new URL(window.location.href);
     url.searchParams.set("mes", next);
-    window.history.replaceState(null, "", url);
+    window.history.replaceState(window.history.state, "", url);
   };
 
   const { data, isLoading, error, refetch } = useQuery({

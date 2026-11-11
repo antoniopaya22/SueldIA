@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useLeaveGuard } from "../../hooks/use-leave-guard";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Building2, ChevronDown, FileText, Gift, Link2, Loader2, MoreHorizontal,
@@ -513,14 +514,8 @@ export function PayslipDetail({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [confirmReprocess, setConfirmReprocess] = useState(false);
 
-  // Cada página de la app es una carga completa: un clic en el menú con una
-  // edición a medias la perdía sin avisar.
-  useEffect(() => {
-    if (!editing) return;
-    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [editing]);
+  // Un clic en el menú con una edición a medias la perdía sin avisar.
+  useLeaveGuard(editing, "Tienes cambios sin guardar en esta nómina. ¿Salir sin guardarlos?");
 
   const validate = (): Record<string, string> => {
     const e: Record<string, string> = {};

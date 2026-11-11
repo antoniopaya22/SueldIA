@@ -151,6 +151,13 @@ Patrón visual: bruto en navy (línea discontinua), neto en verde (área/sólido
 
 La app es instalable: `public/manifest.webmanifest` (nombre, colores, iconos en `public/icons/`, atajos a Nueva transacción / Subir nómina / Analítica), enlazado desde `Layout.astro`, `MarketingLayout.astro` y `login.astro`. `public/sw.js` es un service worker **mínimo**: solo guarda `public/offline.html` y la muestra si una navegación falla sin red. **No cachea nada de `/api` ni de las páginas de la app** (son datos financieros); no añadir caché de datos sin decidirlo explícitamente. Si cambias `offline.html`, sube la versión de `CACHE` en `sw.js`.
 
+## Navegación (ClientRouter)
+
+`Layout.astro` usa el `ClientRouter` de Astro: entre páginas de `/app` no hay recarga completa, el JS y la caché de React Query (`appQueryClient`, singleton de módulo) sobreviven, y las islas se desmontan y vuelven a montar.
+- `history.replaceState` / `pushState`: pasar siempre `window.history.state` como primer argumento, nunca `null` (si no, Atrás deja de funcionar).
+- Avisar de cambios sin guardar con `useLeaveGuard` (`hooks/use-leave-guard.ts`): `beforeunload` solo no basta, una navegación interna no lo dispara.
+- Lo que dependa de `<html>` (clase `dark`) se reaplica en `astro:after-swap` (ver el script de tema de `Layout.astro`).
+
 ## Seguridad (CSP)
 
 `npm run build` = `astro build` + `scripts/csp.mjs`, que añade a cada HTML una `Content-Security-Policy` con el hash de cada `<script>` en línea. Consecuencias:
