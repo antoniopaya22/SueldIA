@@ -7,9 +7,17 @@ type Source = "boundary" | "window" | "promise";
 
 const sent = new Set<string>();
 
+// Desajustes de hidratación que React ya corrige solo (vuelve a pintar la isla
+// en el cliente). Son esperables con el ClientRouter: al navegar, la caché de
+// React Query ya tiene datos y la página se pinta directamente con ellos, no
+// con el esqueleto del HTML estático. No es un error para el usuario y
+// llenaba los logs en cada navegación. (#418/#423/#425 en producción.)
+const HYDRATION = /Hydration failed|hydrat|Minified React error #(418|423|425)\b/i;
+
 export async function reportClientError(error: unknown, source: Source, componentStack?: string): Promise<void> {
   try {
     const err = error instanceof Error ? error : new Error(String(error));
+    if (HYDRATION.test(err.message)) return;
     // Un mismo error repetido en bucle se manda una vez por página.
     const key = `${source}:${err.message}`;
     if (sent.has(key) || sent.size > 20) return;

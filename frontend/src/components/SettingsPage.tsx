@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { usePreference } from "@/hooks/use-preference";
+import { useHydrated } from "@/hooks/use-hydrated";
 import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 import { CHART_PALETTES, DEFAULT_CHART_PALETTE, isChartPaletteId, previewColors } from "@/lib/chart-palettes";
 import { cn } from "cn";
@@ -394,8 +395,9 @@ function RestoreBackupRow() {
 /** «Instalar la app» (o cómo hacerlo en iPhone); nada si ya está instalada. */
 function InstallRow() {
   const [, force] = useState(0);
+  const hydrated = useHydrated();
   useEffect(() => onInstallAvailabilityChange(() => force((n) => n + 1)), []);
-  if (isStandalone()) return null;
+  if (!hydrated || isStandalone()) return null;
   const canPrompt = canPromptInstall();
   const ios = needsInstallForPush();
   if (!canPrompt && !ios) return null;
@@ -461,8 +463,11 @@ function NotificationsSection() {
     }
   };
 
-  const supported = isPushSupported();
-  const install = needsInstallForPush();
+  // Lo que admite el navegador se mira tras hidratar: en el prerender no hay
+  // navegador y salía «Este navegador no admite avisos» un instante.
+  const hydrated = useHydrated();
+  const supported = !hydrated || isPushSupported();
+  const install = hydrated && needsInstallForPush();
   const description = !supported
     ? install
       ? "En iPhone y iPad, primero añade SueldIA a la pantalla de inicio (Compartir → Añadir a pantalla de inicio) y ábrela desde ahí."
