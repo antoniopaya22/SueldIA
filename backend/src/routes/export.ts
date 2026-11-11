@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import { Router } from "express";
 import { z } from "zod";
 import { toCsv } from "../utils/csv.js";
@@ -27,7 +28,17 @@ exportRouter.get("/all", async (req, res, next) => {
     const data = await buildFullExport(userId);
     if (!data) return res.status(404).json({ error: "Usuario no encontrado" });
     res.setHeader("Content-Disposition", `attachment; filename="sueldia-datos-${userId}.json"`);
-    res.json(data);
+    // Comprimida si el navegador lo acepta (siempre): Vercel corta las
+    // respuestas de más de 4,5 MB y un JSON con años de movimientos y el texto
+    // de las nóminas puede acercarse; comprimido ocupa ~10 veces menos.
+    const body = JSON.stringify(data);
+    if (/\bgzip\b/.test(req.headers["accept-encoding"] ?? "")) {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Encoding", "gzip");
+      res.setHeader("Vary", "Accept-Encoding");
+      return res.send(gzipSync(body));
+    }
+    res.type("json").send(body);
   } catch (err) {
     next(err);
   }
