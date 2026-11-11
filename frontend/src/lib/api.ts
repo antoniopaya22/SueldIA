@@ -1412,9 +1412,24 @@ export interface Forecast {
   endOfMonth: { date: string; balance: number };
   lowest: { date: string; balance: number };
   firstNegative: string | null;
+  /** null = todas las cuentas. */
+  accountId: number | null;
+  /** «Si gasto lo presupuestado» (solo si se pidió y sin cuenta). */
+  scenario: {
+    points: Array<{ date: string; balance: number }>;
+    endOfMonth: { date: string; balance: number };
+    lowest: { date: string; balance: number };
+    firstNegative: string | null;
+    remainingByMonth: Array<{ month: string; amount: number }>;
+  } | null;
 }
 
-export const getForecast = (days = 90) => request<Forecast>(`/finance/forecast?days=${days}`);
+export const getForecast = (days = 90, opts: { accountId?: number | null; budget?: boolean } = {}) => {
+  const params = new URLSearchParams({ days: String(days) });
+  if (opts.accountId) params.set("accountId", String(opts.accountId));
+  if (opts.budget) params.set("budget", "true");
+  return request<Forecast>(`/finance/forecast?${params}`);
+};
 
 export interface SubscriptionSuggestion {
   payee: string;

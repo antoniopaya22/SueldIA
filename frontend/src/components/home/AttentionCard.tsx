@@ -24,7 +24,7 @@ const dayMonth = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString
  */
 export function AttentionCard({ hasFinance, hasPayroll }: { hasFinance: boolean; hasPayroll: boolean }) {
   const month = currentMonthKey();
-  const { data: forecast } = useQuery({ queryKey: ["finance-forecast", 60], queryFn: () => getForecast(60), enabled: hasFinance });
+  const { data: forecast } = useQuery({ queryKey: ["forecast", 60, null, false], queryFn: () => getForecast(60), enabled: hasFinance });
   const { data: review } = useQuery({
     queryKey: ["payslips", "review-count", "all"],
     queryFn: () => getPayslips({ status: "review", limit: 1 }),

@@ -15,6 +15,9 @@ import { getForecast } from "../services/forecast.service.js";
 import { getAmountDistribution, getDailySeries } from "../services/chart-series.service.js";
 import { getTodayIsoDate } from "../services/recurring-transactions.service.js";
 import { isoDateSchema, monthKeySchema } from "../utils/dates.js";
+import { db } from "../db/index.js";
+import { accounts } from "../db/schema.js";
+import { and, eq } from "drizzle-orm";
 
 export const financeRouter = Router();
 
@@ -203,11 +206,22 @@ financeRouter.get("/balance-history", async (req, res, next) => {
 financeRouter.get("/forecast", async (req, res, next) => {
   try {
     const { userId } = req.user!;
-    const parsed = z.object({ days: z.coerce.number().int().min(7).max(365).default(90) }).safeParse(req.query);
+    const parsed = z
+      .object({
+        days: z.coerce.number().int().min(7).max(365).default(90),
+        accountId: z.coerce.number().int().positive().optional(),
+        budget: z.enum(["true", "false"]).optional(),
+      })
+      .safeParse(req.query);
     if (!parsed.success) {
       return res.status(400).json({ error: "Parámetros de consulta inválidos", details: parsed.error.flatten().fieldErrors });
     }
-    res.json(await getForecast(userId, parsed.data.days));
+    const { days, accountId, budget } = parsed.data;
+    if (accountId) {
+      const [own] = await db.select({ id: accounts.id }).from(accounts).where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
+      if (!own) return res.status(404).json({ error: "Cuenta no encontrada" });
+    }
+    res.json(await getForecast(userId, days, { accountId, budget: budget === "true" }));
   } catch (err) {
     next(err);
   }
