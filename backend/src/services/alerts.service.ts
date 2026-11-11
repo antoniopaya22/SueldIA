@@ -32,7 +32,7 @@ export const alertConfigSchemas = {
     profileId: z.number().int().positive().optional(),
     metric: z.enum(["net", "gross"]),
     comparator: z.enum(["below", "above"]),
-    value: z.number().nonnegative(),
+    value: z.number().finite().nonnegative().max(1_000_000_000),
   }),
   // Alertas de finanzas (ver finance-alerts.service.ts)
   ...financeAlertConfigSchemas,

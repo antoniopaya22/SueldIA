@@ -5,6 +5,8 @@ import { eq, and, inArray, max } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { getAccountsWithBalance } from "../services/finance.service.js";
+import { moneySchema } from "../utils/validation.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const accountsRouter = Router();
 accountsRouter.param("id", validateIdParam);
@@ -13,7 +15,7 @@ const accountSchema = z.object({
   name: z.string().min(1, "El nombre es obligatorio").max(100),
   type: z.enum(["bank", "credit_card", "cash", "investment", "other"]).optional(),
   currency: z.string().max(10).optional(),
-  initialBalance: z.number().optional(),
+  initialBalance: moneySchema.optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   icon: z.string().max(50).nullish(),
 });
@@ -84,6 +86,7 @@ accountsRouter.get("/:id", async (req, res, next) => {
 accountsRouter.post("/", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    await assertUnderLimit(accounts, accounts.userId, userId, USER_LIMITS.accounts, "cuentas");
     const parsed = accountSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({

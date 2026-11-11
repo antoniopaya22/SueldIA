@@ -4,6 +4,7 @@ import { profiles } from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const profilesRouter = Router();
 profilesRouter.param("id", validateIdParam);
@@ -60,6 +61,7 @@ profilesRouter.get("/:id", async (req, res, next) => {
 profilesRouter.post("/", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    await assertUnderLimit(profiles, profiles.userId, userId, USER_LIMITS.profiles, "perfiles");
     const parsed = profileSchema.safeParse(req.body);
     if (!parsed.success)
       return res.status(400).json({ error: parsed.error.flatten() });

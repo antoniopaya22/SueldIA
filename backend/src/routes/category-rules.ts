@@ -4,6 +4,8 @@ import { validateIdParam } from "../middleware/params.js";
 import { categoryBelongsToUser } from "../services/budgets.service.js";
 import { applySuggestions, deleteRule, listRules, upsertRule } from "../services/category-rules.service.js";
 import { normalizeText } from "../utils/text.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
+import { categoryRules } from "../db/schema.js";
 
 export const categoryRulesRouter = Router();
 categoryRulesRouter.param("id", validateIdParam);
@@ -29,6 +31,7 @@ const ruleSchema = z.object({
 categoryRulesRouter.post("/", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    await assertUnderLimit(categoryRules, categoryRules.userId, userId, USER_LIMITS.categoryRules, "reglas de categorización");
     const parsed = ruleSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });

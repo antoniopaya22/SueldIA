@@ -19,6 +19,8 @@ import {
   syncRecurringTransactions,
 } from "../services/recurring-transactions.service.js";
 import { isoDateSchema } from "../utils/dates.js";
+import { positiveMoneySchema } from "../utils/validation.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const recurringTransactionsRouter = Router();
 recurringTransactionsRouter.param("id", validateIdParam);
@@ -28,7 +30,7 @@ const recurringTransactionSchema = z
     accountId: z.number().int().positive("Cuenta requerida"),
     categoryId: z.number().int().positive().nullish(),
     type: z.enum(["expense", "income"]),
-    amount: z.number().positive("Importe debe ser positivo"),
+    amount: positiveMoneySchema("Importe debe ser positivo"),
     cadence: z.enum(["weekly", "monthly", "yearly"]),
     intervalCount: z.number().int().min(1).max(12).default(1),
     startDate: isoDateSchema,
@@ -133,6 +135,7 @@ recurringTransactionsRouter.get("/suggestions", async (req, res, next) => {
 recurringTransactionsRouter.post("/", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    await assertUnderLimit(recurringTransactions, recurringTransactions.userId, userId, USER_LIMITS.recurring, "programaciones recurrentes");
     const parsed = recurringTransactionSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({

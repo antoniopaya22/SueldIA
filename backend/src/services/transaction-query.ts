@@ -22,8 +22,8 @@ export const transactionFilterFields = {
   search: z.string().optional(),
   // Movimientos de gasto/ingreso sin categoría (los traspasos nunca tienen).
   uncategorized: z.enum(["true"]).optional(),
-  minAmount: z.coerce.number().nonnegative().optional(),
-  maxAmount: z.coerce.number().nonnegative().optional(),
+  minAmount: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+  maxAmount: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
 };
 
 export const amountRangeValid = (d: { minAmount?: number; maxAmount?: number }) =>

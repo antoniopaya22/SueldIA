@@ -5,6 +5,7 @@ import { eq, and, desc } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { alertConfigSchemas, evaluateRulesForUser, type AlertRuleType } from "../services/alerts.service.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const alertsRouter = Router();
 alertsRouter.param("id", validateIdParam);
@@ -43,6 +44,7 @@ alertsRouter.get("/rules", async (req, res, next) => {
 alertsRouter.post("/rules", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    await assertUnderLimit(alertRules, alertRules.userId, userId, USER_LIMITS.alertRules, "reglas de alerta");
     const parsed = baseRuleSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });

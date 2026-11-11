@@ -1,13 +1,14 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { categoryGroups, categories } from "../db/schema.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { seedDefaultCategories } from "../services/default-categories.service.js";
 import {
   deleteCategories, getCategoryUsage, ownedCategoryGroupId, ownedGroupCategoryIds,
 } from "../services/category-deletion.service.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const categoriesRouter = Router();
 categoriesRouter.param("id", validateIdParam);
@@ -68,6 +69,7 @@ categoriesRouter.post("/seed-defaults", async (req, res, next) => {
 categoriesRouter.post("/groups", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    await assertUnderLimit(categoryGroups, categoryGroups.userId, userId, USER_LIMITS.categoryGroups, "grupos de categorías");
     const parsed = groupSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -177,6 +179,16 @@ categoriesRouter.post("/", async (req, res, next) => {
       .from(categoryGroups)
       .where(and(eq(categoryGroups.id, parsed.data.groupId), eq(categoryGroups.userId, userId)));
     if (!group) return res.status(404).json({ error: "Grupo no encontrado" });
+
+    // categories no tiene user_id: se cuentan a través de sus grupos.
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(categories)
+      .innerJoin(categoryGroups, eq(categories.groupId, categoryGroups.id))
+      .where(eq(categoryGroups.userId, userId));
+    if (n >= USER_LIMITS.categories) {
+      return res.status(409).json({ error: `Has llegado al máximo de ${USER_LIMITS.categories} categorías` });
+    }
 
     const [category] = await db
       .insert(categories)

@@ -214,6 +214,22 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect(leaks).toEqual([]);
   }, 60_000);
 
+  it("rechaza entradas que antes rompían datos (importes infinitos, fechas imposibles)", async () => {
+    // JSON con 1e999 → Infinity al parsear: antes se guardaba y las sumas pasaban a Infinity.
+    const raw = await fetch(`${api}/api/transactions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tokens.a}`, "Content-Type": "application/json" },
+      body: `{"accountId":${ids.account},"type":"expense","amount":1e999,"date":"2026-01-01"}`,
+    });
+    expect(raw.status).toBe(400);
+    expect((await call("a", "PUT", "/budgets", { categoryId: ids.category, month: "2026-13", assigned: 1 })).status).toBe(400);
+    expect((await call("a", "POST", "/recurring-transactions", {
+      accountId: ids.account, type: "expense", amount: 1, cadence: "weekly", intervalCount: 1, startDate: "2025-02-32",
+    })).status).toBe(400);
+    expect((await call("a", "POST", "/transactions/bulk", { transactions: [] })).status).toBe(404);
+    expect((await call("a", "GET", "/transactions?limit=10000")).status).toBe(400);
+  });
+
   it("los datos de A siguen intactos", async () => {
     expect((await call("a", "GET", `/profiles/${ids.profile}`)).json).toMatchObject({ name: "A" });
     expect((await call("a", "GET", `/accounts/${ids.account}`)).json).toMatchObject({ name: "Banco A", archived: false });

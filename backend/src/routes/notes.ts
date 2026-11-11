@@ -5,6 +5,7 @@ import { eq, and, desc, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { userOwnsPayslip } from "../utils/ownership.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const notesRouter = Router();
 notesRouter.param("id", validateIdParam);
@@ -45,6 +46,7 @@ notesRouter.post("/", async (req, res, next) => {
     if (!(await userOwnsPayslip(userId, parsed.data.payslipId))) {
       return res.status(404).json({ error: "Nómina no encontrada" });
     }
+    await assertUnderLimit(payslipNotes, payslipNotes.payslipId, parsed.data.payslipId, USER_LIMITS.notesPerPayslip, "notas en esta nómina");
 
     const [note] = await db.insert(payslipNotes).values(parsed.data).returning();
     res.status(201).json(note);

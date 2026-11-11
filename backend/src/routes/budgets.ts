@@ -4,6 +4,7 @@ import {
   autoAssign, categoryBelongsToUser, deleteTarget, getBudgetSummary, moveBetweenCategories, upsertBudget, upsertTarget,
 } from "../services/budgets.service.js";
 import { monthKeySchema } from "../utils/dates.js";
+import { moneySchema } from "../utils/validation.js";
 
 export const budgetsRouter = Router();
 
@@ -28,7 +29,7 @@ budgetsRouter.get("/", async (req, res, next) => {
 const upsertSchema = z.object({
   categoryId: z.number().int().positive(),
   month: monthSchema,
-  assigned: z.number(),
+  assigned: moneySchema,
 });
 
 // Asignar (o reasignar) un importe a una categoría en un mes — upsert.

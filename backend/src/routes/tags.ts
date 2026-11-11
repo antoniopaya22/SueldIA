@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { userOwnsPayslip } from "../utils/ownership.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const tagsRouter = Router();
 tagsRouter.param("id", validateIdParam);
@@ -31,6 +32,7 @@ tagsRouter.get("/", async (req, res, next) => {
 tagsRouter.post("/", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    await assertUnderLimit(tags, tags.userId, userId, USER_LIMITS.tags, "etiquetas");
     const parsed = tagSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
