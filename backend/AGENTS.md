@@ -68,7 +68,9 @@ Métricas de calidad: `payslips.parser_format` y `payslips.parse_ms`, más la l�
 
 ## Schema de Base de Datos
 
-`src/db/schema.ts` (Drizzle `pg-core`). Tablas: `users`, `profiles`, `payslips` (sin `file_path` — no se guarda el PDF), `payslip_concepts`, `payslip_notes`, `tags`, `payslip_tags`, `alert_rules`, `alert_history`, `accounts`, `category_groups`, `categories`, `transactions`, `recurring_transactions`, `budgets`, `category_targets`, `category_rules`, `user_preferences`, `savings_goals`, `account_valuations`, `push_subscriptions`.
+`src/db/schema.ts` (Drizzle `pg-core`). Tablas: `users`, `profiles`, `payslips` (sin `file_path` — no se guarda el PDF), `payslip_concepts`, `payslip_notes`, `tags`, `payslip_tags`, `alert_rules`, `alert_history`, `accounts`, `category_groups`, `categories`, `transactions`, `recurring_transactions`, `budgets`, `category_targets`, `category_rules`, `user_preferences`, `savings_goals`, `account_valuations`, `push_subscriptions`, `activity_log`.
+
+- **Registro de actividad**: una ruta nueva que modifique datos del usuario se añade a `ACTIVITY` (`services/activity.service.ts`) con su texto en español; la prueba de `authorization.test.ts` comprueba que cada clave corresponde a una ruta real.
 
 - **Saldos**: `getAccountsWithBalance` es la fuente única (inicial + liquidados + ajuste de la última valoración, ver `services/loans.service.ts`). La previsión en total y la alerta de saldo bajo no cuentan préstamos ni hipotecas (no son dinero disponible); «saldo total» y el patrimonio, sí.
 

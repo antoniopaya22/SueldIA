@@ -40,6 +40,7 @@ Aplicación web monorepo de gestión y análisis de nóminas españolas. Solo ve
 | `recurring_skips` | Ocurrencias de una recurrente que no se generan («saltar esta vez», o el pasado al crear «desde hoy») |
 | `savings_goals` | Objetivos de ahorro (importe, fecha, cuenta asociada o cantidad apuntada a mano) |
 | `push_subscriptions` | Dispositivos con avisos push activados (Web Push) |
+| `activity_log` | Registro de actividad («qué ha cambiado y cuándo»), 180 días. Lo apunta un middleware según `ACTIVITY` en `services/activity.service.ts` |
 
 **RLS**: todas las tablas tienen Row Level Security activado y sin políticas (`.enableRLS()` en `schema.ts`). La app no usa la Data API de Supabase; el backend se conecta como propietario. Una tabla nueva sin `.enableRLS()` hace fallar `db:migrate`.
 
