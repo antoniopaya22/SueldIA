@@ -308,6 +308,33 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect((await send("a", true)).body.summary).toMatchObject({ transactions: 3, duplicates: 0 });
   });
 
+  it("importar un extracto bancario en CSV", async () => {
+    const csv = "Movimientos de la cuenta\nFecha;Concepto;Importe;Saldo\n01/03/2026;MERCADONA;-45,30;100,00\n02/03/2026;NOMINA;2.000,00;2.100,00\n";
+    const send = async (user: "a" | "b", path: string, fields: Record<string, string> = {}) => {
+      const form = new FormData();
+      form.append("file", new Blob([csv], { type: "text/csv" }), "extracto.csv");
+      for (const [k, v] of Object.entries(fields)) form.append(k, v);
+      const res = await fetch(`${api}/api/import/${path}`, { method: "POST", headers: { Authorization: `Bearer ${tokens[user]}` }, body: form });
+      return { status: res.status, body: (await res.json()) as Record<string, any> };
+    };
+    const inspect = await send("a", "csv/inspect");
+    expect(inspect.body).toMatchObject({ delimiter: ";", headerIndex: 1, header: ["Fecha", "Concepto", "Importe", "Saldo"] });
+    const fields = { accountId: String(ids.account), headerIndex: "1", mapping: JSON.stringify(inspect.body.mapping) };
+
+    const preview = await send("a", "csv?dryRun=true", fields);
+    expect(preview.body.summary).toEqual({ transactions: 2, duplicates: 0, errors: 0 });
+
+    // B no puede importar en la cuenta de A.
+    expect((await send("b", "csv", fields)).status).toBe(404);
+
+    const done = await send("a", "csv", fields);
+    expect(done.status).toBe(201);
+    expect(done.body.summary).toMatchObject({ transactions: 2, duplicates: 0 });
+    // Otra vez el mismo extracto: todo duplicado.
+    expect((await send("a", "csv?dryRun=true", fields)).body.summary).toMatchObject({ transactions: 0, duplicates: 2 });
+    await call("a", "DELETE", `/import/batches/${done.body.batchId}`);
+  });
+
   it("los datos de A siguen intactos", async () => {
     expect((await call("a", "GET", `/profiles/${ids.profile}`)).json).toMatchObject({ name: "A" });
     expect((await call("a", "GET", `/accounts/${ids.account}`)).json).toMatchObject({ name: "Banco A", archived: false });

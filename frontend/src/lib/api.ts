@@ -1479,3 +1479,67 @@ export const reconcileAccount = (accountId: number, statementBalance: number, cr
     `/accounts/${accountId}/reconcile`,
     { method: "POST", body: JSON.stringify({ statementBalance, createAdjustment }) },
   );
+
+// ─── Importar extracto bancario (CSV) ───────────────────────────
+export interface BankCsvMapping {
+  delimiter: ";" | "," | "\t" | "|";
+  hasHeader: boolean;
+  dateColumn: number;
+  dateFormat: "DD/MM/YYYY" | "YYYY-MM-DD" | "MM/DD/YYYY";
+  payeeColumn: number;
+  memoColumn?: number | null;
+  amountColumn?: number | null;
+  debitColumn?: number | null;
+  creditColumn?: number | null;
+  decimal: "comma" | "dot";
+}
+
+export interface BankCsvInspect {
+  delimiter: BankCsvMapping["delimiter"];
+  headerIndex: number;
+  header: string[];
+  sample: string[][];
+  totalLines: number;
+  mapping: BankCsvMapping;
+}
+
+export interface BankCsvResult {
+  ok: boolean;
+  dryRun?: boolean;
+  batchId?: string;
+  summary: { transactions: number; duplicates: number; errors: number; categorized?: number };
+  errors?: Array<{ line: number; reason: string }>;
+  sample?: ImportPreviewRow[];
+}
+
+/** POST multipart con el mismo tratamiento de errores que request(). */
+async function postForm<T>(path: string, form: FormData): Promise<T> {
+  const token = await getAuthToken();
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { method: "POST", body: form, headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  } catch {
+    throw new ApiError(0, apiErrorMessage(0, null));
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    if (res.status === 401) void handleUnauthorized();
+    throw new ApiError(res.status, apiErrorMessage(res.status, body));
+  }
+  return res.json();
+}
+
+export const inspectBankCsv = (file: File) => {
+  const form = new FormData();
+  form.append("file", file);
+  return postForm<BankCsvInspect>("/import/csv/inspect", form);
+};
+
+export const importBankCsv = (file: File, accountId: number, headerIndex: number, mapping: BankCsvMapping, dryRun: boolean) => {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("accountId", String(accountId));
+  form.append("headerIndex", String(headerIndex));
+  form.append("mapping", JSON.stringify(mapping));
+  return postForm<BankCsvResult>(`/import/csv${dryRun ? "?dryRun=true" : ""}`, form);
+};

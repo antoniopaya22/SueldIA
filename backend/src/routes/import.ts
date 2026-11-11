@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { decodeCsv, detectDelimiter, findHeaderIndex, guessMapping, parseBankCsv, splitCsv } from "../parsers/bank-csv.js";
+import { findRuleCategory, loadRules } from "../services/category-rules.service.js";
+import { todayIso } from "../utils/dates.js";
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { accounts, categoryGroups, categories, transactions } from "../db/schema.js";
@@ -284,6 +287,153 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
       ok: true,
       batchId,
       summary: { ...baseSummary, transactions: result.imported, duplicates: result.skipped },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ─── Extractos bancarios (CSV de cualquier banco) ───────────────
+const bankMappingSchema = z.object({
+  delimiter: z.enum([";", ",", "\t", "|"]),
+  hasHeader: z.boolean(),
+  dateColumn: z.number().int().min(0).max(100),
+  dateFormat: z.enum(["DD/MM/YYYY", "YYYY-MM-DD", "MM/DD/YYYY"]),
+  payeeColumn: z.number().int().min(0).max(100),
+  memoColumn: z.number().int().min(0).max(100).nullish(),
+  amountColumn: z.number().int().min(0).max(100).nullish(),
+  debitColumn: z.number().int().min(0).max(100).nullish(),
+  creditColumn: z.number().int().min(0).max(100).nullish(),
+  decimal: z.enum(["comma", "dot"]),
+}).refine((m) => m.amountColumn != null || (m.debitColumn != null && m.creditColumn != null), {
+  message: "Indica la columna del importe o las de cargo y abono",
+});
+
+// Primer paso: leer el fichero y proponer qué columna es cada cosa.
+importRouter.post("/csv/inspect", uploadCsv.single("file"), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No se ha subido ningún archivo" });
+    const text = decodeCsv(req.file.buffer);
+    const delimiter = detectDelimiter(text);
+    const lines = splitCsv(text, delimiter);
+    if (lines.length < 2) return res.status(400).json({ error: "El archivo está vacío o tiene una sola línea" });
+    // Algunos bancos ponen unas líneas de cabecera antes de la tabla: se
+    // toma como cabecera la primera fila con el número de columnas habitual.
+    const headerIndex = findHeaderIndex(lines);
+    const header = lines[headerIndex];
+    res.json({
+      delimiter,
+      headerIndex,
+      header,
+      sample: lines.slice(headerIndex + 1, headerIndex + 9),
+      totalLines: lines.length - headerIndex - 1,
+      mapping: guessMapping(header, lines[headerIndex + 1], delimiter),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Segundo paso: vista previa (?dryRun=true) o importación a una cuenta.
+importRouter.post("/csv", uploadCsv.single("file"), async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const dryRun = req.query.dryRun === "true";
+    if (!req.file) return res.status(400).json({ error: "No se ha subido ningún archivo" });
+    const accountId = Number(req.body.accountId);
+    const headerIndex = Math.max(0, Number(req.body.headerIndex) || 0);
+    let mappingRaw: unknown;
+    try {
+      mappingRaw = JSON.parse(String(req.body.mapping ?? ""));
+    } catch {
+      return res.status(400).json({ error: "Mapeo de columnas no válido" });
+    }
+    const mapping = bankMappingSchema.safeParse(mappingRaw);
+    if (!mapping.success) {
+      return res.status(400).json({ error: "Mapeo de columnas no válido", details: mapping.error.flatten().fieldErrors });
+    }
+    const [account] = await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
+    if (!account) return res.status(404).json({ error: "Cuenta no encontrada" });
+
+    const text = decodeCsv(req.file.buffer).split(/\r?\n/).filter((l) => l.trim() !== "").slice(headerIndex).join("\n");
+    const parsed = parseBankCsv(text, mapping.data);
+    // Números de línea del fichero original (se recortaron las líneas de título).
+    for (const e of parsed.errors) e.line += headerIndex;
+    if (parsed.rows.length === 0) {
+      return res.status(400).json({ error: "No se ha podido leer ningún movimiento con estas columnas", errors: parsed.errors.slice(0, 20) });
+    }
+
+    // Duplicados por recuento contra lo que ya hay en esa cuenta.
+    const existing = await db
+      .select({ date: transactions.date, amount: transactions.amount, type: transactions.type, payee: transactions.payee })
+      .from(transactions)
+      .where(and(eq(transactions.userId, userId), eq(transactions.accountId, accountId)));
+    const counts = new Map<string, number>();
+    const keyOf = (date: string, signed: number, payee: string | null) => `${date}|${signed}|${(payee ?? "").toLowerCase()}`;
+    for (const t of existing) {
+      const signed = t.type === "income" ? t.amount : -t.amount;
+      const k = keyOf(t.date, signed, t.payee);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const isDuplicate = (date: string, amount: number, payee: string) => {
+      const k = keyOf(date, amount, payee || null);
+      const n = counts.get(k) ?? 0;
+      if (n === 0) return false;
+      counts.set(k, n - 1);
+      return true;
+    };
+    const fresh = parsed.rows.filter((r) => !isDuplicate(r.date, r.amount, r.payee));
+    const duplicates = parsed.rows.length - fresh.length;
+
+    if (dryRun) {
+      const freshSet = new Set(fresh);
+      return res.json({
+        ok: true,
+        dryRun: true,
+        summary: { transactions: fresh.length, duplicates, errors: parsed.errors.length },
+        errors: parsed.errors.slice(0, 20),
+        sample: parsed.rows.slice(0, 100).map((r) => ({
+          date: r.date, account: "", payee: r.payee, category: "", amount: r.amount,
+          status: freshSet.has(r) ? "new" : "duplicate",
+        })),
+      });
+    }
+
+    // Categoría con las reglas del usuario («si el beneficiario contiene…»).
+    const rules = await loadRules(userId);
+    const batchId = randomUUID();
+    const today = todayIso();
+    const values = fresh.map((r) => ({
+      userId,
+      accountId,
+      type: (r.amount > 0 ? "income" : "expense") as "income" | "expense",
+      amount: Math.abs(r.amount),
+      date: r.date,
+      payee: r.payee || null,
+      memo: r.memo || null,
+      categoryId: findRuleCategory(r.payee, rules),
+      // Lo que ya aparece en el extracto, el banco ya lo ha cobrado o pagado.
+      cleared: r.date <= today,
+      importedFrom: "csv",
+      importBatchId: batchId,
+    }));
+    await db.transaction(async (tx) => {
+      for (let i = 0; i < values.length; i += INSERT_CHUNK) {
+        await tx.insert(transactions).values(values.slice(i, i + INSERT_CHUNK));
+      }
+    });
+    res.status(201).json({
+      ok: true,
+      batchId,
+      summary: {
+        transactions: values.length,
+        duplicates,
+        errors: parsed.errors.length,
+        categorized: values.filter((v) => v.categoryId != null).length,
+      },
     });
   } catch (err) {
     next(err);

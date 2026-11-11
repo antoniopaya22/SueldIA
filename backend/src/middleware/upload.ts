@@ -74,7 +74,7 @@ const csvFilter = (
   if (allowed) {
     cb(null, true);
   } else {
-    cb(new AppError(400, "Solo se permiten archivos CSV o TSV exportados desde YNAB"));
+    cb(new AppError(400, "Solo se permiten archivos CSV, TSV o TXT"));
   }
 };
 

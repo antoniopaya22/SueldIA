@@ -8,6 +8,10 @@ import {
 } from "lucide-react";
 import { getImportBatches, importYnab, undoImportBatch, type ImportPreviewRow, type ImportResult } from "../lib/api";
 import { ConfirmModal } from "./ui/ConfirmModal";
+import { PreviewTable } from "./import/PreviewTable";
+import { BankImport } from "./import/BankImport";
+import { Segmented } from "./app";
+import { useUrlEnumParam } from "../lib/url-state";
 import { Providers } from "./Providers";
 import { invalidateFinance } from "../lib/finance-cache";
 import { toast } from "sonner";
@@ -113,52 +117,6 @@ function DuplicatesNote({ count, done }: { count: number; done: boolean }) {
   );
 }
 
-const STATUS_LABEL: Record<ImportPreviewRow["status"], { label: string; className: string }> = {
-  new: { label: "Nuevo", className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
-  duplicate: { label: "Ya existe", className: "bg-muted text-muted-foreground" },
-  skipped: { label: "Importe 0", className: "bg-muted text-muted-foreground" },
-};
-
-/** Muestra de filas de la vista previa: antes la revisión eran cuatro contadores. */
-function PreviewTable({ rows }: { rows: ImportPreviewRow[] }) {
-  return (
-    <div className="overflow-hidden rounded-xl border border-border">
-      <div className="max-h-80 overflow-auto">
-        <table className="w-full text-sm">
-          <caption className="sr-only">Primeras filas del archivo y qué se hará con cada una</caption>
-          <thead className="sticky top-0 bg-muted/80 text-left text-xs text-muted-foreground backdrop-blur">
-            <tr>
-              <th scope="col" className="px-3 py-2 font-medium">Fecha</th>
-              <th scope="col" className="px-3 py-2 font-medium">Beneficiario</th>
-              <th scope="col" className="hidden px-3 py-2 font-medium sm:table-cell">Cuenta · categoría</th>
-              <th scope="col" className="px-3 py-2 text-right font-medium">Importe</th>
-              <th scope="col" className="px-3 py-2 font-medium">Estado</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {rows.map((r, i) => (
-              <tr key={i} className={cn(r.status !== "new" && "text-muted-foreground")}>
-                <td className="px-3 py-2 whitespace-nowrap tabular-nums">{formatRangeDate(r.date)}</td>
-                <td className="max-w-40 truncate px-3 py-2">{r.payee || "—"}</td>
-                <td className="hidden max-w-56 truncate px-3 py-2 text-xs text-muted-foreground sm:table-cell">{[r.account, r.category].filter(Boolean).join(" · ")}</td>
-                <td className={cn("px-3 py-2 text-right whitespace-nowrap tabular-nums", r.amount > 0 && "text-emerald-700 dark:text-emerald-400")}>
-                  {r.amount > 0 ? "+" : ""}{formatCurrency(r.amount)}
-                </td>
-                <td className="px-3 py-2">
-                  <span className={cn("rounded-md px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap", STATUS_LABEL[r.status].className)}>
-                    {STATUS_LABEL[r.status].label}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {rows.length >= 100 && <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">Se muestran las 100 primeras filas.</p>}
-    </div>
-  );
-}
-
 /** Importaciones anteriores, con «Deshacer». */
 function PastImports({ onUndo }: { onUndo: (batchId: string) => void }) {
   const { data } = useQuery({ queryKey: ["import-batches"], queryFn: getImportBatches });
@@ -185,20 +143,8 @@ function PastImports({ onUndo }: { onUndo: (batchId: string) => void }) {
   );
 }
 
-function ImportView() {
+function YnabImport({ setUndoTarget }: { setUndoTarget: (id: string | null) => void }) {
   const queryClient = useQueryClient();
-  const [undoTarget, setUndoTarget] = useState<string | null>(null);
-  const undoMut = useMutation({
-    mutationFn: undoImportBatch,
-    onSuccess: (res) => {
-      queryClient.invalidateQueries({ queryKey: ["import-batches"] });
-      invalidateFinance(queryClient);
-      toast.success(`Importación deshecha: ${plural(res.deleted, "movimiento eliminado", "movimientos eliminados")}`);
-      setUndoTarget(null);
-      reset();
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportResult | null>(null);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -277,12 +223,6 @@ function ImportView() {
 
   return (
     <div>
-      <PageHeader
-        title="Importar"
-        accent="desde YNAB."
-        description="Trae tus cuentas, categorías y transacciones a partir del CSV que exporta YNAB. Puedes revisar el resultado antes de confirmar."
-      />
-
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <SectionCard>
           <Stepper step={step} />
@@ -453,6 +393,73 @@ function ImportView() {
           </SectionCard>
         </aside>
       </div>
+    </div>
+  );
+}
+
+type Origin = "banco" | "ynab";
+
+function ImportView() {
+  const queryClient = useQueryClient();
+  const [origin, setOrigin] = useUrlEnumParam<Origin>("origen", ["banco", "ynab"], "banco");
+  const [undoTarget, setUndoTarget] = useState<string | null>(null);
+  const undoMut = useMutation({
+    mutationFn: undoImportBatch,
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["import-batches"] });
+      invalidateFinance(queryClient);
+      toast.success(`Importación deshecha: ${plural(res.deleted, "movimiento eliminado", "movimientos eliminados")}`);
+      setUndoTarget(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <div>
+      <PageHeader
+        title="Importar"
+        accent="movimientos."
+        description="Desde el extracto de tu banco (CSV) o desde YNAB. Siempre puedes revisar antes de confirmar y deshacer después."
+      >
+        <Segmented
+          aria-label="Origen de los datos"
+          value={origin}
+          onChange={(v) => setOrigin(v)}
+          options={[
+            { value: "banco", label: "Extracto del banco" },
+            { value: "ynab", label: "YNAB" },
+          ]}
+        />
+      </PageHeader>
+
+      {origin === "banco" ? (
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <SectionCard>
+            <BankImport onImported={() => undefined} />
+          </SectionCard>
+          <aside className="space-y-4">
+            <SectionCard title="Cómo conseguir el extracto">
+              <ol className="list-decimal space-y-2 pl-4 text-sm text-muted-foreground">
+                <li>Entra en la web o la app de tu banco.</li>
+                <li>Abre los movimientos de la cuenta y elige el periodo.</li>
+                <li>Descárgalos en CSV (o Excel guardado como CSV).</li>
+                <li>Súbelo aquí: las columnas se proponen solas y se recuerdan para la próxima vez.</li>
+              </ol>
+            </SectionCard>
+            <PastImports onUndo={setUndoTarget} />
+            <SectionCard title="Qué se hace">
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li>Lo que ya tengas en esa cuenta (misma fecha, importe y concepto) se omite.</li>
+                <li>Tus reglas de categorización se aplican al importar.</li>
+                <li>El archivo no se guarda: solo se leen sus movimientos.</li>
+              </ul>
+            </SectionCard>
+          </aside>
+        </div>
+      ) : (
+        <YnabImport setUndoTarget={setUndoTarget} />
+      )}
+
       <ConfirmModal
         open={!!undoTarget}
         title="Deshacer importación"
