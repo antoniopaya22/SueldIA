@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { getProfiles, uploadPayslips, type Payslip } from "../lib/api";
 import { formatCurrency } from "../lib/format";
 import { useSelectedProfile } from "../hooks/use-selected-profile";
+import { useLeaveGuard } from "../hooks/use-leave-guard";
 import { Providers } from "./Providers";
 import { PageHeader, PageHeaderSkeleton, SectionCard, Segmented } from "./app";
 import { EmptyState } from "./ui/EmptyState";
@@ -30,6 +31,9 @@ interface QueueItem {
   state: ItemState;
   result?: Payslip;
   error?: string;
+  /** Perfil y tipo con los que se subió (o se intentó): «Reintentar» usa estos, no la selección actual. */
+  profileId?: number;
+  payslipType?: "ordinal" | "extra";
 }
 
 function formatFileSize(bytes: number): string {
@@ -78,6 +82,16 @@ function QueueRow({ item, onRemove, onRetry, disabled }: {
             </>
           )}
         </p>
+        {item.state === "done" && r?.duplicateOfId && (
+          // Antes era un aviso que desaparecía a los pocos segundos.
+          <p className="mt-1 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+            <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              Ya tenías una nómina de {formatPeriod(r.periodMonth, r.periodYear)} en este perfil: puede ser un duplicado.{" "}
+              <a href={`/app/payslips?nomina=${r.duplicateOfId}`} className="font-medium whitespace-nowrap underline underline-offset-2">Ver la anterior</a>
+            </span>
+          </p>
+        )}
         {item.state === "uploading" && (
           <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
             <div className="h-full w-full animate-pulse rounded-full bg-gradient-to-r from-primary-500/30 via-primary-500 to-primary-500/30 dark:from-primary/30 dark:via-primary dark:to-primary/30" />
@@ -144,7 +158,13 @@ function ResultsSummary({ items }: { items: QueueItem[] }) {
         </div>
       </div>
       <div className="flex gap-2">
-        <a href="/app/payroll" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>Ver dashboard</a>
+        {review.length > 0 ? (
+          <a href="/app/payslips?estado=review" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+            Revisar {review.length === 1 ? "la pendiente" : `las ${review.length} pendientes`}
+          </a>
+        ) : (
+          <a href="/app/payroll" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>Ver dashboard</a>
+        )}
         <a href="/app/payslips" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
           Mis nóminas <ArrowRight className="size-3.5" />
         </a>
@@ -171,15 +191,14 @@ function UploadManager() {
     mutationFn: async (items: QueueItem[]) => {
       if (!selectedProfile) return;
       for (const item of items) {
-        patch(item.id, { state: "uploading", error: undefined });
+        // Se fija al empezar: cambiar el selector a mitad de tanda (o antes de
+        // reintentar) ya no manda archivos a otro perfil sin querer.
+        const profileId = item.profileId ?? selectedProfile;
+        const type = item.payslipType ?? payslipType;
+        patch(item.id, { state: "uploading", error: undefined, profileId, payslipType: type });
         try {
-          const [result] = await uploadPayslips(selectedProfile, [item.file], payslipType);
+          const [result] = await uploadPayslips(profileId, [item.file], type);
           patch(item.id, { state: "done", result });
-          if (result?.duplicateOfId) {
-            toast.warning(
-              `${item.file.name}: ya tienes otra nómina de ${formatPeriod(result.periodMonth, result.periodYear)} para este perfil — revisa si es un duplicado.`,
-            );
-          }
         } catch (err) {
           patch(item.id, { state: "failed", error: err instanceof Error ? err.message : "No se pudo procesar" });
         }
@@ -207,6 +226,8 @@ function UploadManager() {
   }, []);
 
   const busy = uploadMut.isPending;
+  // Salir a mitad de tanda cortaba la cola sin avisar.
+  useLeaveGuard(busy, "Todavía se están subiendo nóminas. Si sales, las que faltan no se subirán. ¿Salir?");
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
     accept: { "application/pdf": [".pdf"] },
@@ -260,7 +281,8 @@ function UploadManager() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <SectionCard>
-            <div className="grid gap-5 sm:grid-cols-2">
+            {/* Bloqueado mientras se sube: la tanda usa el perfil y el tipo del momento de empezar. */}
+            <fieldset disabled={busy} className="grid gap-5 disabled:opacity-60 sm:grid-cols-2">
               <div className="space-y-2">
                 <p className="text-xs font-medium text-muted-foreground">Perfil</p>
                 {profiles.length > 1 ? (
@@ -282,7 +304,7 @@ function UploadManager() {
                   ]}
                 />
               </div>
-            </div>
+            </fieldset>
 
             <div
               {...getRootProps()}
