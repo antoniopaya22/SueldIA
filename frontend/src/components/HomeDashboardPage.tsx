@@ -24,6 +24,7 @@ import {
 } from "./app";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
+import { irpfAmount } from "../lib/payslip-concepts";
 import { getTodayIsoDate } from "./finance-manage/transactions/shared";
 
 // ─── Helpers ────────────────────────────────────────────────────
@@ -162,7 +163,7 @@ function LatestPayslipCard({ payslipId, previousNet }: { payslipId: number; prev
   const gross = payslip.grossSalary ?? 0;
   const net = payslip.netSalary ?? 0;
   const deductions = payslip.concepts.filter((c) => c.category === "deduccion");
-  const irpf = deductions.filter((c) => c.name.toLowerCase().includes("irpf")).reduce((s, c) => s + c.amount, 0);
+  const irpf = irpfAmount(deductions);
   const other = Math.max(gross - net - irpf, 0);
   const segments = [
     { label: "Neto", value: net, className: "bg-primary-500 dark:bg-primary" },

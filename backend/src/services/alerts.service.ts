@@ -7,6 +7,7 @@ import { todayIso } from "../utils/dates.js";
 import {
   evalCategoryOverspent, evalLowBalance, evalOverduePending, financeAlertConfigSchemas,
 } from "./finance-alerts.service.js";
+import { isIrpfAmount } from "../parsers/concept-classifier.js";
 
 /* ───────── Config por tipo de regla ─────────────────────────────
  * Cada tipo de `alert_rules.type` tiene su propia forma de `config`.
@@ -231,12 +232,10 @@ export function isIrpfConceptName(name: string): boolean {
 /** Tipo efectivo de IRPF (%) de una nómina; null sin bruto o sin retención. */
 export function effectiveIrpfRate(
   grossSalary: number | null,
-  concepts: Array<{ category: string; name: string; amount: number; isPercentage: boolean }>,
+  concepts: Array<{ category: string; name: string; amount: number; isPercentage: boolean; kind?: string | null }>,
 ): number | null {
   if (!grossSalary || grossSalary <= 0) return null;
-  const irpf = concepts
-    .filter((c) => c.category === "deduccion" && !c.isPercentage && isIrpfConceptName(c.name))
-    .reduce((s, c) => s + c.amount, 0);
+  const irpf = concepts.filter((c) => isIrpfAmount(c)).reduce((s, c) => s + c.amount, 0);
   return irpf > 0 ? (irpf / grossSalary) * 100 : null;
 }
 

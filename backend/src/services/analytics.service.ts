@@ -3,6 +3,7 @@ import { payslips, payslipConcepts, profiles } from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import { avg, round, stdDev, calculateTrend, predictNext } from "../utils/math.js";
 import { currentYearMonth } from "../utils/dates.js";
+import { conceptKind } from "../parsers/concept-classifier.js";
 
 /* ───────── Types ────────────────────────────────────────────── */
 
@@ -186,7 +187,7 @@ export function detectAnomalies(
   }
 
   // IRPF rate changes
-  const irpfConcepts = allConcepts.filter((c) => c.name.toLowerCase().includes("irpf"));
+  const irpfConcepts = allConcepts.filter((c) => conceptKind(c) === "irpf");
   if (irpfConcepts.length >= 2) {
     const irpfByPayslip = new Map<number, number>();
     for (const c of irpfConcepts) {

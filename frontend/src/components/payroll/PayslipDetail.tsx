@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useLeaveGuard } from "../../hooks/use-leave-guard";
 import { deferWithUndo } from "../../lib/undo";
+import { irpfAmount, socialSecurityAmount } from "../../lib/payslip-concepts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Building2, ChevronDown, FileText, Gift, Link2, Loader2, MoreHorizontal,
@@ -137,15 +138,20 @@ function ConceptTable({
 function BreakdownCard({ payslip }: { payslip: PayslipWithConcepts }) {
   const gross = payslip.grossSalary ?? 0;
   const net = payslip.netSalary ?? 0;
-  const irpf = payslip.concepts
-    .filter((c) => c.category === "deduccion" && !c.isPercentage && c.name.toLowerCase().includes("irpf"))
-    .reduce((s, c) => s + c.amount, 0);
-  const other = Math.max(gross - net - irpf, 0);
+  const irpf = irpfAmount(payslip.concepts);
+  // Seguridad Social con su propio importe (conceptos clasificados); lo que no
+  // cuadra (anticipos, embargos…) va a «Otras deducciones». Antes todo lo que
+  // no era IRPF se llamaba «Seg. Social y otros».
+  const socialSecurity = socialSecurityAmount(payslip.concepts);
+  const other = Math.max(gross - net - irpf - socialSecurity, 0);
   const segments = [
     { label: "Neto", value: net, className: "bg-primary-500 dark:bg-primary" },
     { label: "IRPF", value: irpf, className: "bg-amber-400" },
-    { label: "Seg. Social y otros", value: other, className: "bg-brand-navy/70 dark:bg-slate-500" },
-  ];
+    ...(socialSecurity > 0
+      ? [{ label: "Seguridad Social", value: socialSecurity, className: "bg-brand-navy/70 dark:bg-slate-500" }]
+      : []),
+    { label: socialSecurity > 0 ? "Otras deducciones" : "Seg. Social y otros", value: other, className: socialSecurity > 0 ? "bg-slate-300 dark:bg-slate-600" : "bg-brand-navy/70 dark:bg-slate-500" },
+  ].filter((s) => s.value > 0.005 || s.label === "Neto");
   return (
     <SectionCard title="Del bruto al neto" description="Cómo se reparte lo que cobras">
       <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label="Reparto del bruto">
@@ -605,7 +611,7 @@ export function PayslipDetail({
   const gross = payslip.grossSalary ?? 0;
   const net = payslip.netSalary ?? 0;
   const irpf = useMemo(
-    () => payslip.concepts.filter((c) => c.category === "deduccion" && !c.isPercentage && c.name.toLowerCase().includes("irpf")).reduce((s, c) => s + c.amount, 0),
+    () => irpfAmount(payslip.concepts),
     [payslip.concepts],
   );
 

@@ -7,6 +7,7 @@ import { upload, validatePdfMagicBytes, fixFilenameEncoding } from "../middlewar
 import { parsePayslip } from "../parsers/parser-engine.js";
 import { matchConcepts, detectPayslipType, type ParsedPayslip } from "../parsers/concept-matcher.js";
 import { createHash } from "node:crypto";
+import { classifyConcept } from "../parsers/concept-classifier.js";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { logger } from "../logger.js";
@@ -105,7 +106,7 @@ payslipsRouter.post(
             })
             .returning();
           const concepts = parsed && parsed.concepts.length > 0
-            ? await tx.insert(payslipConcepts).values(parsed.concepts.map((c) => ({ ...c, payslipId: payslip.id }))).returning()
+            ? await tx.insert(payslipConcepts).values(parsed.concepts.map((c) => withKind({ ...c, payslipId: payslip.id }))).returning()
             : [];
           return { payslip, concepts };
         });
@@ -326,7 +327,7 @@ payslipsRouter.put("/:id/concepts", async (req, res, next) => {
       await tx.delete(payslipConcepts).where(eq(payslipConcepts.payslipId, id));
       if (concepts.length > 0) {
         await tx.insert(payslipConcepts).values(
-          concepts.map((c) => ({ ...c, payslipId: id }))
+          concepts.map((c) => withKind({ ...c, payslipId: id }))
         );
       }
     });
@@ -565,7 +566,7 @@ async function applyParsedResult(payslipId: number, result: ReturnType<typeof ma
 
     if (result.concepts.length > 0) {
       await tx.insert(payslipConcepts).values(
-        result.concepts.map((c) => ({ ...c, payslipId })),
+        result.concepts.map((c) => withKind({ ...c, payslipId })),
       );
     }
   });
@@ -583,6 +584,11 @@ function parsedPayslipValues(result: ParsedPayslip) {
     // Sin conceptos o sin periodo, la nómina necesita que el usuario la mire.
     parsingStatus: (result.concepts.length > 0 && result.periodMonth && result.periodYear ? "parsed" : "review") as "parsed" | "review",
   };
+}
+
+/** Añade el tipo semántico del concepto (IRPF, cotizaciones, salario base…). */
+function withKind<T extends { name: string; category: "devengo" | "deduccion" | "otros" }>(c: T): T & { kind: string } {
+  return { ...c, kind: classifyConcept(c.name, c.category) };
 }
 
 function hashText(text: string): string {

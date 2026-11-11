@@ -28,6 +28,24 @@ const { db, client } = await import("./index.js");
 
 await migrate(db, { migrationsFolder: resolve(__dirname, "./migrations") });
 
+// Migraciones de datos que necesitan código de la app (no caben en SQL):
+// idempotentes, solo tocan filas aún sin rellenar.
+{
+  const { classifyConcept } = await import("../parsers/concept-classifier.js");
+  const pending = await client<{ id: number; name: string; category: "devengo" | "deduccion" | "otros" }[]>`
+    SELECT id, name, category FROM payslip_concepts WHERE kind IS NULL
+  `;
+  for (let i = 0; i < pending.length; i += 500) {
+    const chunk = pending.slice(i, i + 500).map((c) => ({ id: c.id, kind: classifyConcept(c.name, c.category) }));
+    await client`
+      UPDATE payslip_concepts AS pc SET kind = v.kind
+      FROM (SELECT * FROM jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb) AS x(id int, kind text)) AS v
+      WHERE pc.id = v.id
+    `;
+  }
+  if (pending.length) console.log(`🏷️  Tipo semántico asignado a ${pending.length} conceptos`);
+}
+
 // Red de seguridad: ninguna tabla de `public` puede quedar sin RLS (Supabase
 // la expone por la Data API con la anon key, que es pública). Si alguien añade
 // una tabla sin `.enableRLS()` en schema.ts, el despliegue falla aquí.

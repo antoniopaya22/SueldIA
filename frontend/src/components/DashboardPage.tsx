@@ -31,6 +31,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "cn";
+import { isIrpfConcept } from "../lib/payslip-concepts";
 import { setUrlParams, useUrlParam } from "../lib/url-state";
 
 type ConceptBreakdownItem = DashboardData["conceptBreakdown"][number];
@@ -594,7 +595,7 @@ function DashboardView() {
             <ul className="space-y-3.5">
               {deducciones.map((c) => {
                 const max = deducciones[0]?.average || 1;
-                const isIrpf = c.name.toLowerCase().includes("irpf");
+                const isIrpf = isIrpfConcept({ name: c.name, category: "deduccion" });
                 return (
                   <li key={c.name}>
                     <div className="flex items-center justify-between text-sm">

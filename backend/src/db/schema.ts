@@ -100,6 +100,10 @@ export const payslipConcepts = pgTable(
     name: text("name").notNull(),
     amount: doublePrecision("amount").notNull(),
     isPercentage: boolean("is_percentage").notNull().default(false),
+    // Tipo semántico (irpf, ss_contingencias, salario_base…) — ver
+    // parsers/concept-classifier.ts. Se rellena al guardar; las filas antiguas
+    // las completa db:migrate (backfillConceptKinds).
+    kind: text("kind"),
   },
   (table) => ({
     // Toda pantalla que muestra una nómina carga sus conceptos por payslipId.

@@ -3,6 +3,7 @@ import { payslips, payslipConcepts, profiles } from "../db/schema.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { round } from "../utils/math.js";
 import { currentYearMonth } from "../utils/dates.js";
+import { isIrpfAmount } from "../parsers/concept-classifier.js";
 
 /* ───────── Types ────────────────────────────────────────────── */
 
@@ -88,7 +89,7 @@ export function buildKpis(filtered: Payslip[], allConcepts: Concept[]) {
   const totalNetYear = filtered.reduce((s, p) => s + (p.netSalary ?? 0), 0);
 
   const irpfConcepts = allConcepts.filter(
-    (c) => c.category === "deduccion" && c.name.toLowerCase().includes("irpf"),
+    (c) => isIrpfAmount(c),
   );
   const avgIrpf =
     irpfConcepts.length > 0
@@ -182,7 +183,7 @@ export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]
 
       const yearPayslipIds = new Set(ps.map((p) => p.id));
       const yearIrpf = allConcepts
-        .filter((c) => yearPayslipIds.has(c.payslipId) && c.category === "deduccion" && c.name.toLowerCase().includes("irpf"))
+        .filter((c) => yearPayslipIds.has(c.payslipId) && isIrpfAmount(c))
         .reduce((s, c) => s + c.amount, 0);
 
       return {
@@ -209,7 +210,7 @@ export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]
 export function buildIrpfEvolution(filtered: Payslip[], allConcepts: Concept[]) {
   const regular = filtered.filter((p) => p.payslipType !== "extra");
   const irpfConcepts = allConcepts.filter(
-    (c) => c.category === "deduccion" && c.name.toLowerCase().includes("irpf"),
+    (c) => isIrpfAmount(c),
   );
   const irpfByPayslip = new Map<number, number>();
   for (const c of irpfConcepts) {

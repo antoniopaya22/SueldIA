@@ -177,6 +177,8 @@ export interface PayslipConcept {
   name: string;
   amount: number;
   isPercentage: boolean;
+  /** Tipo semántico: irpf, ss_contingencias, ss_desempleo, ss_formacion, ss_mei, ss_otros, salario_base, complemento, paga_extra, horas_extra, especie, dieta, otros. */
+  kind?: string | null;
 }
 
 export interface Payslip {
