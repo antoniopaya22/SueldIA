@@ -5,6 +5,7 @@ import { getTaxSummary } from "../../lib/api";
 import { formatCurrency, formatPct } from "../../lib/format";
 import { SectionCard } from "../app";
 import { MONTHS_SHORT } from "./shared";
+import { cn } from "cn";
 
 /**
  * Resumen de un año para la declaración de la Renta: lo que la empresa
@@ -53,6 +54,26 @@ export function TaxSummaryCard({ profileId, years }: { profileId: number; years:
             )}
             <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Neto cobrado</dt><dd className="font-medium tabular-nums text-foreground">{formatCurrency(data.netTotal)}</dd></div>
           </dl>
+          {data.estimate && (
+            <div
+              className={cn(
+                "mt-4 rounded-lg border px-3 py-2.5 text-sm",
+                data.estimate.verdict === "short" ? "border-amber-500/30 bg-amber-500/5" : data.estimate.verdict === "long" ? "border-primary/30 bg-primary/5" : "border-border bg-muted/30",
+              )}
+            >
+              <p className="font-medium text-foreground">
+                {data.estimate.verdict === "short"
+                  ? `Tu retención parece ir corta: en la Renta podrías tener que pagar unos ${formatCurrency(data.estimate.difference)}.`
+                  : data.estimate.verdict === "long"
+                    ? `Tu retención parece ir larga: en la Renta podrían devolverte unos ${formatCurrency(-data.estimate.difference)}.`
+                    : "Tu retención parece ajustada a lo que te tocaría pagar."}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {data.estimate.complete ? "Con el año completo" : `Proyectando al año lo cobrado hasta ahora (${formatCurrency(data.estimate.projectedGross)} brutos)`}: impuesto estimado {formatCurrency(data.estimate.estimatedTax)} ({formatPct(data.estimate.estimatedRate)}) frente a {formatCurrency(data.estimate.projectedWithheld)} retenidos.
+                {" "}Estimación aproximada con la escala general de {data.estimate.paramsYear}: no tiene en cuenta tu comunidad autónoma, situación familiar, deducciones ni otros ingresos.
+              </p>
+            </div>
+          )}
           {data.missingMonths.length > 0 && (
             <p className="mt-4 rounded-lg bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
               Faltan nóminas de {data.missingMonths.map((m) => MONTHS_SHORT[m - 1]).join(", ")}: las cifras solo cuentan lo subido.

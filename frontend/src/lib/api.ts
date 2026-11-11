@@ -1777,6 +1777,17 @@ export interface TaxSummary {
   inKind: number;
   effectiveIrpfRate: number | null;
   missingMonths: number[];
+  /** Estimación aproximada de la Renta (null con menos de 3 meses). */
+  estimate: {
+    paramsYear: number;
+    complete: boolean;
+    projectedGross: number;
+    projectedWithheld: number;
+    estimatedTax: number;
+    estimatedRate: number;
+    difference: number;
+    verdict: "short" | "long" | "ok";
+  } | null;
 }
 
 export const getTaxSummary = (profileId: number, year: number) =>

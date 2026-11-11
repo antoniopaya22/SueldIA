@@ -17,6 +17,7 @@ import { evaluateRulesForUser } from "../services/alerts.service.js";
 import { scoreLinkCandidates, payslipReferenceDateMs } from "../services/payslip-links.service.js";
 import { validatePayslip } from "../services/payslip-validation.service.js";
 import { escapeLike } from "../services/payee-suggestions.service.js";
+import { irpfEstimate } from "../services/irpf-estimate.service.js";
 
 export const payslipsRouter = Router();
 payslipsRouter.param("id", validateIdParam);
@@ -299,7 +300,9 @@ payslipsRouter.get("/tax-summary", async (req, res, next) => {
     const concepts = rows.length
       ? await db.select().from(payslipConcepts).where(inArray(payslipConcepts.payslipId, rows.map((r) => r.id)))
       : [];
-    res.json(buildTaxSummary(parsed.data.year, rows, concepts));
+    const summary = buildTaxSummary(parsed.data.year, rows, concepts);
+    // Estimación aproximada de si la retención va corta o larga (ver irpf-estimate.service.ts).
+    res.json({ ...summary, estimate: irpfEstimate(summary, 12 - summary.missingMonths.length) });
   } catch (err) {
     next(err);
   }
