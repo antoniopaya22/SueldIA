@@ -8,6 +8,7 @@ import {
   createProfile, deleteProfile, getPayslips, getProfiles, updateProfile, type Profile,
 } from "../lib/api";
 import { formatCurrency } from "../lib/format";
+import { REGIONS, regionName } from "../lib/regions";
 import { Providers } from "./Providers";
 import { PageHeader, PageHeaderSkeleton } from "./app";
 import { EmptyState } from "./ui/EmptyState";
@@ -32,6 +33,18 @@ const COLORS = [
   "#14b8a6", "#06b6d4",
 ];
 
+const selectClass = "h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm dark:bg-input/30";
+
+/** «14 pagas · Jornada 50 % · Acme S.L. · Madrid», con lo que haya. */
+function profileDetails(p: Profile): string {
+  return [
+    p.paymentsPerYear ? `${p.paymentsPerYear} pagas` : null,
+    p.workdayPercent != null && p.workdayPercent < 100 ? `Jornada ${p.workdayPercent} %` : null,
+    p.employer,
+    regionName(p.region),
+  ].filter(Boolean).join(" · ");
+}
+
 function formatSince(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -49,12 +62,27 @@ function ProfileDialog({
   const queryClient = useQueryClient();
   const [name, setName] = useState(profile?.name ?? "");
   const [color, setColor] = useState(profile?.color ?? COLORS[0]);
+  const [payments, setPayments] = useState<"" | "12" | "14">(profile?.paymentsPerYear ? String(profile.paymentsPerYear) as "12" | "14" : "");
+  const [workday, setWorkday] = useState(profile?.workdayPercent != null ? String(profile.workdayPercent) : "");
+  const [employer, setEmployer] = useState(profile?.employer ?? "");
+  const [region, setRegion] = useState(profile?.region ?? "");
   const editing = profile !== null;
+  const workdayNum = workday.trim() === "" ? null : Number(workday);
+  const invalidWorkday = workdayNum !== null && (!Number.isInteger(workdayNum) || workdayNum < 1 || workdayNum > 100);
   const colorKeys = radioGroupKeys(COLORS, color, setColor);
 
   const saveMut = useMutation({
-    mutationFn: () =>
-      editing ? updateProfile(profile.id, { name: name.trim(), color }) : createProfile({ name: name.trim(), color }),
+    mutationFn: () => {
+      const data = {
+        name: name.trim(),
+        color,
+        paymentsPerYear: payments ? (Number(payments) as 12 | 14) : null,
+        workdayPercent: workdayNum,
+        employer: employer.trim() || null,
+        region: region || null,
+      };
+      return editing ? updateProfile(profile.id, data) : createProfile(data);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["profiles"] });
       toast.success(editing ? "Perfil actualizado" : "Perfil creado");
@@ -66,11 +94,11 @@ function ProfileDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
-        <form onSubmit={(e) => { e.preventDefault(); if (name.trim()) saveMut.mutate(); }}>
+        <form onSubmit={(e) => { e.preventDefault(); if (name.trim() && !invalidWorkday) saveMut.mutate(); }}>
           <DialogHeader>
             <DialogTitle>{editing ? "Editar perfil" : "Nuevo perfil"}</DialogTitle>
             <DialogDescription>
-              {editing ? "Cambia el nombre o el color con el que aparece en gráficas y listados." : "Cada perfil tiene su propio histórico de nóminas y su analítica."}
+              {editing ? "Nombre, color y datos del contrato de este perfil." : "Cada perfil tiene su propio histórico de nóminas y su analítica."}
             </DialogDescription>
           </DialogHeader>
 
@@ -123,9 +151,51 @@ function ProfileDialog({
             </div>
           </div>
 
+          <fieldset className="mt-6 space-y-4 border-t border-border pt-5">
+            <legend className="sr-only">Datos del contrato</legend>
+            <div>
+              <p className="text-sm font-medium text-foreground">Datos del contrato <span className="font-normal text-muted-foreground">(opcional)</span></p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Afinan la proyección anual y la comprobación del salario mínimo.</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="profile-payments">Pagas al año</Label>
+                <select id="profile-payments" className={selectClass} value={payments} onChange={(e) => setPayments(e.target.value as "" | "12" | "14")}>
+                  <option value="">No lo sé</option>
+                  <option value="12">12 (extras prorrateadas)</option>
+                  <option value="14">14 (con dos extras)</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="profile-workday">Jornada (%)</Label>
+                <Input
+                  id="profile-workday"
+                  inputMode="numeric"
+                  value={workday}
+                  onChange={(e) => setWorkday(e.target.value.replace(/[^\d]/g, "").slice(0, 3))}
+                  placeholder="100 = completa"
+                  aria-invalid={invalidWorkday}
+                  aria-describedby={invalidWorkday ? "profile-workday-error" : undefined}
+                />
+                {invalidWorkday && <p id="profile-workday-error" className="text-xs text-destructive">Entre 1 y 100.</p>}
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="profile-employer">Empresa</Label>
+              <Input id="profile-employer" value={employer} onChange={(e) => setEmployer(e.target.value)} placeholder="Para quién trabaja" maxLength={200} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="profile-region">Comunidad autónoma</Label>
+              <select id="profile-region" className={selectClass} value={region} onChange={(e) => setRegion(e.target.value)}>
+                <option value="">Sin indicar</option>
+                {REGIONS.map(([code, label]) => <option key={code} value={code}>{label}</option>)}
+              </select>
+            </div>
+          </fieldset>
+
           <DialogFooter className="mt-6">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-            <Button type="submit" disabled={!name.trim() || saveMut.isPending}>
+            <Button type="submit" disabled={!name.trim() || invalidWorkday || saveMut.isPending}>
               {saveMut.isPending ? "Guardando…" : editing ? "Guardar cambios" : "Crear perfil"}
             </Button>
           </DialogFooter>
@@ -154,6 +224,7 @@ function ProfileCard({
         <div className="min-w-0 flex-1 pt-0.5">
           <h2 className="truncate text-base font-semibold text-foreground">{profile.name}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">Desde {formatSince(profile.createdAt)}</p>
+          {profileDetails(profile) && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{profileDetails(profile)}</p>}
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger

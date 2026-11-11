@@ -51,8 +51,9 @@ describe("buildAnnualSummaries", () => {
       totalIrpf: 570,
       avgMonthlyGross: 2100,
       avgMonthlyNet: 1680,
-      projectedAnnualGross: 25200,
-      projectedAnnualNet: 20160,
+      // 12 mensualidades a la media + la extra cobrada.
+      projectedAnnualGross: 26700,
+      projectedAnnualNet: 21360,
       pagasExtra: 1,
       extraGross: 1500,
       extraNet: 1200,
@@ -60,6 +61,20 @@ describe("buildAnnualSummaries", () => {
     });
   });
 });
+describe("proyección anual con las pagas del perfil", () => {
+  it("con 14 pagas cuenta la extra que aún no ha llegado", () => {
+    const payslips: AnnualPayslip[] = [
+      createPayslip({ id: 1, periodMonth: 1, grossSalary: 2000, netSalary: 1600 }),
+      createPayslip({ id: 2, periodMonth: 2, grossSalary: 2000, netSalary: 1600 }),
+      createPayslip({ id: 3, periodMonth: 6, grossSalary: 2000, netSalary: 1600, payslipType: "extra" }),
+    ];
+    const [summary] = buildAnnualSummaries(payslips, [], 14);
+    expect(summary.projectedAnnualGross).toBe(2000 * 12 + 2000 + 2000);
+    // Sin saber las pagas, solo las extras cobradas.
+    expect(buildAnnualSummaries(payslips, [])[0].projectedAnnualGross).toBe(2000 * 12 + 2000);
+  });
+});
+
 describe("fetchDashboardData", () => {
   it("sin perfiles válidos devuelve vacío en vez de las nóminas de todos los usuarios", async () => {
     // Se pidió un perfil ajeno: tras filtrar por propiedad no queda ninguno.

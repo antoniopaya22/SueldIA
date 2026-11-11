@@ -33,6 +33,12 @@ export const profiles = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     color: text("color").notNull().default("#6366f1"),
+    // Datos que afinan los cálculos (todos opcionales): 12 o 14 pagas al año,
+    // % de jornada (100 = completa), empresa actual y comunidad autónoma.
+    paymentsPerYear: integer("payments_per_year"),
+    workdayPercent: integer("workday_percent"),
+    employer: text("employer"),
+    region: text("region"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

@@ -84,4 +84,18 @@ describe("validatePayslip", () => {
     expect(warnings.map((w) => w.code)).not.toContain("amount_mismatch");
     expect(warnings.map((w) => w.code)).not.toContain("gross_mismatch");
   });
+
+  it("el umbral del SMI depende de las pagas y la jornada del perfil", async () => {
+    const { smiMonthlyThreshold } = await import("./payslip-validation.service.js");
+    expect(smiMonthlyThreshold(null, null)).toBe(1221);
+    expect(smiMonthlyThreshold(12, 100)).toBe(1424.5);
+    expect(smiMonthlyThreshold(14, 50)).toBe(610.5);
+    const base = { payslipType: "ordinal" as const, netSalary: 700, concepts: [] };
+    // Media jornada en 14 pagas: 800 € no está por debajo; sin perfil, sí avisaría.
+    expect(validatePayslip({ ...base, grossSalary: 800, profile: { paymentsPerYear: 14, workdayPercent: 50 } }).map((w) => w.code)).not.toContain("below_smi");
+    expect(validatePayslip({ ...base, grossSalary: 800 }).map((w) => w.code)).toContain("below_smi");
+    // 12 pagas (prorrateadas): 1.300 € sí está por debajo.
+    const w = validatePayslip({ ...base, grossSalary: 1300, profile: { paymentsPerYear: 12, workdayPercent: 100 } });
+    expect(w.find((x) => x.code === "below_smi")?.message).toContain("12 pagas");
+  });
 });

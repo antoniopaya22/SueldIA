@@ -9,9 +9,16 @@ import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 export const profilesRouter = Router();
 profilesRouter.param("id", validateIdParam);
 
+// Comunidades y ciudades autónomas (código INE).
+export const REGIONS = ["AN", "AR", "AS", "IB", "CN", "CB", "CL", "CM", "CT", "VC", "EX", "GA", "MD", "MC", "NC", "PV", "RI", "CE", "ML"] as const;
+
 const profileSchema = z.object({
   name: z.string().min(1).max(100),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+  paymentsPerYear: z.union([z.literal(12), z.literal(14)]).nullish(),
+  workdayPercent: z.number().int().min(1).max(100).nullish(),
+  employer: z.string().trim().max(200).nullish(),
+  region: z.enum(REGIONS).nullish(),
 });
 
 // List all profiles (with optional pagination)

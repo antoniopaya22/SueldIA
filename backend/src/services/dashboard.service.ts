@@ -152,7 +152,11 @@ export function buildConceptBreakdown(allConcepts: Concept[]) {
 
 /* ───────── Annual Summaries ─────────────────────────────────── */
 
-export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]) {
+/**
+ * `paymentsPerYear`: pagas al año del perfil (si se mira uno solo y se conoce):
+ * con 14, la proyección cuenta también las extras que aún no han llegado.
+ */
+export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[], paymentsPerYear?: number | null) {
   const byYear = new Map<number, Payslip[]>();
   for (const p of filtered) {
     const y = p.periodYear ?? 0;
@@ -175,11 +179,14 @@ export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]
       const totalNet = regularNet + extraNet;
       const totalDeductions = totalGross - totalNet;
       const months = regular.length;
-      const { month: currentMonth, year: currentFullYear } = currentYearMonth();
-      const isCurrentYear = year === currentFullYear;
-      const projectedMonths = isCurrentYear ? Math.max(months, currentMonth) : 12;
       const monthlyAvgGross = months > 0 ? regularGross / months : 0;
       const monthlyAvgNet = months > 0 ? regularNet / months : 0;
+      // Proyección del AÑO completo: 12 mensualidades a la media, más las extras
+      // cobradas y, si el perfil dice cuántas pagas tiene, las que faltan
+      // (estimadas como una mensualidad media). Antes, en el año en curso solo
+      // proyectaba hasta el mes actual y nunca contaba las pagas extra.
+      const expectedExtras = paymentsPerYear ? Math.max(0, paymentsPerYear - 12) : extras.length;
+      const missingExtras = Math.max(0, expectedExtras - extras.length);
 
       const yearPayslipIds = new Set(ps.map((p) => p.id));
       const yearIrpf = allConcepts
@@ -195,8 +202,8 @@ export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]
         totalIrpf: round(yearIrpf),
         avgMonthlyGross: round(monthlyAvgGross),
         avgMonthlyNet: round(monthlyAvgNet),
-        projectedAnnualGross: round(monthlyAvgGross * projectedMonths),
-        projectedAnnualNet: round(monthlyAvgNet * projectedMonths),
+        projectedAnnualGross: round(monthlyAvgGross * 12 + extraGross + missingExtras * monthlyAvgGross),
+        projectedAnnualNet: round(monthlyAvgNet * 12 + extraNet + missingExtras * monthlyAvgNet),
         pagasExtra: extras.length,
         extraGross: round(extraGross),
         extraNet: round(extraNet),

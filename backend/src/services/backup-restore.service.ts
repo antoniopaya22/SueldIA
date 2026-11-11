@@ -27,7 +27,14 @@ const optText = (max: number) => z.string().max(max).nullable().optional();
 const createdAt = z.coerce.date().optional();
 const optMoney = moneySchema.nullable().optional();
 
-const profileRow = z.object({ id, name: text(100).min(1), color: text(32), createdAt });
+const profileRow = z.object({
+  id, name: text(100).min(1), color: text(32), createdAt,
+  // Datos del perfil (opcionales: las copias anteriores no los traen).
+  paymentsPerYear: z.number().int().min(1).max(24).nullable().optional(),
+  workdayPercent: z.number().int().min(1).max(100).nullable().optional(),
+  employer: optText(200),
+  region: optText(8),
+});
 const payslipRow = z.object({
   id,
   profileId: id,

@@ -79,7 +79,8 @@ dashboardRouter.get("/", async (req, res, next) => {
       kpis: buildKpis(filtered, allConcepts),
       evolution: buildEvolution(filtered, profileMap),
       conceptBreakdown: buildConceptBreakdown(allConcepts),
-      annualSummaries: buildAnnualSummaries(filtered, allConcepts),
+      // Las pagas del perfil solo cuentan si se mira uno (o solo hay uno).
+      annualSummaries: buildAnnualSummaries(filtered, allConcepts, singleProfilePayments(requestedProfileIds ?? userProfileIds, profileMap)),
       irpfEvolution: buildIrpfEvolution(filtered, allConcepts),
       monthlySavings: buildMonthlySavings(filtered),
       profiles: userProfiles.map((p) => ({ id: p.id, name: p.name, color: p.color })),
@@ -88,3 +89,7 @@ dashboardRouter.get("/", async (req, res, next) => {
     next(err);
   }
 });
+
+function singleProfilePayments(ids: number[], profileMap: Map<number, { paymentsPerYear?: number | null }>): number | null {
+  return ids.length === 1 ? profileMap.get(ids[0])?.paymentsPerYear ?? null : null;
+}

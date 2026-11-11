@@ -385,11 +385,16 @@ payslipsRouter.get("/:id", async (req, res, next) => {
       .innerJoin(accounts, eq(transactions.accountId, accounts.id))
       .where(eq(transactions.payslipId, id));
 
+    const [profile] = await db
+      .select({ paymentsPerYear: profiles.paymentsPerYear, workdayPercent: profiles.workdayPercent })
+      .from(profiles)
+      .where(eq(profiles.id, payslip.profileId));
     const warnings = validatePayslip({
       payslipType: payslip.payslipType,
       grossSalary: payslip.grossSalary,
       netSalary: payslip.netSalary,
       concepts,
+      profile,
     });
 
     res.json({ ...payslip, concepts, linkedTransaction: linkedTransaction ?? null, warnings });

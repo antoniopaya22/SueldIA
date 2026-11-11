@@ -149,18 +149,27 @@ export interface Profile {
   name: string;
   color: string;
   createdAt: string;
+  /** 12 o 14 pagas al año (null = sin indicar). */
+  paymentsPerYear: 12 | 14 | null;
+  /** % de jornada (100 = completa; null = sin indicar). */
+  workdayPercent: number | null;
+  employer: string | null;
+  /** Comunidad autónoma, código INE (ver lib/regions.ts). */
+  region: string | null;
 }
+
+export type ProfileInput = Pick<Profile, "name" | "color"> & Partial<Pick<Profile, "paymentsPerYear" | "workdayPercent" | "employer" | "region">>;
 
 export const getProfiles = () =>
   request<Paginated<Profile>>("/profiles").then((r) => r.data);
 
-export const createProfile = (data: { name: string; color?: string }) =>
+export const createProfile = (data: ProfileInput) =>
   request<Profile>("/profiles", {
     method: "POST",
     body: JSON.stringify(data),
   });
 
-export const updateProfile = (id: number, data: { name: string; color?: string }) =>
+export const updateProfile = (id: number, data: ProfileInput) =>
   request<Profile>(`/profiles/${id}`, {
     method: "PUT",
     body: JSON.stringify(data),
