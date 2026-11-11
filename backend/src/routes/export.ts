@@ -2,6 +2,7 @@ import { gzipSync } from "node:zlib";
 import { Router } from "express";
 import { z } from "zod";
 import { toCsv } from "../utils/csv.js";
+import { toXlsx, XLSX_MIME, type XlsxColumn } from "../utils/xlsx.js";
 import { amountRangeValid, amountRangeIssue, buildConditions, transactionFilterFields } from "../services/transaction-query.js";
 import { db } from "../db/index.js";
 import { buildFullExport } from "../services/backup-restore.service.js";
@@ -55,8 +56,20 @@ const exportQuerySchema = z.object({
   profileId: z.coerce.number().int().positive().optional(),
   year: z.coerce.number().int().min(1900).max(2200).optional(),
   type: z.enum(["ordinal", "extra"]).optional(),
-  format: z.enum(["csv", "json"]).default("csv"),
+  format: z.enum(["csv", "json", "xlsx"]).default("csv"),
 });
+
+const PAYSLIP_XLSX_COLUMNS: XlsxColumn[] = [
+  { header: "Perfil", width: 16 }, { header: "Tipo", width: 12 }, { header: "Periodo", width: 10 }, { header: "Empresa", width: 28 },
+  { header: "Salario Bruto", type: "money", width: 15 }, { header: "Salario Neto", type: "money", width: 15 },
+  { header: "Devengos", width: 50 }, { header: "Deducciones", width: 50 }, { header: "Archivo", width: 30 }, { header: "Fecha Subida", type: "date", width: 13 },
+];
+
+function sendXlsx(res: import("express").Response, filename: string, sheet: string, columns: XlsxColumn[], rows: unknown[][]) {
+  res.setHeader("Content-Type", XLSX_MIME);
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(toXlsx(sheet, columns, rows as Parameters<typeof toXlsx>[2]));
+}
 
 exportRouter.get("/", async (req, res, next) => {
   try {
@@ -82,6 +95,7 @@ exportRouter.get("/", async (req, res, next) => {
         res.setHeader("Content-Disposition", 'attachment; filename="nominas.json"');
         return res.json([]);
       }
+      if (format === "xlsx") return sendXlsx(res, "nominas.xlsx", "Nóminas", PAYSLIP_XLSX_COLUMNS, []);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="nominas.csv"');
       return res.send(toCsv(PAYSLIP_CSV_HEADERS, []));
@@ -150,13 +164,19 @@ exportRouter.get("/", async (req, res, next) => {
         Empresa: p.company ?? "",
         "Salario Bruto": p.grossSalary ?? "",
         "Salario Neto": p.netSalary ?? "",
-        Devengos: devengos.map((c) => `${c.name}: ${c.amount.toFixed(2)}`).join("; "),
-        Deducciones: deducciones.map((c) => `${c.name}: ${c.amount.toFixed(2)}`).join("; "),
+        Devengos: devengos.map((c) => `${c.name}: ${c.amount.toFixed(2).replace(".", ",")}`).join(" | "),
+        Deducciones: deducciones.map((c) => `${c.name}: ${c.amount.toFixed(2).replace(".", ",")}`).join(" | "),
         Archivo: p.fileName,
         "Fecha Subida": p.createdAt,
       };
     });
 
+    if (format === "xlsx") {
+      return sendXlsx(res, "nominas.xlsx", "Nóminas", PAYSLIP_XLSX_COLUMNS, rows.map((row) => PAYSLIP_CSV_HEADERS.map((h) => {
+        const v = row[h];
+        return v === "" ? null : v;
+      })));
+    }
     if (format === "csv") {
       // Sin filas: CSV con solo la cabecera (antes, el texto "Sin datos").
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -176,7 +196,7 @@ exportRouter.get("/", async (req, res, next) => {
 // ─── Transaction Export ─────────────────────────────────────────
 const transactionExportSchema = z
   .object({
-    format: z.enum(["csv", "json"]).default("csv"),
+    format: z.enum(["csv", "json", "xlsx"]).default("csv"),
     ...transactionFilterFields,
   })
   .refine(amountRangeValid, amountRangeIssue);
@@ -217,7 +237,7 @@ exportRouter.get("/transactions", async (req, res, next) => {
 
     const exportRows = rows.map((r) => ({
       Fecha: r.date,
-      Tipo: r.type === "expense" ? "Gasto" : r.type === "income" ? "Ingreso" : "Transferencia",
+      Tipo: r.type === "expense" ? "Gasto" : r.type === "income" ? "Ingreso" : "Traspaso",
       Importe: r.amount,
       Beneficiario: r.payee ?? "",
       Cuenta: r.accountName,
@@ -230,6 +250,14 @@ exportRouter.get("/transactions", async (req, res, next) => {
     if (format === "json") {
       res.setHeader("Content-Disposition", 'attachment; filename="transacciones.json"');
       return res.json(exportRows);
+    }
+    if (format === "xlsx") {
+      const columns: XlsxColumn[] = [
+        { header: "Fecha", type: "date", width: 12 }, { header: "Tipo", width: 14 }, { header: "Importe", type: "money", width: 14 },
+        { header: "Beneficiario", width: 30 }, { header: "Cuenta", width: 18 }, { header: "Grupo", width: 18 },
+        { header: "Categoría", width: 20 }, { header: "Nota", width: 30 }, { header: "Estado", width: 12 },
+      ];
+      return sendXlsx(res, "transacciones.xlsx", "Movimientos", columns, exportRows.map((r) => TRANSACTION_CSV_HEADERS.map((h) => r[h])));
     }
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");

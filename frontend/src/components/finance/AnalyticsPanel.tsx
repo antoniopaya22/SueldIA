@@ -1,11 +1,10 @@
 import { Fragment, useRef, useState, type ReactNode, type RefObject } from "react";
-import { ChartColumn, Download, FileSpreadsheet, ImageDown, Maximize2, Table2 } from "lucide-react";
-import { toast } from "sonner";
+import { ChartColumn, Maximize2, Table2 } from "lucide-react";
 import { SectionCard } from "../app";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { downloadBlob, downloadCsv, fileSlug, findChartSvg, svgToPng, type ExportTable } from "../../lib/export-utils";
+import type { ExportTable } from "../../lib/export-utils";
+import { ChartExportMenu } from "../app/ChartExportMenu";
 import { formatCompact, formatCurrency } from "../../lib/format";
 import { ChartEmpty, tint } from "./finance-ui";
 import { cn } from "cn";
@@ -24,58 +23,9 @@ export interface PanelConfig {
 const CONTROLS_CLASS =
   "flex flex-wrap items-center gap-2 [&_[role=radiogroup]]:max-w-full [&_[role=radiogroup]]:overflow-x-auto [&_[role=radio]]:shrink-0 [&_[role=radio]]:whitespace-nowrap";
 
-/**
- * Menú de descarga de un panel: imagen PNG (si tiene un gráfico de Recharts) y
- * datos CSV (si el panel los expone). `rootRef` apunta al contenido ya pintado.
- */
+/** Menú de descarga de un panel (PNG del gráfico y CSV de sus datos). */
 function PanelExportMenu({ panel, rootRef, note }: { panel: PanelConfig; rootRef: RefObject<HTMLDivElement | null>; note?: string }) {
-  const [canImage, setCanImage] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const hasCsv = Boolean(panel.exportTable);
-
-  const downloadImage = async () => {
-    const svg = findChartSvg(rootRef.current);
-    if (!svg) {
-      toast.error("Este panel no tiene un gráfico que descargar como imagen");
-      return;
-    }
-    setBusy(true);
-    try {
-      const blob = await svgToPng(svg, { title: panel.title, subtitle: note });
-      downloadBlob(blob, `${fileSlug(panel.title)}.png`);
-    } catch {
-      toast.error("No se pudo generar la imagen");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const downloadData = () => {
-    const table = panel.exportTable?.();
-    if (!table || table.rows.length === 0) {
-      toast.error("No hay datos que descargar con esta configuración");
-      return;
-    }
-    downloadCsv(table, `${fileSlug(panel.title)}.csv`);
-  };
-
-  return (
-    <DropdownMenu onOpenChange={(open) => { if (open) setCanImage(findChartSvg(rootRef.current) !== null); }}>
-      <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon-sm" disabled={busy} aria-label={`Descargar «${panel.title}»`} title="Descargar" />}
-      >
-        <Download className="size-4 text-muted-foreground" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
-        <DropdownMenuItem disabled={!canImage} onClick={downloadImage}>
-          <ImageDown aria-hidden="true" /> Imagen (PNG)
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled={!hasCsv} onClick={downloadData}>
-          <FileSpreadsheet aria-hidden="true" /> Datos (CSV)
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+  return <ChartExportMenu title={panel.title} rootRef={rootRef} exportTable={panel.exportTable} note={note} />;
 }
 
 /** Cifra con miles agrupados; con dos decimales si la columna los tiene (importes), sin ellos si no (recuentos). */

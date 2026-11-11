@@ -445,6 +445,10 @@ function DashboardView() {
         title="Evolución salarial"
         description={multiProfile ? "Bruto (discontinuo) y neto por perfil" : "Bruto y neto mes a mes"}
         height={320}
+        exportTable={() => ({
+          headers: ["Mes", ...profileNames.flatMap((n) => multiProfile ? [`${n} · bruto`, `${n} · neto`] : ["Bruto", "Neto"])],
+          rows: evolutionData.map((p) => [String(p.monthLabel), ...profileNames.flatMap((n) => [p[`${n}_bruto`] as number | null, p[`${n}_neto`] as number | null])]),
+        })}
         action={
           <Segmented
             aria-label="Tipo de gráfico"
@@ -514,6 +518,7 @@ function DashboardView() {
           title="Del bruto al neto"
           description="Lo que cobras y lo que se queda por el camino, cada mes"
           height={260}
+          exportTable={() => ({ headers: ["Mes", "Bruto", "Neto", "Deducciones"], rows: evolutionData.map((p) => [String(p.monthLabel), p.totalBruto as number, p.totalNeto as number, p.totalDeducciones as number]) })}
           legend={
             <div className="flex gap-5 text-xs text-muted-foreground">
               <LegendKey color={chartColors.primary} label="Neto" />
@@ -620,6 +625,7 @@ function DashboardView() {
             title="IRPF"
             description="Retención mensual y tipo efectivo"
             height={240}
+            exportTable={() => ({ headers: ["Mes", "IRPF", "Tipo efectivo (%)"], rows: irpfData.map((e) => [e.monthLabel, e.amount, e.rate]) })}
             legend={
               <div className="flex gap-5 text-xs text-muted-foreground">
                 <LegendKey color={chartColors.tax} label="Importe" />
@@ -640,7 +646,12 @@ function DashboardView() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Retención neta" description="Porcentaje del bruto que te llega" height={240}>
+          <ChartCard
+            title="Retención neta"
+            description="Porcentaje del bruto que te llega"
+            height={240}
+            exportTable={() => ({ headers: ["Mes", "Neto sobre bruto (%)"], rows: retentionData.map((e) => [e.monthLabel, e.retentionRate]) })}
+          >
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart accessibilityLayer data={retentionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>

@@ -9,10 +9,11 @@ describe("csvCell", () => {
     expect(csvCell("@SUM(A1)")).toBe("'@SUM(A1)");
   });
   it("no toca números negativos reales", () => {
-    expect(csvCell(-12.5)).toBe("-12.5");
+    expect(csvCell(-12.5)).toBe("-12,5");
   });
-  it("entrecomilla comas, comillas y saltos (también \\r)", () => {
-    expect(csvCell("a,b")).toBe('"a,b"');
+  it("entrecomilla punto y coma, comillas y saltos (también \\r)", () => {
+    expect(csvCell("a;b")).toBe('"a;b"');
+    expect(csvCell("a,b")).toBe("a,b");
     expect(csvCell("di \"hola\"")).toBe('"di ""hola"""');
     expect(csvCell("a\rb")).toBe('"a\rb"');
   });
@@ -24,9 +25,9 @@ describe("csvCell", () => {
 
 describe("toCsv", () => {
   it("cabecera aunque no haya filas", () => {
-    expect(toCsv(["Fecha", "Importe"], [])).toBe("﻿Fecha,Importe");
+    expect(toCsv(["Fecha", "Importe"], [])).toBe("﻿Fecha;Importe");
   });
   it("filas en el orden de la cabecera", () => {
-    expect(toCsv(["A", "B"] as const, [{ B: 2, A: "x" }])).toBe("﻿A,B\nx,2");
+    expect(toCsv(["A", "B"] as const, [{ B: 2.5, A: "x" }])).toBe("﻿A;B\r\nx;2,5");
   });
 });

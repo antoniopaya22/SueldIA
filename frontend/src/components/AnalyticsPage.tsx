@@ -165,7 +165,7 @@ function AnalyticsView() {
     [analytics, activeConcept],
   );
 
-  const handleExport = async (format: "csv" | "json") => {
+  const handleExport = async (format: "xlsx" | "csv" | "json") => {
     if (!selectedProfile) return;
     setExporting(true);
     try {
@@ -272,6 +272,7 @@ function AnalyticsView() {
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
+                <DropdownMenuItem onClick={() => handleExport("xlsx")}>Descargar Excel</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleExport("csv")}>Descargar CSV</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleExport("json")}>Descargar JSON</DropdownMenuItem>
               </DropdownMenuGroup>
@@ -317,6 +318,7 @@ function AnalyticsView() {
         title="Evolución salarial"
         description="Bruto (discontinuo) y neto de las nóminas mensuales"
         height={300}
+        exportTable={() => ({ headers: ["Mes", "Bruto", "Neto"], rows: visibleEvolution.map((e) => [e.label, e.bruto ?? null, e.neto ?? null]) })}
         action={
           <Segmented<Range>
             aria-label="Rango"
@@ -359,6 +361,7 @@ function AnalyticsView() {
           title="Este año frente al anterior"
           description={yoy.length ? "Mismo mes, año actual y año anterior" : "Aparecerá cuando tengas un año de histórico"}
           height={260}
+          exportTable={() => ({ headers: ["Mes", "Año actual", "Año anterior"], rows: yoy.map((d) => [formatMonthLabel(d.month), d.current, d.previous]) })}
           action={
             <Segmented
               aria-label="Métrica"
@@ -399,6 +402,7 @@ function AnalyticsView() {
 
         <ChartCard
           title="Proyección"
+          exportTable={() => ({ headers: ["Mes", "Neto", "Neto estimado"], rows: projection.map((p) => [p.label, p.neto ?? null, p.neto == null ? p.netoEst ?? null : null]) })}
           description={analytics.predictions.length ? `${analytics.predictions.length === 1 ? "Próximo mes" : `Próximos ${analytics.predictions.length} meses`} por regresión lineal` : "Hace falta más histórico para estimar"}
           height={260}
           legend={
@@ -444,6 +448,7 @@ function AnalyticsView() {
           title="Evolución por concepto"
           description="Cómo ha cambiado cada línea de tu nómina"
           height={240}
+          exportTable={() => ({ headers: ["Mes", activeConcept], rows: conceptSeries.map((p) => [p.label, p.value]) })}
           action={
             <Select value={activeConcept} onValueChange={(v) => v && setConcept(v)}>
               <SelectTrigger size="sm" className="w-36 sm:w-52" aria-label="Concepto">

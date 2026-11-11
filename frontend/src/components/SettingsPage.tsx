@@ -464,7 +464,7 @@ function DataSection() {
   const [busy, setBusy] = useState<string | null>(null);
   const [exportingAll, setExportingAll] = useState(false);
 
-  const handleExport = async (profileId: number, format: "csv" | "json") => {
+  const handleExport = async (profileId: number, format: "xlsx" | "csv" | "json") => {
     setBusy(`${profileId}-${format}`);
     try {
       await exportData(profileId, undefined, format);
@@ -498,7 +498,7 @@ function DataSection() {
             <li key={p.id} className="flex items-center gap-3 py-3 first:pt-0">
               <ProfileDot color={p.color} name={p.name} size="sm" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{p.name}</span>
-              {(["csv", "json"] as const).map((format) => (
+              {(["xlsx", "csv", "json"] as const).map((format) => (
                 <Button
                   key={format}
                   variant="outline"
@@ -506,10 +506,10 @@ function DataSection() {
                   onClick={() => handleExport(p.id, format)}
                   disabled={busy !== null}
                   className="gap-1.5"
-                  aria-label={`Exportar ${p.name} en ${format.toUpperCase()}`}
+                  aria-label={`Exportar ${p.name} en ${format === "xlsx" ? "Excel" : format.toUpperCase()}`}
                 >
                   {busy === `${p.id}-${format}` ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                  {format.toUpperCase()}
+                  {format === "xlsx" ? "Excel" : format.toUpperCase()}
                 </Button>
               ))}
             </li>

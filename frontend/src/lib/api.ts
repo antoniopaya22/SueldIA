@@ -420,7 +420,7 @@ export const getAnalytics = (profileId: number) =>
   request<AnalyticsData>(`/analytics?profileId=${profileId}`);
 
 // ─── Export ─────────────────────────────────────────────────────
-export const exportData = async (profileId: number, year?: number, format: "csv" | "json" = "csv") => {
+export const exportData = async (profileId: number, year?: number, format: "csv" | "json" | "xlsx" = "csv") => {
   const params = new URLSearchParams({ profileId: String(profileId), format });
   if (year) params.set("year", String(year));
 
@@ -959,7 +959,7 @@ export const updateRecurringTransaction = (
     body: JSON.stringify(data),
   });
 
-export const exportTransactions = async (filters: Omit<TransactionFilters, "sortBy" | "sortDir" | "page" | "limit"> & { format?: "csv" | "json" } = {}) => {
+export const exportTransactions = async (filters: Omit<TransactionFilters, "sortBy" | "sortDir" | "page" | "limit"> & { format?: "csv" | "json" | "xlsx" } = {}) => {
   const params = new URLSearchParams();
   if (filters.accountId) params.set("accountId", String(filters.accountId));
   if (filters.categoryId) params.set("categoryId", String(filters.categoryId));
@@ -981,7 +981,7 @@ export const exportTransactions = async (filters: Omit<TransactionFilters, "sort
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(`${BASE}/export/transactions?${params}`, { headers });
-  if (!res.ok) throw new Error("Error al exportar transacciones");
+  if (!res.ok) throw new ApiError(res.status, "No se pudieron exportar los movimientos. Inténtalo de nuevo.");
 
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

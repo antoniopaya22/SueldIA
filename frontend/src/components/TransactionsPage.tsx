@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Receipt, Plus, Search, ArrowLeftRight, Repeat, Download, ChevronLeft, ChevronRight,
   MoreHorizontal, Tag, TrendingUp, TrendingDown, Scale, ListChecks, X, CalendarRange,
-  AlertTriangle, PiggyBank, Wallet, SlidersHorizontal, CheckCheck, Clock, ArrowUpDown,
+  AlertTriangle, PiggyBank, Wallet, SlidersHorizontal, CheckCheck, Clock, ArrowUpDown, FileSpreadsheet, FileText,
 } from "lucide-react";
 import {
   applyCategorySuggestions,
@@ -350,7 +350,8 @@ function TransactionsView() {
     else setSort(field, field === "date" ? "desc" : "asc");
   };
 
-  const handleExport = () => exportTransactions(urlFilters);
+  const handleExport = (format: "xlsx" | "csv") =>
+    exportTransactions({ ...urlFilters, format }).catch((e: Error) => toast.error(e.message));
 
   const activeFilterCount = [
     filterType, filterCategoryId, urlFilters.groupId, filterFrom || filterTo, filterCleared, searchQuery,
@@ -419,9 +420,20 @@ function TransactionsView() {
         description="Todos tus movimientos: filtra, revisa y marca como liquidados. Los pagos recurrentes se programan aquí."
         actions={
           <>
-            <Button variant="outline" onClick={handleExport} className="gap-1.5" title="Exportar a CSV con los filtros actuales">
-              <Download className="size-4" /> <span className="hidden sm:inline">Exportar</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="outline" className="gap-1.5" title="Exportar con los filtros actuales" />}>
+                <Download className="size-4" /> <span className="hidden sm:inline">Exportar</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuItem onClick={() => handleExport("xlsx")} className="gap-2">
+                  <FileSpreadsheet className="size-4" /> Excel (.xlsx)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport("csv")} className="gap-2">
+                  <FileText className="size-4" /> CSV
+                </DropdownMenuItem>
+                <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">Con los filtros que tienes aplicados.</p>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="outline" size="icon" aria-label="Más acciones" />}>
                 <MoreHorizontal className="size-4" />

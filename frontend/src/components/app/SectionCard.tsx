@@ -1,5 +1,7 @@
-import type { ElementType, ReactNode } from "react";
+import { useRef, type ElementType, type ReactNode } from "react";
 import { cn } from "cn";
+import type { ExportTable } from "@/lib/export-utils";
+import { ChartExportMenu } from "./ChartExportMenu";
 
 interface SectionCardProps {
   title?: ReactNode;
@@ -47,12 +49,17 @@ interface ChartCardProps extends Omit<SectionCardProps, "flush"> {
   height?: number;
   /** Leyenda/resumen bajo el gráfico. */
   legend?: ReactNode;
+  /** Datos del gráfico tal y como se ven: con ellos la tarjeta ofrece descargar PNG y CSV. */
+  exportTable?: () => ExportTable | null;
 }
 
-export function ChartCard({ height = 280, legend, children, ...props }: ChartCardProps) {
+export function ChartCard({ height = 280, legend, children, exportTable, action, ...props }: ChartCardProps) {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const exportTitle = typeof props.title === "string" ? props.title : "Gráfico";
+  const exportMenu = exportTable ? <ChartExportMenu title={exportTitle} rootRef={chartRef} exportTable={exportTable} /> : null;
   return (
-    <SectionCard {...props}>
-      <div style={{ height }} className="w-full">
+    <SectionCard {...props} action={exportMenu ? <>{action}{exportMenu}</> : action}>
+      <div ref={chartRef} style={{ height }} className="w-full">
         {children}
       </div>
       {legend && <div className="mt-4">{legend}</div>}
