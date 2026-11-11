@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import {
@@ -10,6 +10,7 @@ import { getProfiles, uploadPayslips, type Payslip } from "../lib/api";
 import { formatCurrency } from "../lib/format";
 import { useSelectedProfile } from "../hooks/use-selected-profile";
 import { useLeaveGuard } from "../hooks/use-leave-guard";
+import { setUrlParams } from "../lib/url-state";
 import { Providers } from "./Providers";
 import { PageHeader, PageHeaderSkeleton, SectionCard, Segmented } from "./app";
 import { EmptyState } from "./ui/EmptyState";
@@ -244,6 +245,34 @@ function UploadManager() {
       queryClient.invalidateQueries({ queryKey: ["analytics"] });
     },
   });
+
+  // «Compartir con SueldIA» desde el móvil: el service worker deja los PDF en
+  // una caché y abre /app/upload?compartido=1. Se recogen y se borran al momento.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("compartido") || !("caches" in window)) return;
+    setUrlParams({ compartido: null });
+    void (async () => {
+      try {
+        const cache = await caches.open("sueldia-share");
+        const keys = await cache.keys();
+        const files: File[] = [];
+        for (const req of keys) {
+          const res = await cache.match(req);
+          if (res) {
+            const name = decodeURIComponent(res.headers.get("X-File-Name") ?? "nomina.pdf");
+            files.push(new File([await res.blob()], name, { type: "application/pdf" }));
+          }
+          await cache.delete(req);
+        }
+        if (files.length) {
+          setQueue((q) => [...q, ...files.map((file) => ({ id: `${file.name}-${file.size}-${Math.random()}`, file, state: "queued" as const }))]);
+          toast.success(files.length === 1 ? "PDF recibido: revisa el perfil y súbelo" : `${files.length} PDF recibidos: revisa el perfil y súbelos`);
+        }
+      } catch {
+        toast.error("No se pudieron recoger los PDF compartidos");
+      }
+    })();
+  }, []);
 
   const onDrop = useCallback((accepted: File[], rejected: FileRejection[]) => {
     if (accepted.length) {

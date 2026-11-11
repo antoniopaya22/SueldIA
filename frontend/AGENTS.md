@@ -152,6 +152,9 @@ Patrón visual: bruto en navy (línea discontinua), neto en verde (área/sólido
 ## PWA
 
 La app es instalable: `public/manifest.webmanifest` (nombre, colores, iconos en `public/icons/`, atajos a Nueva transacción / Subir nómina / Analítica), enlazado desde `Layout.astro`, `MarketingLayout.astro` y `login.astro`. `public/sw.js` es un service worker **mínimo**: solo guarda `public/offline.html` y la muestra si una navegación falla sin red. **No cachea nada de `/api` ni de las páginas de la app** (son datos financieros); no añadir caché de datos sin decidirlo explícitamente. Si cambias `offline.html`, sube la versión de `CACHE` en `sw.js`. También recibe los avisos push de las alertas (`push` / `notificationclick`, abre la URL que manda el backend); la suscripción de cada dispositivo la gestiona `lib/push.ts` desde Ajustes → Avisos.
+- **Compartir con SueldIA** (Web Share Target, `share_target` del manifest): el móvil manda los PDF por POST a `/share-target`; `sw.js` los deja un instante en la caché `sueldia-share` y abre `/app/upload?compartido=1`, que los recoge y la vacía.
+- **Versión nueva**: `scripts/csp.mjs` escribe `dist/build.json` y `<meta name="sueldia-build">` en cada página; `lib/version-check.ts` los compara al volver a la pestaña y AppShell propone recargar.
+- **Instalar**: `lib/install-prompt.ts` guarda `beforeinstallprompt`; Ajustes → «App y avisos» lo ofrece (o explica cómo en iPhone).
 
 ## Navegación (ClientRouter)
 

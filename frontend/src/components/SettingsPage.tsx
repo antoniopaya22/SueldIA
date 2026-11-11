@@ -10,6 +10,7 @@ import {
 } from "../lib/api";
 import { plural } from "../lib/format";
 import { disablePush, enablePush, getPushState, isPushSupported, needsInstallForPush, type PushState } from "../lib/push";
+import { canPromptInstall, isStandalone, onInstallAvailabilityChange, promptInstall } from "../lib/install-prompt";
 import { sendTestPush } from "../lib/api";
 import { Switch } from "@/components/ui/switch";
 import { supabase } from "../lib/supabase";
@@ -390,6 +391,39 @@ function RestoreBackupRow() {
   );
 }
 
+/** «Instalar la app» (o cómo hacerlo en iPhone); nada si ya está instalada. */
+function InstallRow() {
+  const [, force] = useState(0);
+  useEffect(() => onInstallAvailabilityChange(() => force((n) => n + 1)), []);
+  if (isStandalone()) return null;
+  const canPrompt = canPromptInstall();
+  const ios = needsInstallForPush();
+  if (!canPrompt && !ios) return null;
+  return (
+    <SettingRow
+      title="Instalar SueldIA"
+      description={
+        canPrompt
+          ? "Como una app más: con su icono, a pantalla completa y desde ella puedes compartir los PDF de tus nóminas directamente."
+          : "En iPhone y iPad: botón Compartir de Safari → «Añadir a pantalla de inicio». Así también podrás recibir avisos."
+      }
+    >
+      {canPrompt && (
+        <div className="flex sm:justify-end">
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (await promptInstall()) toast.success("SueldIA instalada");
+            }}
+          >
+            Instalar
+          </Button>
+        </div>
+      )}
+    </SettingRow>
+  );
+}
+
 /** Avisos de alertas en este dispositivo (Web Push). */
 function NotificationsSection() {
   const [state, setState] = useState<PushState | "loading">("loading");
@@ -438,7 +472,8 @@ function NotificationsSection() {
       : "Te avisamos cuando salta una alerta (bajada del neto, nómina sin subir, presupuesto superado…). El aviso solo dice qué regla saltó, nunca importes. Se activa en cada dispositivo por separado.";
 
   return (
-    <SectionCard title="Avisos">
+    <SectionCard title="App y avisos">
+      <InstallRow />
       <SettingRow title="Avisos en este dispositivo" description={description}>
         <div className="flex items-center justify-end gap-3">
           {state === "on" && (

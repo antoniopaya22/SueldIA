@@ -24,6 +24,12 @@ function htmlFiles(dir) {
   });
 }
 
+// Identificador de este build: va en cada HTML (<meta name="sueldia-build">) y en
+// /build.json. Una pestaña abierta desde antes de un despliegue lo compara al
+// volver y propone recargar (ver lib/version-check.ts).
+const BUILD_ID = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12) || Date.now().toString(36);
+writeFileSync(join(DIST, "build.json"), JSON.stringify({ id: BUILD_ID }));
+
 const INLINE_SCRIPT = /<script(?![^>]*\bsrc=)([^>]*)>([\s\S]*?)<\/script>/g;
 const INLINE_HANDLER = /\son[a-z]+=["']/i;
 
@@ -55,7 +61,7 @@ for (const file of htmlFiles(DIST)) {
     "form-action 'self'",
   ].join("; ");
 
-  const meta = `<meta http-equiv="Content-Security-Policy" content="${policy}">`;
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="sueldia-build" content="${BUILD_ID}">`;
   // Lo antes posible en <head>: la política solo cubre lo que viene después.
   const charset = html.match(/<meta charset="[^"]*"\s*\/?>/i);
   html = charset ? html.replace(charset[0], `${charset[0]}${meta}`) : html.replace(/<head[^>]*>/i, (m) => `${m}${meta}`);

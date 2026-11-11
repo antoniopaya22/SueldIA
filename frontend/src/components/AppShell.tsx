@@ -1,4 +1,5 @@
 import * as React from "react";
+import { toast } from "sonner";
 import { Bell, Check, ChevronsUpDown, LogOut, Monitor, Moon, Search, Settings, Sun } from "lucide-react";
 import {
   Sidebar,
@@ -49,6 +50,9 @@ import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 import { CommandMenu } from "@/components/app/CommandMenu";
 import { ShortcutsDialog } from "@/components/app/ShortcutsDialog";
 import { DemoBanner } from "@/components/app/DemoData";
+import { isNewVersionAvailable } from "@/lib/version-check";
+// Registra beforeinstallprompt cuanto antes (se ofrece desde Ajustes).
+import "@/lib/install-prompt";
 import { PreferencesBoot } from "@/components/app/PreferencesBoot";
 import { MobileTabBar } from "@/components/app/MobileTabBar";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -561,6 +565,28 @@ function AppShellInner({ currentPath, children }: AppShellProps) {
   }, []);
 
   const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
+  // Versión nueva desplegada mientras la pestaña seguía abierta: se propone recargar (una vez).
+  React.useEffect(() => {
+    let notified = false;
+    const check = () => {
+      if (notified || document.visibilityState !== "visible") return;
+      void isNewVersionAvailable().then((available) => {
+        if (!available || notified) return;
+        notified = true;
+        toast("Hay una versión nueva de SueldIA", {
+          description: "Recarga para usar la última (no perderás nada guardado).",
+          duration: Infinity,
+          action: { label: "Recargar", onClick: () => window.location.reload() },
+        });
+      });
+    };
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
+    };
+  }, []);
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {

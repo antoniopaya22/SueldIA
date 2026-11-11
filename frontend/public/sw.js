@@ -2,7 +2,7 @@
 // página propia si se abre sin conexión. NO guarda en caché nada de /api ni
 // de las páginas de la app: son datos financieros y siempre vienen de la red.
 // Si cambias offline.html, sube la versión: así el service worker nuevo vuelve a guardarlo.
-const CACHE = "sueldia-offline-v2";
+const CACHE = "sueldia-offline-v3";
 const OFFLINE_URL = "/offline.html";
 
 self.addEventListener("install", (event) => {
@@ -12,9 +12,37 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE && key !== SHARE_CACHE).map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
+});
+
+// «Compartir con SueldIA» (Web Share Target, ver manifest): el móvil manda los
+// PDF por POST a /share-target. Se dejan un momento en una caché propia y se
+// abre la subida, que los recoge y la vacía al instante (son nóminas: no se
+// quedan guardadas en el dispositivo).
+const SHARE_CACHE = "sueldia-share";
+self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+  if (event.request.method === "POST" && url.pathname === "/share-target") {
+    event.respondWith(
+      (async () => {
+        try {
+          const form = await event.request.formData();
+          const files = form.getAll("files").filter((f) => f && typeof f === "object" && "name" in f);
+          const cache = await caches.open(SHARE_CACHE);
+          await Promise.all(
+            files.slice(0, 20).map((file, i) =>
+              cache.put(`/__shared/${Date.now()}-${i}`, new Response(file, { headers: { "Content-Type": file.type || "application/pdf", "X-File-Name": encodeURIComponent(file.name) } })),
+            ),
+          );
+        } catch {
+          // Si algo falla, se abre la subida igualmente (vacía).
+        }
+        return Response.redirect("/app/upload?compartido=1", 303);
+      })(),
+    );
+  }
 });
 
 self.addEventListener("fetch", (event) => {
