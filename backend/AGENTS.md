@@ -68,7 +68,9 @@ Métricas de calidad: `payslips.parser_format` y `payslips.parse_ms`, más la l�
 
 ## Schema de Base de Datos
 
-`src/db/schema.ts` (Drizzle `pg-core`). Tablas: `users`, `profiles`, `payslips` (sin `file_path` — no se guarda el PDF), `payslip_concepts`, `payslip_notes`, `tags`, `payslip_tags`, `alert_rules`, `alert_history`, `accounts`, `category_groups`, `categories`, `transactions`, `recurring_transactions`, `budgets`, `category_targets`, `category_rules`, `user_preferences`, `savings_goals`, `account_valuations`, `push_subscriptions`, `activity_log`.
+`src/db/schema.ts` (Drizzle `pg-core`). Tablas: `users`, `profiles`, `payslips` (sin `file_path` — no se guarda el PDF), `payslip_concepts`, `payslip_notes`, `tags`, `payslip_tags`, `alert_rules`, `alert_history`, `accounts`, `category_groups`, `categories`, `transactions`, `recurring_transactions`, `budgets`, `category_targets`, `category_rules`, `user_preferences`, `savings_goals`, `account_valuations`, `push_subscriptions`, `activity_log`, `shares`, `share_invites`.
+
+- **Compartir en solo lectura** («ver como»): con la cabecera `X-View-As: <id del titular>`, `authMiddleware` comprueba que hay un `share` y pone `req.user` = titular (`req.viewer` = quien llama). Cualquier método que no sea GET, y `/api/export`, da 403 (`code: "read_only"`); sin acceso, 403 `view_as_revoked`. `/api/auth`, `/api/sharing`, `/api/push`, `/api/preferences` y `/api/client-errors` siempre van con la identidad propia (`OWN_IDENTITY`). Una ruta GET nunca debe escribir datos: la puede llamar quien solo mira.
 
 - **Registro de actividad**: una ruta nueva que modifique datos del usuario se añade a `ACTIVITY` (`services/activity.service.ts`) con su texto en español; la prueba de `authorization.test.ts` comprueba que cada clave corresponde a una ruta real.
 

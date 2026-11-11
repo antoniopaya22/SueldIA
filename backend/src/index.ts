@@ -33,6 +33,7 @@ import { pushRouter } from "./routes/push.js";
 import { savingsGoalsRouter } from "./routes/savings-goals.js";
 import { demoRouter } from "./routes/demo.js";
 import { activityRouter } from "./routes/activity.js";
+import { sharingRouter } from "./routes/sharing.js";
 import { activityMiddleware } from "./services/activity.service.js";
 import { db, client } from "./db/index.js";
 
@@ -128,6 +129,7 @@ app.use("/api/push", authMiddleware, pushRouter);
 app.use("/api/savings-goals", authMiddleware, savingsGoalsRouter);
 app.use("/api/demo", authMiddleware, demoRouter);
 app.use("/api/activity", authMiddleware, activityRouter);
+app.use("/api/sharing", authMiddleware, sharingRouter);
 app.use("/api/client-errors", authMiddleware, clientErrorsRouter);
 
 // ─── Error handler (must be last) ──────────────────────────────

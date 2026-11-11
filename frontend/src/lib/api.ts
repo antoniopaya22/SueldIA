@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { switchViewAs, viewAsHeader } from "./view-as";
 
 const BASE = "/api";
 
@@ -64,6 +65,7 @@ async function request<T>(
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+  Object.assign(headers, viewAsHeader());
 
   // Escrituras con keepalive: si la pestaña se cierra justo después (p. ej.
   // un borrado con «Deshacer» que se confirma al salir), la petición llega
@@ -88,6 +90,8 @@ async function request<T>(
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     if (res.status === 401) void handleUnauthorized();
+    // Quien compartía sus datos te ha quitado el acceso: de vuelta a los tuyos.
+    if (res.status === 403 && (body as { code?: string } | null)?.code === "view_as_revoked") switchViewAs(null);
     throw new ApiError(res.status, apiErrorMessage(res.status, body), (body as { details?: Record<string, string[]> } | null)?.details);
   }
   if (res.status === 204) return undefined as T;
@@ -130,6 +134,7 @@ export const exportAllData = async () => {
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const res = await fetch(`${BASE}/export/all`, { headers });
   if (!res.ok) throw new Error("No se pudo exportar los datos");
@@ -289,6 +294,7 @@ export const uploadPayslips = async (profileId: number, files: File[], payslipTy
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const res = await fetch(`${BASE}/payslips/upload`, {
     method: "POST",
@@ -466,6 +472,7 @@ export const exportData = async (profileId: number, year?: number, format: "csv"
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const res = await fetch(`${BASE}/export?${params}`, { headers });
   if (!res.ok) throw new ApiError(res.status, "No se pudo exportar. Inténtalo de nuevo.");
@@ -1121,6 +1128,7 @@ export const exportTransactions = async (filters: Omit<TransactionFilters, "sort
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const res = await fetch(`${BASE}/export/transactions?${params}`, { headers });
   if (!res.ok) throw new ApiError(res.status, "No se pudieron exportar los movimientos. Inténtalo de nuevo.");
@@ -1362,6 +1370,7 @@ export const importYnab = async (file: File, dryRun = false): Promise<ImportResu
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const url = dryRun ? `${BASE}/import/ynab?dryRun=true` : `${BASE}/import/ynab`;
   const res = await fetch(url, {
@@ -1716,13 +1725,15 @@ async function postForm<T>(path: string, form: FormData): Promise<T> {
   const token = await getAuthToken();
   let res: Response;
   try {
-    res = await fetch(`${BASE}${path}`, { method: "POST", body: form, headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    res = await fetch(`${BASE}${path}`, { method: "POST", body: form, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...viewAsHeader() } });
   } catch {
     throw new ApiError(0, apiErrorMessage(0, null));
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     if (res.status === 401) void handleUnauthorized();
+    // Quien compartía sus datos te ha quitado el acceso: de vuelta a los tuyos.
+    if (res.status === 403 && (body as { code?: string } | null)?.code === "view_as_revoked") switchViewAs(null);
     throw new ApiError(res.status, apiErrorMessage(res.status, body));
   }
   return res.json();
@@ -1908,3 +1919,22 @@ export interface ActivityEntry {
 
 export const getActivity = (before?: number, limit = 30) =>
   request<{ data: ActivityEntry[]; nextBefore: number | null }>(`/activity?limit=${limit}${before ? `&before=${before}` : ""}`);
+
+// ─── Compartir en solo lectura ──────────────────────────────────
+export interface SharePerson { userId: number; name: string | null; email: string; since: string }
+export interface SharingState {
+  /** Quienes te dejan ver sus datos. */
+  sharedWithMe: SharePerson[];
+  /** Quienes pueden ver los tuyos. */
+  myViewers: SharePerson[];
+  invites: Array<{ id: number; expiresAt: string; createdAt: string }>;
+}
+
+export const getSharing = () => request<SharingState>("/sharing");
+export const createShareInvite = () =>
+  request<{ id: number; token: string; expiresAt: string }>("/sharing/invites", { method: "POST" });
+export const deleteShareInvite = (id: number) => request<{ ok: boolean }>(`/sharing/invites/${id}`, { method: "DELETE" });
+export const acceptShareInvite = (token: string) =>
+  request<{ owner: { id: number; name: string } }>("/sharing/accept", { method: "POST", body: JSON.stringify({ token }) });
+export const removeShareViewer = (userId: number) => request<{ ok: boolean }>(`/sharing/viewers/${userId}`, { method: "DELETE" });
+export const leaveShare = (ownerUserId: number) => request<{ ok: boolean }>(`/sharing/owners/${ownerUserId}`, { method: "DELETE" });

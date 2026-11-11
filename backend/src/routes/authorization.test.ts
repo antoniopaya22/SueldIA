@@ -580,6 +580,44 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect(catNames).toContain("Cat A");
     expect(catNames).not.toContain("intrusa"); // B no pudo crear categorías en grupos de A
   });
+
+  // Al final: deja a B viendo los datos de A un rato (y luego se lo quita).
+  it("compartir en solo lectura: B ve los datos de A sin poder cambiarlos, hasta que A se lo quita", async () => {
+    const as = async (who: "a" | "b" | "c", method: string, path: string, viewAs?: number, body?: unknown) => {
+      if (!tokens[who]) tokens[who] = await mint(`user-${who}`);
+      const res = await fetch(`${api}/api${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${tokens[who]}`, "Content-Type": "application/json", ...(viewAs ? { "X-View-As": String(viewAs) } : {}) },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      return { status: res.status, json: (await res.json().catch(() => null)) as Record<string, unknown> };
+    };
+    const aId = (await as("a", "GET", "/auth/me")).json.id as number;
+    const bId = (await as("b", "GET", "/auth/me")).json.id as number;
+
+    // Sin invitación, nada.
+    expect((await as("b", "GET", "/accounts", aId)).status).toBe(403);
+
+    const invite = (await as("a", "POST", "/sharing/invites")).json as { token: string };
+    expect((await as("a", "POST", "/sharing/accept", undefined, { token: invite.token })).status).toBe(400); // la propia
+    expect((await as("b", "POST", "/sharing/accept", undefined, { token: invite.token })).status).toBe(200);
+    expect((await as("c", "POST", "/sharing/accept", undefined, { token: invite.token })).status).toBe(404); // un solo uso
+
+    const seen = (await as("b", "GET", "/accounts", aId)).json.data as Array<{ name: string }>;
+    expect(seen.map((x) => x.name)).toContain("Banco A");
+    // Su propia identidad no cambia (cuenta, preferencias…).
+    expect((await as("b", "GET", "/auth/me", aId)).json.id).toBe(bId);
+    // Solo lectura, y sin descargas.
+    expect((await as("b", "POST", "/accounts", aId, { name: "intrusa", type: "bank" })).json).toMatchObject({ code: "read_only" });
+    expect((await as("b", "DELETE", `/accounts/${ids.account}`, aId)).status).toBe(403);
+    expect((await as("b", "GET", "/export/all", aId)).status).toBe(403);
+    // Quien no tiene acceso, tampoco con la cabecera.
+    expect((await as("c", "GET", "/accounts", aId)).status).toBe(403);
+    expect(((await as("b", "GET", "/sharing")).json.sharedWithMe as Array<{ userId: number }>).map((x) => x.userId)).toEqual([aId]);
+
+    expect((await as("a", "DELETE", `/sharing/viewers/${bId}`)).status).toBe(200);
+    expect((await as("b", "GET", "/accounts", aId)).json).toMatchObject({ code: "view_as_revoked" });
+  });
 });
 
 /** PDF mínimo de una página con una línea de texto por elemento (Helvetica). */

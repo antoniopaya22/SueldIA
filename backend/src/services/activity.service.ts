@@ -145,6 +145,12 @@ export const ACTIVITY: Record<string, Describe> = {
   "DELETE /api/tags/:id": () => ({ entity: "tag", summary: "Etiqueta eliminada" }),
   "POST /api/notes/": () => ({ entity: "payslip", summary: "Nota añadida a una nómina" }),
   "DELETE /api/notes/:id": () => ({ entity: "payslip", summary: "Nota de una nómina eliminada" }),
+  // Compartir
+  "POST /api/sharing/invites": () => ({ entity: "sharing", summary: "Invitación creada para ver tus datos (solo lectura)" }),
+  "DELETE /api/sharing/invites/:id": () => ({ entity: "sharing", summary: "Invitación cancelada" }),
+  "POST /api/sharing/accept": (c) => ({ entity: "sharing", summary: named("Ahora puedes ver los datos de otra persona", (field(c.result, "owner") as Record<string, unknown> | undefined)?.name) }),
+  "DELETE /api/sharing/viewers/:userId": () => ({ entity: "sharing", summary: "Quitado el acceso de una persona a tus datos" }),
+  "DELETE /api/sharing/owners/:userId": () => ({ entity: "sharing", summary: "Has dejado de ver los datos de otra persona" }),
   // Datos de ejemplo
   "POST /api/demo/": () => ({ entity: "demo", summary: "Datos de ejemplo cargados" }),
   "DELETE /api/demo/": () => ({ entity: "demo", summary: "Datos de ejemplo quitados" }),

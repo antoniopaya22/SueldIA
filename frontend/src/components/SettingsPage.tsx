@@ -17,6 +17,7 @@ import { supabase } from "../lib/supabase";
 import { PageHeader, SectionCard } from "./app";
 import { ProfileDot } from "./payroll/shared";
 import { ActivitySection } from "./settings/ActivitySection";
+import { SharingSection } from "./settings/SharingSection";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -217,7 +218,7 @@ function ProfileSection() {
       setDraft(null);
       toast.success("Perfil actualizado");
     },
-    onError: () => toast.error("No se pudo actualizar el perfil"),
+    onError: (e: Error) => toast.error("No se pudo actualizar el perfil", { description: e.message }),
   });
 
   const initials = (current?.name || current?.email || "?").split(/[\s@]/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
@@ -666,6 +667,8 @@ function SettingsView() {
         <NotificationsSection />
 
         <DataSection />
+
+        <SharingSection />
 
         <ActivitySection />
 

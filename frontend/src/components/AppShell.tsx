@@ -50,6 +50,7 @@ import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 import { CommandMenu } from "@/components/app/CommandMenu";
 import { ShortcutsDialog } from "@/components/app/ShortcutsDialog";
 import { DemoBanner } from "@/components/app/DemoData";
+import { ViewAsBanner } from "@/components/app/ViewAsBanner";
 import { isNewVersionAvailable } from "@/lib/version-check";
 // Registra beforeinstallprompt cuanto antes (se ofrece desde Ajustes).
 import "@/lib/install-prompt";
@@ -653,6 +654,7 @@ function AppShellInner({ currentPath, children }: AppShellProps) {
           <div id="app-scroll" className="flex min-h-0 flex-1 flex-col md:overflow-y-auto">
             <AppHeader currentPath={currentPath} onOpenSearch={() => setSearchOpen(true)} />
             <div className="app-page mx-auto w-full max-w-7xl flex-1 px-4 pt-5 pb-[calc(var(--mobile-nav-h)+1.5rem)] sm:px-6 sm:pt-6 md:pb-6 lg:px-10 lg:py-9">
+              <ViewAsBanner />
               <QueryClientProvider client={appQueryClient}><DemoBanner /></QueryClientProvider>
               {children}
             </div>

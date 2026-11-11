@@ -265,6 +265,46 @@ export const accounts = pgTable(
   }),
 ).enableRLS();
 
+// ─── Compartir (solo lectura) ───────────────────────────────────
+// Otra persona puede ver tus datos sin poder cambiarlos: el titular crea una
+// invitación de un solo uso y quien la acepta queda en `shares`. Ver
+// middleware/view-as.ts.
+export const shares = pgTable(
+  "shares",
+  {
+    id: serial("id").primaryKey(),
+    ownerUserId: integer("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    viewerUserId: integer("viewer_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    pairIdx: uniqueIndex("shares_owner_viewer_idx").on(table.ownerUserId, table.viewerUserId),
+    viewerIdx: index("shares_viewer_idx").on(table.viewerUserId),
+  }),
+).enableRLS();
+
+export const shareInvites = pgTable(
+  "share_invites",
+  {
+    id: serial("id").primaryKey(),
+    ownerUserId: integer("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // SHA-256 del código: el código en claro solo lo ve el titular al crearlo.
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tokenIdx: uniqueIndex("share_invites_token_idx").on(table.tokenHash),
+    ownerIdx: index("share_invites_owner_idx").on(table.ownerUserId),
+  }),
+).enableRLS();
+
 // ─── Registro de actividad ──────────────────────────────────────
 // «Qué ha cambiado y cuándo»: una fila por acción que modifica datos (la
 // apunta un middleware, ver services/activity.service.ts). Se podan las de

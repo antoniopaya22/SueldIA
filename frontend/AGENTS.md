@@ -95,6 +95,10 @@ Reglas:
 - Formato: `lib/format.ts` (`formatCurrency` agrupa siempre miles, `formatPct` → "77,7 %", `formatCompact` → "2,1k €", `formatMonthLabel` → "Sep 26"). No usar `toFixed` para mostrar porcentajes.
 - Funciones de upload y export usan `fetch` directo (no JSON body)
 
+## Ver los datos de otra persona (solo lectura)
+
+`lib/view-as.ts` guarda en `localStorage` a quién se está viendo; `api.ts` manda `X-View-As` en todas las peticiones (también las de `fetch` directo) y, si el backend responde `view_as_revoked`, vuelve a los datos propios. `app/ViewAsBanner.tsx` lo avisa arriba de cada página. Se entra y se sale desde Ajustes → Compartir (`settings/SharingSection.tsx`), que también acepta `?invitacion=<código>`.
+
 ## Auth Flow
 
 Login con Google vía **Supabase Auth** (`src/lib/supabase.ts`) — no hay login/registro propio, ni contraseñas.
