@@ -10,15 +10,17 @@ interface Props {
   onSchedule: (s: SubscriptionSuggestion) => void;
 }
 
-/** Gastos que se repiten cada mes y aún no están programados: se proponen, nunca se crean solos. */
+const PER: Record<SubscriptionSuggestion["cadence"], string> = { weekly: "/semana", monthly: "/mes", yearly: "/año" };
+
+/** Gastos que se repiten (cada semana, mes o año) y aún no están programados: se proponen, nunca se crean solos. */
 export function SubscriptionSuggestions({ suggestions, onSchedule }: Props) {
   if (suggestions.length === 0) return null;
-  const monthly = suggestions.reduce((sum, s) => sum + s.amount, 0);
+  const monthly = suggestions.reduce((sum, s) => sum + s.monthlyAmount, 0);
   return (
     <SectionCard
       className="mt-6"
       title="Posibles suscripciones"
-      description={`Cargos que se repiten cada mes y aún no tienes programados · ${formatCurrency(monthly)} al mes`}
+      description={`Cargos que se repiten y aún no tienes programados · suman ${formatCurrency(monthly)} al mes`}
       icon={Repeat}
       flush
     >
@@ -31,7 +33,7 @@ export function SubscriptionSuggestions({ suggestions, onSchedule }: Props) {
                 {s.occurrences} cargos · último {formatDateLong(s.lastDate)} · próximo hacia el {formatDateLong(s.nextDate)}
               </p>
             </div>
-            <span className="text-sm font-semibold tabular-nums text-foreground">{formatCurrency(s.amount)}/mes</span>
+            <span className="text-sm font-semibold tabular-nums text-foreground">{formatCurrency(s.amount)}{PER[s.cadence]}</span>
             <Button variant="outline" size="sm" onClick={() => onSchedule(s)}>Programar</Button>
           </li>
         ))}

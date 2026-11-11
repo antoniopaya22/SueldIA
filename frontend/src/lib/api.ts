@@ -962,6 +962,10 @@ export interface RecurringTransaction {
   overdueCount: number;
 }
 
+/** «Esta vez no»: borra esa ocurrencia pendiente y la regla no la vuelve a generar. */
+export const skipRecurringOccurrence = (transactionId: number) =>
+  request<{ ok: boolean }>("/recurring-transactions/skip-occurrence", { method: "POST", body: JSON.stringify({ transactionId }) });
+
 export const getRecurringTransactions = () =>
   request<{ data: RecurringTransaction[] }>("/recurring-transactions").then((response) => response.data);
 
@@ -978,6 +982,8 @@ export const createRecurringTransaction = (data: {
   memo?: string | null;
   flag?: string | null;
   autoSettle?: boolean;
+  /** Con inicio pasado: false = no crear los movimientos anteriores a hoy. */
+  backfill?: boolean;
 }) =>
   request<RecurringTransaction>("/recurring-transactions", {
     method: "POST",
@@ -1373,7 +1379,10 @@ export const getForecast = (days = 90) => request<Forecast>(`/finance/forecast?d
 
 export interface SubscriptionSuggestion {
   payee: string;
+  cadence: "weekly" | "monthly" | "yearly";
   amount: number;
+  /** Lo que supone al mes. */
+  monthlyAmount: number;
   occurrences: number;
   lastDate: string;
   nextDate: string;

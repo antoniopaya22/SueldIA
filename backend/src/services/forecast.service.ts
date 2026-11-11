@@ -2,7 +2,7 @@ import { and, eq, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { accounts, recurringTransactions, transactions } from "../db/schema.js";
 import { getAccountsWithBalance } from "./finance.service.js";
-import { getTodayIsoDate, listOccurrenceDates } from "./recurring-transactions.service.js";
+import { getTodayIsoDate, listOccurrenceDates, skippedOccurrenceKeys } from "./recurring-transactions.service.js";
 
 /* ───────── Previsión de saldo ───────────────────────────────────
  * Saldo de hoy + lo que ya está previsto: movimientos pendientes y próximas
@@ -145,6 +145,7 @@ export async function getForecast(userId: number, days = 90): Promise<Forecast> 
   ]);
 
   const existing = new Set(generated.map((g) => `${g.ruleId}:${g.scheduledFor}`));
+  for (const key of await skippedOccurrenceKeys(rules.map(({ rule }) => rule.id))) existing.add(key);
   const items: Omit<ForecastItem, "overdue">[] = pending.map((p) => ({
     date: p.date,
     amount: p.type === "income" ? p.amount : -p.amount,

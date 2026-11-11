@@ -129,6 +129,7 @@ const recurringRow = z.object({
   autoSettle: z.boolean().optional(),
   createdAt,
 });
+const recurringSkipRow = z.object({ recurringTransactionId: id, scheduledFor: isoDateSchema });
 const budgetRow = z.object({ categoryId: id, month: monthKeySchema, assigned: moneySchema, createdAt });
 const targetRow = z.object({
   categoryId: id,
@@ -166,6 +167,7 @@ export const backupSchema = z.object({
   categories: list(categoryRow, USER_LIMITS.categories),
   transactions: list(transactionRow, 200_000),
   recurringTransactions: list(recurringRow, USER_LIMITS.recurring),
+  recurringSkips: list(recurringSkipRow, 50_000),
   alertRules: list(alertRuleRow, USER_LIMITS.alertRules),
   alertHistory: list(alertHistoryRow, 50_000),
   budgets: list(budgetRow, 100_000),
@@ -241,6 +243,8 @@ function checkReferences(b: Backup): void {
   if (b.categories.some((c) => !groups.has(c.groupId))) fail("una categoría sin su grupo");
   if (b.transactions.some((t) => !accounts.has(t.accountId))) fail("movimientos sin su cuenta");
   if (b.recurringTransactions.some((r) => !accounts.has(r.accountId))) fail("recurrentes sin su cuenta");
+  const recurring = ids(b.recurringTransactions);
+  if (b.recurringSkips.some((k) => !recurring.has(k.recurringTransactionId))) fail("ocurrencias saltadas sin su recurrente");
   if ([...b.budgets, ...b.categoryTargets, ...b.categoryRules].some((r) => !categories.has(r.categoryId))) {
     fail("presupuestos o reglas sin su categoría");
   }
@@ -390,6 +394,7 @@ export async function restoreBackup(userId: number, b: Backup): Promise<BackupCo
       await insertChunked(tx, s.recurringTransactions, b.recurringTransactions.map((r) => ({
         ...r, id: must(recurring, r.id), userId, accountId: must(accounts, r.accountId), categoryId: pick(categories, r.categoryId),
       })));
+      await insertChunked(tx, s.recurringSkips, b.recurringSkips.map((k) => ({ recurringTransactionId: must(recurring, k.recurringTransactionId), scheduledFor: k.scheduledFor })));
       await insertChunked(tx, s.transactions, b.transactions.map((t) => ({
         ...t,
         id: must(transactions, t.id),
@@ -452,7 +457,7 @@ export async function buildFullExport(userId: number) {
   const payslipIds = userPayslips.map((p) => p.id);
   const none = payslipIds.length === 0;
 
-  const [concepts, notes, payslipTagLinks, tags, accounts, groups, categories, transactions, recurring, rules, history, budgets, targets, catRules, prefs] =
+  const [concepts, notes, payslipTagLinks, tags, accounts, groups, categories, transactions, recurring, rules, history, budgets, targets, catRules, prefs, skips] =
     await Promise.all([
       none ? [] : db.select().from(s.payslipConcepts).where(inArray(s.payslipConcepts.payslipId, payslipIds)),
       none ? [] : db.select().from(s.payslipNotes).where(inArray(s.payslipNotes.payslipId, payslipIds)),
@@ -474,6 +479,11 @@ export async function buildFullExport(userId: number) {
       db.select().from(s.categoryTargets).where(eq(s.categoryTargets.userId, userId)),
       db.select().from(s.categoryRules).where(eq(s.categoryRules.userId, userId)),
       db.select().from(s.userPreferences).where(eq(s.userPreferences.userId, userId)),
+      db
+        .select({ recurringTransactionId: s.recurringSkips.recurringTransactionId, scheduledFor: s.recurringSkips.scheduledFor })
+        .from(s.recurringSkips)
+        .innerJoin(s.recurringTransactions, eq(s.recurringSkips.recurringTransactionId, s.recurringTransactions.id))
+        .where(eq(s.recurringTransactions.userId, userId)),
     ]);
 
   return {
@@ -493,6 +503,7 @@ export async function buildFullExport(userId: number) {
     categories,
     transactions,
     recurringTransactions: recurring,
+    recurringSkips: skips,
     alertRules: rules.map((r) => ({ ...r, config: safeJson(r.config) })),
     alertHistory: history,
     budgets,

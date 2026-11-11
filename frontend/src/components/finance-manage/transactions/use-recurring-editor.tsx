@@ -109,7 +109,7 @@ export function useRecurringEditor({ today, selectedAccountId, accounts, categor
       accountId: s.accountId,
       categoryId: s.categoryId ?? "",
       amount: s.amount.toFixed(2),
-      cadence: "monthly",
+      cadence: s.cadence,
       intervalCount: 1,
       startDate: s.nextDate,
       endDate: "",
@@ -153,6 +153,7 @@ export function useRecurringEditor({ today, selectedAccountId, accounts, categor
       payee: form.payee || null,
       memo: form.memo || null,
       autoSettle: form.autoSettle,
+      ...(editingId ? {} : { backfill: form.backfill === true }),
     };
     if (editingId) updateMut.mutate({ id: editingId, data: payload });
     else createMut.mutate(payload);

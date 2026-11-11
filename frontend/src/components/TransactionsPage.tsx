@@ -22,6 +22,7 @@ import {
   updateTransaction,
   type Transaction,
   type TransactionFilters,
+  skipRecurringOccurrence,
 } from "../lib/api";
 import { Providers } from "./Providers";
 import { toast } from "sonner";
@@ -47,7 +48,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { darkBoost } from "../lib/color";
-import { CategorySelect, FilterChip, NONE, getTodayIsoDate, type TxType } from "./finance-manage/transactions/shared";
+import { CategorySelect, FilterChip, NONE, formatDateShort, getTodayIsoDate, type TxType } from "./finance-manage/transactions/shared";
 import type { TxForm } from "./finance-manage/transactions/TransactionDialog";
 import { TransactionFormDialog } from "./finance-manage/transactions/TransactionFormDialog";
 import { useQuickCategory } from "./finance-manage/transactions/useQuickCategory";
@@ -809,6 +810,7 @@ function TransactionsView() {
                   onEdit={openEditForm}
                   onToggleCleared={(tx) => clearMut.mutate({ id: tx.id, cleared: !tx.cleared })}
                   onSchedule={recurring.openFromTransaction}
+                  onSkip={(tx) => deleteWithUndo([tx.id], `Saltado: ${tx.payee || "pago recurrente"} del ${formatDateShort(tx.date)}`, () => skipRecurringOccurrence(tx.id))}
                   onDuplicate={openDuplicateForm}
                   onSettle={setSettleTarget}
                   onSplit={setSplitTarget}

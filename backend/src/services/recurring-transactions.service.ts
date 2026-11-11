@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import { db, type DbOrTx } from "../db/index.js";
-import { recurringTransactions, transactions } from "../db/schema.js";
+import { recurringSkips, recurringTransactions, transactions } from "../db/schema.js";
 import { todayIso } from "../utils/dates.js";
 import { logger } from "../logger.js";
 
@@ -139,6 +139,16 @@ export function summarizePending(
   return out;
 }
 
+/** Claves «regla:fecha» de las ocurrencias saltadas de esas reglas. */
+export async function skippedOccurrenceKeys(ruleIds: number[], dbOrTx: DbOrTx = db): Promise<Set<string>> {
+  if (ruleIds.length === 0) return new Set();
+  const rows = await dbOrTx
+    .select({ ruleId: recurringSkips.recurringTransactionId, scheduledFor: recurringSkips.scheduledFor })
+    .from(recurringSkips)
+    .where(inArray(recurringSkips.recurringTransactionId, ruleIds));
+  return new Set(rows.map((r) => buildOccurrenceKey(r.ruleId, r.scheduledFor)));
+}
+
 function buildOccurrenceKey(recurringTransactionId: number, scheduledFor: string): string {
   return `${recurringTransactionId}:${scheduledFor}`;
 }
@@ -185,6 +195,8 @@ export async function syncRecurringTransactions(
         : []
     )),
   );
+  // Las saltadas («esta vez no») cuentan como ya generadas: no vuelven a salir.
+  for (const key of await skippedOccurrenceKeys(rules.map((r) => r.id), dbOrTx)) existingKeys.add(key);
 
   const rowsToInsert: Array<typeof transactions.$inferInsert> = [];
   const today = getTodayIsoDate();

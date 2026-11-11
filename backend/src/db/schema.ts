@@ -397,6 +397,25 @@ export const recurringTransactions = pgTable(
 ).enableRLS();
 
 // ─── Budgets (presupuesto por categoría y mes, estilo YNAB) ─────
+// Ocurrencias de una recurrente que no se deben generar: las que el usuario ha
+// saltado («esta vez no») y, al crear una regla con fecha pasada, las
+// anteriores a hoy si no quiso rellenar el pasado.
+export const recurringSkips = pgTable(
+  "recurring_skips",
+  {
+    id: serial("id").primaryKey(),
+    recurringTransactionId: integer("recurring_transaction_id")
+      .notNull()
+      .references(() => recurringTransactions.id, { onDelete: "cascade" }),
+    // "YYYY-MM-DD": la fecha prevista de la ocurrencia (scheduled_for).
+    scheduledFor: text("scheduled_for").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    ruleDateIdx: uniqueIndex("recurring_skips_rule_date_idx").on(table.recurringTransactionId, table.scheduledFor),
+  }),
+).enableRLS();
+
 export const budgets = pgTable(
   "budgets",
   {

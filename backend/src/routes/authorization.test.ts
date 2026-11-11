@@ -226,6 +226,32 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect((await call("a", "PATCH", `/tags/${ids.tag}`, { name: "Revisada" })).status).toBe(200);
   });
 
+  it("recurrentes: saltar una ocurrencia y crear sin rellenar el pasado", async () => {
+    const { db } = await import("../db/index.js");
+    const { transactions } = await import("../db/schema.js");
+    const { and, eq, isNotNull } = await import("drizzle-orm");
+    const [occurrence] = await db.select().from(transactions)
+      .where(and(eq(transactions.recurringTransactionId, ids.recurring), isNotNull(transactions.scheduledFor), eq(transactions.cleared, false)));
+    expect(occurrence).toBeTruthy();
+    // B no puede saltar la de A.
+    expect((await call("b", "POST", "/recurring-transactions/skip-occurrence", { transactionId: occurrence.id })).status).toBe(404);
+    // Un movimiento normal no es una ocurrencia.
+    expect((await call("a", "POST", "/recurring-transactions/skip-occurrence", { transactionId: ids.transaction })).status).toBe(404);
+    expect((await call("a", "POST", "/recurring-transactions/skip-occurrence", { transactionId: occurrence.id })).status).toBe(200);
+    expect(await db.select().from(transactions).where(eq(transactions.id, occurrence.id))).toHaveLength(0);
+
+    // Con backfill: false, una regla con inicio hace meses no crea los movimientos pasados.
+    const created = await call("a", "POST", "/recurring-transactions", {
+      accountId: ids.account, type: "expense", amount: 5, cadence: "monthly", intervalCount: 1, startDate: "2025-01-15", payee: "Desde hoy", backfill: false,
+    });
+    expect(created.status).toBe(201);
+    const generated = await db.select().from(transactions).where(eq(transactions.recurringTransactionId, (created.json as { id: number }).id));
+    const { getTodayIsoDate } = await import("../services/recurring-transactions.service.js");
+    expect(generated.length).toBeGreaterThan(0);
+    expect(generated.every((t) => t.scheduledFor! >= getTodayIsoDate())).toBe(true);
+    await call("a", "DELETE", `/recurring-transactions/${(created.json as { id: number }).id}`);
+  });
+
   it("renombrar beneficiarios solo toca los propios", async () => {
     const r = await call("b", "POST", "/transactions/payees/rename", { from: ["Tienda"], to: "Hackeado" });
     expect(r.json).toMatchObject({ ok: true, updated: 0 });

@@ -9,7 +9,9 @@ import {
   accounts,
   categories,
   categoryGroups,
+  recurringSkips,
   recurringTransactions,
+  transactions,
 } from "../db/schema.js";
 import {
   countPendingOccurrencesByRule,
@@ -17,6 +19,7 @@ import {
   getNextOccurrenceDate,
   getRecurringSyncThroughDate,
   getTodayIsoDate,
+  listOccurrenceDates,
   syncRecurringTransactions,
 } from "../services/recurring-transactions.service.js";
 import { isoDateSchema } from "../utils/dates.js";
@@ -40,6 +43,9 @@ const recurringTransactionSchema = z
     memo: z.string().max(500).nullish(),
     flag: flagSchema,
     autoSettle: z.boolean().default(false),
+    // Solo al crear con una fecha de inicio pasada: false = no generar las
+    // ocurrencias anteriores a hoy («desde hoy»). Por compatibilidad, true.
+    backfill: z.boolean().default(true),
   })
   .refine(
     (value) => !value.endDate || value.endDate >= value.startDate,
@@ -183,11 +189,49 @@ recurringTransactionsRouter.post("/", async (req, res, next) => {
         })
         .returning();
 
+      if (!parsed.data.backfill) {
+        const today = getTodayIsoDate();
+        const past = listOccurrenceDates(
+          { startDate: created.startDate, endDate: created.endDate, cadence: created.cadence, intervalCount: created.intervalCount },
+          today,
+        ).filter((d) => d < today);
+        if (past.length) {
+          await tx.insert(recurringSkips).values(past.map((scheduledFor) => ({ recurringTransactionId: created.id, scheduledFor }))).onConflictDoNothing();
+        }
+      }
       await syncRecurringTransactions(userId, getRecurringSyncThroughDate(), tx);
       return created;
     });
 
     res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// «Esta vez no»: salta una ocurrencia pendiente (se borra y no se vuelve a
+// generar). Para cambiarle la fecha basta con editar el movimiento: conserva
+// su fecha prevista y la regla no lo duplica.
+const skipSchema = z.object({ transactionId: z.number().int().positive().max(2_147_483_647) });
+
+recurringTransactionsRouter.post("/skip-occurrence", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = skipSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
+    const [tx] = await db
+      .select({ id: transactions.id, ruleId: transactions.recurringTransactionId, scheduledFor: transactions.scheduledFor, cleared: transactions.cleared })
+      .from(transactions)
+      .where(and(eq(transactions.id, parsed.data.transactionId), eq(transactions.userId, userId)));
+    if (!tx || tx.ruleId == null || tx.scheduledFor == null) {
+      return res.status(404).json({ error: "Ese movimiento no es una ocurrencia de un pago recurrente" });
+    }
+    if (tx.cleared) return res.status(409).json({ error: "Ya está liquidado: si no ocurrió, márcalo como pendiente primero" });
+    await db.transaction(async (dbTx) => {
+      await dbTx.insert(recurringSkips).values({ recurringTransactionId: tx.ruleId!, scheduledFor: tx.scheduledFor! }).onConflictDoNothing();
+      await dbTx.delete(transactions).where(and(eq(transactions.id, tx.id), eq(transactions.userId, userId)));
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

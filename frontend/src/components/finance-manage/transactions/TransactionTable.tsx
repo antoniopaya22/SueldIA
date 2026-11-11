@@ -1,7 +1,6 @@
 import { Fragment, useMemo, useRef, type MouseEvent } from "react";
 import {
-  CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock, FileText, Lock,
-} from "lucide-react";
+  CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock, FileText, Lock, SkipForward } from "lucide-react";
 import type { Account, Transaction } from "../../../lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency } from "../../../lib/format";
@@ -31,6 +30,8 @@ interface Props {
   /** Dividir un gasto en varias categorías, o volver a unir sus partes. */
   onSplit: (tx: Transaction) => void;
   onUnsplit: (tx: Transaction) => void;
+  /** «Esta vez no»: salta una ocurrencia pendiente de una recurrente. */
+  onSkip?: (tx: Transaction) => void;
   onDelete: (tx: Transaction) => void;
   /** Modo selección: casillas para actuar sobre varios movimientos a la vez. */
   selection?: {
@@ -114,6 +115,8 @@ function useRowActions(props: Props) {
     if (canSchedule) actions.push({ label: "Programar como recurrente", icon: Repeat, onSelect: () => props.onSchedule(tx) });
     if (!tx.recurringTransactionId) {
       actions.push({ label: "Eliminar", icon: Trash2, onSelect: () => props.onDelete(tx), destructive: true, separated: true });
+    } else if (!tx.cleared && props.onSkip) {
+      actions.push({ label: "Saltar esta vez", icon: SkipForward, onSelect: () => props.onSkip!(tx), destructive: true, separated: true });
     }
     return actions;
   };

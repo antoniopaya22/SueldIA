@@ -9,7 +9,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { AccountSelect, CategorySelect, CADENCE_LABELS, TypeToggle, amountInputClass, formatCadence } from "./shared";
+import { AccountSelect, CategorySelect, CADENCE_LABELS, TypeToggle, amountInputClass, formatCadence, getTodayIsoDate } from "./shared";
 
 export interface RecurringForm {
   type: "expense" | "income";
@@ -24,6 +24,8 @@ export interface RecurringForm {
   memo: string;
   /** Domiciliación: se liquida sola el día del cargo. */
   autoSettle: boolean;
+  /** Al crear con una fecha de inicio pasada: crear también los movimientos ya pasados. */
+  backfill?: boolean;
 }
 
 interface Props {
@@ -160,6 +162,23 @@ export function RecurringDialog({ open, editing, form, setForm, accounts, groups
                 </p>
               </div>
             </div>
+
+            {!editing && form.startDate && form.startDate < getTodayIsoDate() && (
+              <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3">
+                <Checkbox
+                  id="rec-backfill"
+                  checked={form.backfill === true}
+                  onCheckedChange={(checked) => setForm({ ...form, backfill: checked === true })}
+                  className="mt-0.5"
+                />
+                <div className="space-y-0.5">
+                  <Label htmlFor="rec-backfill" className="cursor-pointer">Crear también los movimientos ya pasados</Label>
+                  <p className="text-xs text-muted-foreground">
+                    El inicio es anterior a hoy. Si no lo marcas, la regla empieza a contar desde hoy y no rellena el pasado (lo normal si esos cargos ya los tienes apuntados o importados).
+                  </p>
+                </div>
+              </div>
+            )}
 
             {editing && (
               <p className="text-xs text-muted-foreground">Al guardar, se regenerarán las instancias pendientes de esta regla.</p>
