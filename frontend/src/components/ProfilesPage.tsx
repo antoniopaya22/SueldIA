@@ -310,7 +310,7 @@ function ProfilesManager() {
       queryClient.invalidateQueries({ queryKey: ["payslips"] });
       toast.success("Perfil eliminado");
     },
-    onError: () => toast.error("No se pudo eliminar el perfil"),
+    onError: (e: Error) => toast.error("No se pudo eliminar el perfil", { description: e.message }),
   });
 
   const newButton = (

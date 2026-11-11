@@ -333,7 +333,7 @@ function AccountsView() {
       toast.success("Cuenta creada correctamente");
       closeDialog();
     },
-    onError: () => toast.error("Error al crear la cuenta"),
+    onError: (e: Error) => toast.error("Error al crear la cuenta", { description: e.message }),
   });
 
   const updateMut = useMutation({
@@ -344,7 +344,7 @@ function AccountsView() {
       toast.success("Cuenta actualizada");
       closeDialog();
     },
-    onError: () => toast.error("Error al actualizar la cuenta"),
+    onError: (e: Error) => toast.error("Error al actualizar la cuenta", { description: e.message }),
   });
 
   const deleteMut = useMutation({
@@ -353,7 +353,7 @@ function AccountsView() {
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       toast.success("Cuenta eliminada");
     },
-    onError: () => toast.error("Error al eliminar la cuenta"),
+    onError: (e: Error) => toast.error("Error al eliminar la cuenta", { description: e.message }),
   });
 
   const archiveMut = useMutation({
@@ -362,7 +362,7 @@ function AccountsView() {
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       toast.success(result.archived ? "Cuenta archivada" : "Cuenta restaurada");
     },
-    onError: () => toast.error("Error al cambiar estado de archivo"),
+    onError: (e: Error) => toast.error("Error al cambiar estado de archivo", { description: e.message }),
   });
 
   const openCreate = () => {

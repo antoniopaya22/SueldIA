@@ -220,12 +220,12 @@ function TagsCard({ payslipId }: { payslipId: number }) {
   const assignMut = useMutation({
     mutationFn: (tagId: number) => assignTag(payslipId, tagId),
     onSuccess: refresh,
-    onError: () => toast.error("No se pudo añadir la etiqueta"),
+    onError: (e: Error) => toast.error("No se pudo añadir la etiqueta", { description: e.message }),
   });
   const removeMut = useMutation({
     mutationFn: (tagId: number) => removeTag(payslipId, tagId),
     onSuccess: refresh,
-    onError: () => toast.error("No se pudo quitar la etiqueta"),
+    onError: (e: Error) => toast.error("No se pudo quitar la etiqueta", { description: e.message }),
   });
   const createMut = useMutation({
     mutationFn: (name: string) => createTag(name, TAG_COLORS[allTags.length % TAG_COLORS.length]),
@@ -234,7 +234,7 @@ function TagsCard({ payslipId }: { payslipId: number }) {
       setNewTag("");
       assignMut.mutate(tag.id);
     },
-    onError: () => toast.error("No se pudo crear la etiqueta"),
+    onError: (e: Error) => toast.error("No se pudo crear la etiqueta", { description: e.message }),
   });
 
   const available = allTags.filter((t) => !assigned.some((a) => a.id === t.id));
@@ -313,12 +313,12 @@ function NotesCard({ payslipId }: { payslipId: number }) {
   const editMut = useMutation({
     mutationFn: (e: { id: number; content: string }) => updateNote(e.id, e.content.trim()),
     onSuccess: () => { setEditing(null); refresh(); },
-    onError: () => toast.error("No se pudo guardar la nota"),
+    onError: (e: Error) => toast.error("No se pudo guardar la nota", { description: e.message }),
   });
   const addMut = useMutation({
     mutationFn: () => createNote(payslipId, content.trim()),
     onSuccess: () => { setContent(""); refresh(); },
-    onError: () => toast.error("No se pudo guardar la nota"),
+    onError: (e: Error) => toast.error("No se pudo guardar la nota", { description: e.message }),
   });
   // Borrar con «Deshacer»: desaparece al momento y se borra a los pocos segundos.
   const removeNote = (id: number) => {
@@ -473,7 +473,7 @@ function LinkIncomeCard({
       invalidate();
       toast.success("Vínculo eliminado");
     },
-    onError: () => toast.error("No se pudo quitar el vínculo"),
+    onError: (e: Error) => toast.error("No se pudo quitar el vínculo", { description: e.message }),
   });
 
   const runSearch = async (q: string) => {
@@ -704,7 +704,7 @@ export function PayslipDetail({
       invalidate();
       toast.success(type === "extra" ? "Marcada como paga extra" : "Marcada como nómina mensual");
     },
-    onError: () => toast.error("No se pudo cambiar el tipo"),
+    onError: (e: Error) => toast.error("No se pudo cambiar el tipo", { description: e.message }),
   });
 
   const shownConcepts = editing ? concepts : payslip.concepts;

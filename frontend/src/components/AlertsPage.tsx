@@ -622,7 +622,7 @@ function AlertsView() {
   const toggleMut = useMutation({
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => updateAlertRule(id, { enabled }),
     onSuccess: invalidateAll,
-    onError: () => toast.error("No se pudo actualizar la regla"),
+    onError: (e: Error) => toast.error("No se pudo actualizar la regla", { description: e.message }),
   });
 
   const deleteMut = useMutation({
@@ -631,19 +631,19 @@ function AlertsView() {
       queryClient.invalidateQueries({ queryKey: ["alert-rules"] });
       toast.success("Regla eliminada");
     },
-    onError: () => toast.error("No se pudo eliminar la regla"),
+    onError: (e: Error) => toast.error("No se pudo eliminar la regla", { description: e.message }),
   });
 
   const markReadMut = useMutation({
     mutationFn: markAlertRead,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alert-history"] }),
-    onError: () => toast.error("No se pudo marcar como leída"),
+    onError: (e: Error) => toast.error("No se pudo marcar como leída", { description: e.message }),
   });
 
   const markAllMut = useMutation({
     mutationFn: markAllAlertsRead,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["alert-history"] }),
-    onError: () => toast.error("No se pudieron marcar las alertas como leídas"),
+    onError: (e: Error) => toast.error("No se pudieron marcar las alertas como leídas", { description: e.message }),
   });
 
   const isLoading = rulesLoading || historyLoading;

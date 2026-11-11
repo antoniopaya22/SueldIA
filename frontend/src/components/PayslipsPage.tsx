@@ -224,7 +224,7 @@ function PayslipsList() {
       openPayslip(null);
       toast.success("Nómina eliminada");
     },
-    onError: () => toast.error("No se pudo eliminar la nómina"),
+    onError: (e: Error) => toast.error("No se pudo eliminar la nómina", { description: e.message }),
   });
 
   const reprocessMut = useMutation({
@@ -235,7 +235,7 @@ function PayslipsList() {
       queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success(updated.parsingStatus === "parsed" ? "Nómina reprocesada" : "Reprocesada: revisa los conceptos");
     },
-    onError: () => toast.error("No se pudo reprocesar la nómina"),
+    onError: (e: Error) => toast.error("No se pudo reprocesar la nómina", { description: e.message }),
   });
 
   const handleSort = (field: PayslipSortField) => {

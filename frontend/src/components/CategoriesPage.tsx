@@ -267,19 +267,19 @@ function CategoriesView() {
   const createGroupMut = useMutation({
     mutationFn: (name: string) => createCategoryGroup({ name }),
     onSuccess: () => { invalidate(); toast.success("Grupo creado"); setGroupDialog(null); },
-    onError: () => toast.error("Error al crear grupo"),
+    onError: (e: Error) => toast.error("Error al crear grupo", { description: e.message }),
   });
 
   const updateGroupMut = useMutation({
     mutationFn: ({ id, name }: { id: number; name: string }) => updateCategoryGroup(id, { name }),
     onSuccess: () => { invalidate(); toast.success("Grupo actualizado"); setGroupDialog(null); },
-    onError: () => toast.error("Error al actualizar grupo"),
+    onError: (e: Error) => toast.error("Error al actualizar grupo", { description: e.message }),
   });
 
   const createCatMut = useMutation({
     mutationFn: ({ groupId, name }: { groupId: number; name: string }) => createCategory({ groupId, name }),
     onSuccess: () => { invalidate(); toast.success("Categoría creada"); setAddingToGroupId(null); },
-    onError: () => toast.error("Error al crear categoría"),
+    onError: (e: Error) => toast.error("Error al crear categoría", { description: e.message }),
   });
 
   const updateCatMut = useMutation({
@@ -290,7 +290,7 @@ function CategoriesView() {
       setEditingCatId(null);
       setMoveTarget(null);
     },
-    onError: () => toast.error("Error al actualizar categoría"),
+    onError: (e: Error) => toast.error("Error al actualizar categoría", { description: e.message }),
   });
 
   const activity = useMemo(() => {
