@@ -1,3 +1,4 @@
+import "./zod-es.js";
 import express from "express";
 import helmet from "helmet";
 import pinoHttp from "pino-http";

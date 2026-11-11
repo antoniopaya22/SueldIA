@@ -10,7 +10,15 @@ import { QueryClient } from "@tanstack/react-query";
 export function createAppQueryClient(): QueryClient {
   const queryClient = new QueryClient({
     defaultOptions: {
-      queries: { staleTime: 30_000, retry: 1 },
+      queries: {
+        staleTime: 30_000,
+        // Reintentar solo lo que puede ir mejor a la segunda (sin conexión o
+        // error del servidor); un 400/404/429 repetido solo duplica el fallo.
+        retry: (failureCount, error) => {
+          const status = (error as { status?: number }).status;
+          return failureCount < 1 && (status === undefined || status === 0 || status >= 500);
+        },
+      },
     },
   });
 

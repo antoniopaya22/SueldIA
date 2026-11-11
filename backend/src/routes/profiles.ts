@@ -64,7 +64,7 @@ profilesRouter.post("/", async (req, res, next) => {
     await assertUnderLimit(profiles, profiles.userId, userId, USER_LIMITS.profiles, "perfiles");
     const parsed = profileSchema.safeParse(req.body);
     if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
+      return res.status(400).json({ error: "Datos de perfil inválidos", details: parsed.error.flatten().fieldErrors });
 
     const [profile] = await db
       .insert(profiles)
@@ -83,7 +83,7 @@ profilesRouter.put("/:id", async (req, res, next) => {
     const id = Number(req.params.id);
     const parsed = profileSchema.safeParse(req.body);
     if (!parsed.success)
-      return res.status(400).json({ error: parsed.error.flatten() });
+      return res.status(400).json({ error: "Datos de perfil inválidos", details: parsed.error.flatten().fieldErrors });
 
     const [updated] = await db
       .update(profiles)

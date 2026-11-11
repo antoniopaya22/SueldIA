@@ -43,7 +43,7 @@ accountsRouter.put("/order", async (req, res, next) => {
     const { userId } = req.user!;
     const parsed = orderSchema.safeParse(req.body);
     if (!parsed.success) {
-      return res.status(400).json({ error: "Orden de cuentas inválido", details: parsed.error.flatten() });
+      return res.status(400).json({ error: "Orden de cuentas inválido", details: parsed.error.flatten().fieldErrors });
     }
     const { ids } = parsed.data;
     const owned = await db

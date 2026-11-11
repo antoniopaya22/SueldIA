@@ -91,7 +91,7 @@ export async function uploadPayslips(profileId, files): Promise<Payslip[]>
 Reglas:
 - **Nunca** hacer `fetch()` directo en componentes — siempre a través de `api.ts`
 - El token es el `access_token` de la sesión de Supabase (`getAuthToken()`, async) — se inyecta automáticamente en headers; no hay nada en `localStorage` propio
-- Error 401 → `clearAuth()` (signOut de Supabase) + `window.location.href = "/login"`
+- Error 401 → `clearAuth()` (signOut de Supabase) + `/login?next=…`; los errores son `ApiError` con mensaje en español
 - Formato: `lib/format.ts` (`formatCurrency` agrupa siempre miles, `formatPct` → "77,7 %", `formatCompact` → "2,1k €", `formatMonthLabel` → "Sep 26"). No usar `toFixed` para mostrar porcentajes.
 - Funciones de upload y export usan `fetch` directo (no JSON body)
 
@@ -103,7 +103,9 @@ Login con Google vía **Supabase Auth** (`src/lib/supabase.ts`) — no hay login
 2. Login → `loginWithGoogle()` llama a `supabase.auth.signInWithOAuth({provider: "google"})`, que redirige a Google y vuelve a `/login`; la sesión se recoge sola vía `onAuthStateChange`.
 3. Logout → `supabase.auth.signOut()` → redirect a `/` (la landing, no `/login` — cerrar sesión a propósito no debe llevar de vuelta al formulario de entrar).
 4. `api.ts` pide el `access_token` vigente a Supabase en cada petición (`getAuthToken()`, async) — el refresco de sesión lo gestiona el propio cliente de Supabase, no hay que hacer nada manual.
-5. Cualquier 401 en API → `signOut()` + redirect `/login` (cubre toda página bajo `/app`, no hace falta un guard por página).
+5. Cualquier 401 en API → un único `signOut()` + redirect `/login?next=<ruta actual>` (aunque lleguen varios 401 a la vez).
+6. Sin sesión en `/app/*`, `AuthProvider` redirige a `/login?next=…` nada más montar. Tras el login se vuelve a `next`, validado con `safeNextPath` (`lib/safe-next.ts`: solo rutas de `/app`).
+7. Errores: `request()` lanza `ApiError` (`status`, mensaje siempre en español; `status: 0` = sin conexión). Mostrar `e.message` es seguro. React Query solo reintenta errores de red o 5xx.
 
 ## Estilos y Design Tokens
 

@@ -14,6 +14,42 @@ export async function clearAuth() {
   await supabase.auth.signOut();
 }
 
+// ─── Errores ────────────────────────────────────────────────────
+/** Error de la API con el código HTTP (0 = sin conexión) y un mensaje siempre en español. */
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public details?: Record<string, string[]>) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** Mensaje legible a partir de la respuesta: el del servidor si lo trae, si no uno según el código. */
+export function apiErrorMessage(status: number, body: unknown): string {
+  const error = (body as { error?: unknown } | null)?.error;
+  if (typeof error === "string" && error.trim()) return error;
+  if (status === 0) return "No hay conexión con el servidor. Comprueba tu conexión e inténtalo de nuevo.";
+  if (status === 401) return "Tu sesión ha caducado. Vuelve a iniciar sesión.";
+  if (status === 403) return "No tienes permiso para hacer esto.";
+  if (status === 404) return "No se encontró lo que buscabas.";
+  if (status === 409) return "No se puede hacer: entra en conflicto con otros datos.";
+  if (status === 413) return "El archivo o la petición es demasiado grande.";
+  if (status === 429) return "Demasiadas peticiones seguidas. Espera un momento y vuelve a intentarlo.";
+  if (status >= 500) return "Error del servidor. Inténtalo de nuevo en unos segundos.";
+  return "No se pudo completar la acción.";
+}
+
+// Varias peticiones en vuelo pueden recibir 401 a la vez: una sola salida.
+let signingOut: Promise<void> | null = null;
+async function handleUnauthorized() {
+  if (!signingOut) {
+    signingOut = clearAuth().finally(() => {
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/login?next=${next}`;
+    });
+  }
+  return signingOut;
+}
+
 // ─── HTTP Client ────────────────────────────────────────────────
 async function request<T>(
   path: string,
@@ -36,20 +72,25 @@ async function request<T>(
   const bodySize = typeof options?.body === "string" ? options.body.length : 0;
   const keepalive = options?.keepalive ?? (method !== "GET" && bodySize < 60_000);
 
-  const res = await fetch(`${BASE}${path}`, {
-    ...options,
-    keepalive,
-    headers,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...options,
+      keepalive,
+      headers,
+    });
+  } catch (err) {
+    // Cancelada por React Query (cambio de filtro…): se propaga tal cual.
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new ApiError(0, apiErrorMessage(0, null));
+  }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    if (res.status === 401) {
-      await clearAuth();
-      window.location.href = "/login";
-    }
-    throw new Error(body.error ?? (res.status === 401 ? "No autorizado" : `HTTP ${res.status}`));
+    const body = await res.json().catch(() => null);
+    if (res.status === 401) void handleUnauthorized();
+    throw new ApiError(res.status, apiErrorMessage(res.status, body), (body as { details?: Record<string, string[]> } | null)?.details);
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -376,7 +417,7 @@ export const exportData = async (profileId: number, year?: number, format: "csv"
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(`${BASE}/export?${params}`, { headers });
-  if (!res.ok) throw new Error("Export failed");
+  if (!res.ok) throw new ApiError(res.status, "No se pudo exportar. Inténtalo de nuevo.");
 
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
