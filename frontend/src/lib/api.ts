@@ -562,7 +562,8 @@ export const moveBudget = (month: string, fromCategoryId: number, toCategoryId: 
 // ─── Alerts ─────────────────────────────────────────────────────
 export type AlertRuleType =
   | "salary_drop" | "missing_payslip" | "concept_change" | "custom_threshold" | "irpf_change"
-  | "category_overspent" | "low_balance" | "overdue_pending";
+  | "category_overspent" | "low_balance" | "overdue_pending"
+  | "low_balance_forecast" | "subscription_price_increase" | "duplicate_charge" | "unusual_category_spend";
 
 // Formas de `config` por tipo de regla — deben reflejar
 // backend/src/services/alerts.service.ts (alertConfigSchemas).
@@ -593,7 +594,13 @@ export interface CustomThresholdConfig {
 // Alertas de finanzas (backend/src/services/finance-alerts.service.ts)
 export interface CategoryOverspentConfig {
   categoryId?: number;
+  /** Aviso previo al llegar a este % del presupuesto. */
+  warnAtPercent?: number;
 }
+export interface LowBalanceForecastConfig { threshold?: number; days?: number }
+export interface SubscriptionPriceIncreaseConfig { thresholdPercent?: number }
+export interface DuplicateChargeConfig { windowDays?: number; minAmount?: number }
+export interface UnusualCategorySpendConfig { categoryId?: number; factor?: number; minDifference?: number }
 export interface LowBalanceConfig {
   accountId?: number;
   threshold: number;
@@ -609,7 +616,11 @@ export type AlertRuleConfig =
   | IrpfChangeConfig
   | CategoryOverspentConfig
   | LowBalanceConfig
-  | OverduePendingConfig;
+  | OverduePendingConfig
+  | LowBalanceForecastConfig
+  | SubscriptionPriceIncreaseConfig
+  | DuplicateChargeConfig
+  | UnusualCategorySpendConfig;
 
 export interface AlertRule {
   id: number;

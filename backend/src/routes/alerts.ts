@@ -10,10 +10,9 @@ import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 export const alertsRouter = Router();
 alertsRouter.param("id", validateIdParam);
 
-const ruleTypeSchema = z.enum([
-  "salary_drop", "missing_payslip", "concept_change", "custom_threshold",
-  "category_overspent", "low_balance", "overdue_pending",
-]);
+// Los tipos salen de los esquemas de config: antes era una lista aparte y se
+// quedó sin «irpf_change» (la interfaz lo ofrecía y la API lo rechazaba).
+const ruleTypeSchema = z.enum(Object.keys(alertConfigSchemas) as [AlertRuleType, ...AlertRuleType[]]);
 
 /** Valida `config` contra el esquema propio de `type` (ver alerts.service.ts). */
 function parseConfigForType(type: AlertRuleType, config: unknown) {

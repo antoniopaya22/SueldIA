@@ -108,3 +108,59 @@ describe("isoWeekKey", () => {
     expect(isoWeekKey(date)).toBe(expected);
   });
 });
+
+describe("reglas nuevas de finanzas", () => {
+  it("presupuesto: aviso previo al llegar al % pedido (además del de pasarse)", () => {
+    const out = overspentCandidates(summary, { warnAtPercent: 50 }, 7);
+    expect(out.map((c) => c.dedupeKey)).toEqual(["overspent:7:1:2025-03", "overspent:7:2:2025-03", "budget_near:7:3:2025-03"]);
+    expect(out[2].message).toContain("60 %");
+  });
+
+  it("saldo bajo previsto dentro del horizonte", async () => {
+    const { forecastCandidates } = await import("./finance-alerts.service.js");
+    const points = [
+      { date: "2026-03-01", balance: 500 }, { date: "2026-03-05", balance: 80 },
+      { date: "2026-03-10", balance: -20 }, { date: "2026-04-30", balance: -900 },
+    ];
+    const out = forecastCandidates(points, { threshold: 100, days: 14 }, "2026-03-01", 3);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ severity: "critical", dedupeKey: "low_forecast:3:2026-W09" });
+    expect(out[0].message).toContain("5 de marzo");
+    expect(forecastCandidates(points, { threshold: 50, days: 3 }, "2026-03-01", 3)).toEqual([]);
+  });
+
+  it("subida de precio de una suscripción mensual", async () => {
+    const { priceIncreaseCandidates } = await import("./finance-alerts.service.js");
+    const charge = (id: number, date: string, amount: number, payee = "Netflix") => ({ id, date, amount, payee, accountId: 1 });
+    const rows = [charge(1, "2026-01-05", 12.99), charge(2, "2026-02-05", 12.99), charge(3, "2026-03-05", 12.99), charge(4, "2026-04-05", 15.99)];
+    const out = priceIncreaseCandidates(rows, { thresholdPercent: 5 }, "2026-04-10", 9);
+    expect(out).toMatchObject([{ dedupeKey: "price_up:9:4" }]);
+    expect(out[0].message).toContain("23 %");
+    // Cargos sueltos (no mensuales) o sin subida: nada.
+    expect(priceIncreaseCandidates([charge(1, "2026-01-05", 10), charge(2, "2026-01-20", 10), charge(3, "2026-03-01", 10), charge(4, "2026-04-05", 20)], { thresholdPercent: 5 }, "2026-04-10", 9)).toEqual([]);
+    expect(priceIncreaseCandidates(rows.slice(0, 3), { thresholdPercent: 5 }, "2026-03-10", 9)).toEqual([]);
+  });
+
+  it("cargo duplicado: misma cuenta, beneficiario e importe en pocos días", async () => {
+    const { duplicateChargeCandidates } = await import("./finance-alerts.service.js");
+    const rows = [
+      { id: 1, date: "2026-03-01", amount: 49.9, payee: "Amazon", accountId: 1 },
+      { id: 2, date: "2026-03-02", amount: 49.9, payee: "AMAZON ", accountId: 1 },
+      { id: 3, date: "2026-03-02", amount: 49.9, payee: "Amazon", accountId: 2 }, // otra cuenta
+      { id: 4, date: "2026-03-01", amount: 2.5, payee: "Café", accountId: 1 },
+      { id: 5, date: "2026-03-01", amount: 2.5, payee: "Café", accountId: 1 }, // por debajo del mínimo
+    ];
+    expect(duplicateChargeCandidates(rows, { windowDays: 2, minAmount: 5 }, 4).map((c) => c.dedupeKey)).toEqual(["duplicate:4:1:2"]);
+    expect(duplicateChargeCandidates(rows, { windowDays: 0, minAmount: 5 }, 4)).toEqual([]);
+  });
+
+  it("gasto inusual en una categoría frente a su media", async () => {
+    const { unusualSpendCandidates } = await import("./finance-alerts.service.js");
+    const m = (month: string, spent: number) => ({ categoryId: 5, name: "Ocio", month, spent });
+    const rows = [m("2025-12", 100), m("2026-01", 120), m("2026-02", 80), m("2026-03", 260)];
+    expect(unusualSpendCandidates(rows, { factor: 1.5, minDifference: 50 }, "2026-03", 2).map((c) => c.dedupeKey)).toEqual(["unusual:2:5:2026-03"]);
+    // Poca diferencia absoluta o poco historial: nada.
+    expect(unusualSpendCandidates(rows, { factor: 1.5, minDifference: 200 }, "2026-03", 2)).toEqual([]);
+    expect(unusualSpendCandidates(rows.slice(2), { factor: 1.5, minDifference: 50 }, "2026-03", 2)).toEqual([]);
+  });
+});

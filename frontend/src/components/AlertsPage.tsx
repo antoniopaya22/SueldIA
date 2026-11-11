@@ -10,6 +10,7 @@ import {
   type Account, type AlertRule, type AlertRuleConfig, type AlertRuleType, type CategoryGroup,
   type CategoryOverspentConfig, type ConceptChangeConfig, type CustomThresholdConfig, type IrpfChangeConfig, type LowBalanceConfig,
   type MissingPayslipConfig, type OverduePendingConfig, type Profile, type SalaryDropConfig,
+  type DuplicateChargeConfig, type LowBalanceForecastConfig, type UnusualCategorySpendConfig,
 } from "../lib/api";
 import { formatCurrency, formatRelativeDate } from "../lib/format";
 import { Providers } from "./Providers";
@@ -35,10 +36,33 @@ import { cn } from "cn";
 // ─── Metadatos por tipo de regla ────────────────────────────────
 const RULE_TYPE_GROUPS: { label: string; types: AlertRuleType[] }[] = [
   { label: "Nóminas", types: ["salary_drop", "missing_payslip", "irpf_change", "concept_change", "custom_threshold"] },
-  { label: "Finanzas", types: ["category_overspent", "low_balance", "overdue_pending"] },
+  {
+    label: "Finanzas",
+    types: ["category_overspent", "low_balance", "low_balance_forecast", "overdue_pending", "duplicate_charge", "subscription_price_increase", "unusual_category_spend"],
+  },
 ];
 
-const FINANCE_TYPES: AlertRuleType[] = ["category_overspent", "low_balance", "overdue_pending"];
+const FINANCE_TYPES: AlertRuleType[] = RULE_TYPE_GROUPS[1].types;
+
+// Campos numéricos de los tipos que no tienen formulario propio (valor en blanco = el de por defecto).
+type NumberField = { key: string; label: string; placeholder: string; hint?: string; min?: number; max?: number; step?: string };
+const NUMBER_FIELDS: Partial<Record<AlertRuleType, NumberField[]>> = {
+  category_overspent: [{ key: "warnAtPercent", label: "Avisarme también al llegar al (%)", placeholder: "80", hint: "Opcional: un aviso antes de pasarte. En blanco, solo al superarlo.", min: 50, max: 99, step: "1" }],
+  low_balance_forecast: [
+    { key: "threshold", label: "Avisarme si el saldo previsto baja de (€)", placeholder: "0", step: "0.01" },
+    { key: "days", label: "Mirando los próximos (días)", placeholder: "14", min: 7, max: 90, step: "1" },
+  ],
+  subscription_price_increase: [{ key: "thresholdPercent", label: "Subida mínima (%)", placeholder: "5", min: 1, max: 100, step: "1" }],
+  duplicate_charge: [
+    { key: "windowDays", label: "Días como mucho entre los dos cargos", placeholder: "2", min: 0, max: 7, step: "1" },
+    { key: "minAmount", label: "Importe mínimo (€)", placeholder: "5", min: 0, step: "0.01", hint: "Para no avisar de dos cafés seguidos." },
+  ],
+  unusual_category_spend: [
+    { key: "factor", label: "Veces la media de los meses anteriores", placeholder: "1,5", min: 1.2, max: 10, step: "0.1" },
+    { key: "minDifference", label: "Diferencia mínima con la media (€)", placeholder: "50", min: 0, step: "1" },
+  ],
+};
+const parseNumber = (v: string) => Number(v.replace(",", "."));
 const isFinanceType = (t: AlertRuleType) => FINANCE_TYPES.includes(t);
 
 const RULE_TYPE_META: Record<AlertRuleType, { label: string; description: string }> = {
@@ -74,6 +98,22 @@ const RULE_TYPE_META: Record<AlertRuleType, { label: string; description: string
     label: "Movimientos pendientes con retraso",
     description: "Se dispara si tienes movimientos sin liquidar pasados unos días de su fecha. Un resumen como mucho por semana.",
   },
+  low_balance_forecast: {
+    label: "Saldo bajo previsto",
+    description: "Se dispara si, sumando lo pendiente y lo programado, tu saldo total va a bajar de un importe en los próximos días. Un aviso por semana como mucho.",
+  },
+  subscription_price_increase: {
+    label: "Subida de una suscripción",
+    description: "Se dispara si algo que te cobran cada mes (Netflix, el gimnasio…) sube más de un % respecto a lo habitual.",
+  },
+  duplicate_charge: {
+    label: "Cargo duplicado",
+    description: "Se dispara si hay dos cargos iguales (misma cuenta, beneficiario e importe) en pocos días. Útil para reclamar a tiempo.",
+  },
+  unusual_category_spend: {
+    label: "Gasto inusual en una categoría",
+    description: "Se dispara si este mes llevas gastado en una categoría bastante más que tu media de los meses anteriores. Un aviso por categoría y mes.",
+  },
 };
 
 type Severity = "info" | "warning" | "critical";
@@ -91,6 +131,7 @@ const ALL_PROFILES = "__all__";
 type AnyRuleConfig = Partial<
   SalaryDropConfig & MissingPayslipConfig & ConceptChangeConfig & CustomThresholdConfig & IrpfChangeConfig
   & CategoryOverspentConfig & LowBalanceConfig & OverduePendingConfig
+  & DuplicateChargeConfig & UnusualCategorySpendConfig & LowBalanceForecastConfig
 >;
 
 function profileLabel(profileId: number | undefined, profiles: Profile[]): string {
@@ -105,7 +146,18 @@ function summarizeRule(rule: AlertRule, profiles: Profile[], accounts: Account[]
   switch (rule.type) {
     case "category_overspent": {
       const name = groups.flatMap((g) => g.categories).find((c) => c.id === config.categoryId)?.name;
-      return config.categoryId == null ? "Todas las categorías con presupuesto" : `Categoría: ${name ?? "eliminada"}`;
+      const scopeText = config.categoryId == null ? "Todas las categorías con presupuesto" : `Categoría: ${name ?? "eliminada"}`;
+      return config.warnAtPercent ? `${scopeText} · aviso previo al ${config.warnAtPercent} %` : scopeText;
+    }
+    case "low_balance_forecast":
+      return `Saldo previsto por debajo de ${formatCurrency(config.threshold ?? 0)} en ${config.days ?? 14} días`;
+    case "subscription_price_increase":
+      return `Suscripciones que suben más de un ${config.thresholdPercent ?? 5} %`;
+    case "duplicate_charge":
+      return `Cargos iguales en ${config.windowDays ?? 2} días · desde ${formatCurrency(config.minAmount ?? 5)}`;
+    case "unusual_category_spend": {
+      const name = groups.flatMap((g) => g.categories).find((c) => c.id === config.categoryId)?.name;
+      return `${config.categoryId == null ? "Todas las categorías" : `Categoría: ${name ?? "eliminada"}`} · ${(config.factor ?? 1.5).toLocaleString("es-ES")} veces la media`;
     }
     case "low_balance": {
       const account = accounts.find((a) => a.id === config.accountId);
@@ -163,6 +215,12 @@ function AlertRuleDialog({
   const [categoryId, setCategoryId] = useState<number | "">(existingConfig.categoryId ?? "");
   const [accountId, setAccountId] = useState<number | "">(existingConfig.accountId ?? "");
   const [threshold, setThreshold] = useState(existingConfig.threshold != null ? String(existingConfig.threshold) : "");
+  const [numbers, setNumbers] = useState<Record<string, string>>(() =>
+    Object.fromEntries((NUMBER_FIELDS[rule?.type ?? presetType ?? "salary_drop"] ?? []).map((f) => {
+      const v = (existingConfig as Record<string, unknown>)[f.key];
+      return [f.key, typeof v === "number" ? String(v).replace(".", ",") : ""];
+    })),
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const handleTypeChange = (next: AlertRuleType) => {
@@ -176,12 +234,18 @@ function AlertRuleDialog({
     setCategoryId("");
     setAccountId("");
     setThreshold("");
+    setNumbers({});
     setErrors({});
   };
 
   function buildConfig(): AlertRuleConfig {
     const base: Record<string, unknown> = {};
     if (!isFinanceType(type) && profileId !== ALL_PROFILES) base.profileId = Number(profileId);
+    for (const f of NUMBER_FIELDS[type] ?? []) {
+      const raw = numbers[f.key]?.trim();
+      if (raw) base[f.key] = parseNumber(raw);
+    }
+    if (type === "unusual_category_spend" && categoryId !== "") base.categoryId = categoryId;
     switch (type) {
       case "category_overspent":
         if (categoryId !== "") base.categoryId = categoryId;
@@ -220,6 +284,14 @@ function AlertRuleDialog({
     const next: Record<string, string> = {};
     if (!name.trim()) next.name = "El nombre es obligatorio";
     if (type === "concept_change" && !conceptName.trim()) next.conceptName = "Indica el nombre del concepto";
+    for (const f of NUMBER_FIELDS[type] ?? []) {
+      const raw = numbers[f.key]?.trim();
+      if (!raw) continue;
+      const n = parseNumber(raw);
+      if (!Number.isFinite(n) || (f.min !== undefined && n < f.min) || (f.max !== undefined && n > f.max)) {
+        next[f.key] = f.min !== undefined && f.max !== undefined ? `Entre ${f.min.toLocaleString("es-ES")} y ${f.max.toLocaleString("es-ES")}` : "Número no válido";
+      }
+    }
     if (type === "low_balance" && (threshold.trim() === "" || Number.isNaN(Number(threshold)) || Number(threshold) < 0)) {
       next.threshold = "Indica un importe";
     }
@@ -313,12 +385,38 @@ function AlertRuleDialog({
             </div>
             )}
 
-            {type === "category_overspent" && (
+            {(type === "category_overspent" || type === "unusual_category_spend") && (
               <div className="space-y-1.5">
                 <Label htmlFor="rule-category">Categoría</Label>
-                <CategorySelect id="rule-category" value={categoryId} onChange={setCategoryId} groups={groups} noneLabel="Todas las categorías con presupuesto" />
+                <CategorySelect
+                  id="rule-category"
+                  value={categoryId}
+                  onChange={setCategoryId}
+                  groups={groups}
+                  noneLabel={type === "category_overspent" ? "Todas las categorías con presupuesto" : "Todas las categorías"}
+                />
               </div>
             )}
+
+            {(NUMBER_FIELDS[type] ?? []).map((f) => (
+              <div key={f.key} className="space-y-1.5">
+                <Label htmlFor={`rule-${f.key}`}>{f.label}</Label>
+                <Input
+                  id={`rule-${f.key}`}
+                  inputMode="decimal"
+                  value={numbers[f.key] ?? ""}
+                  onChange={(e) => { setNumbers((n) => ({ ...n, [f.key]: e.target.value })); setErrors((er) => ({ ...er, [f.key]: "" })); }}
+                  placeholder={f.placeholder}
+                  aria-invalid={!!errors[f.key]}
+                  aria-describedby={f.hint ? `rule-${f.key}-hint` : undefined}
+                />
+                {errors[f.key] ? (
+                  <p className="text-xs text-destructive">{errors[f.key]}</p>
+                ) : (
+                  <p id={`rule-${f.key}-hint`} className="text-xs text-muted-foreground">{f.hint ?? `En blanco, ${f.placeholder}.`}</p>
+                )}
+              </div>
+            ))}
 
             {type === "low_balance" && (
               <>

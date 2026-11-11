@@ -180,6 +180,7 @@ export const alertRules = pgTable(
       enum: [
         "salary_drop", "missing_payslip", "concept_change", "custom_threshold", "irpf_change",
         "category_overspent", "low_balance", "overdue_pending",
+        "low_balance_forecast", "subscription_price_increase", "duplicate_charge", "unusual_category_spend",
       ],
     }).notNull(),
     config: text("config").notNull().default("{}"), // JSON config

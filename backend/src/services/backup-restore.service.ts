@@ -334,7 +334,8 @@ export function remapDedupeKey(
     case "missing": swap(1, maps.profiles); break;
     case "salary_drop": case "concept_change": case "custom_threshold": case "irpf_change":
       swap(1, maps.rules); swap(2, maps.payslips); break;
-    case "overspent": swap(1, maps.rules); swap(2, maps.categories); break;
+    case "overspent": case "budget_near": case "unusual": swap(1, maps.rules); swap(2, maps.categories); break;
+    case "low_forecast": case "price_up": case "duplicate": swap(1, maps.rules); break;
     case "low_balance": swap(1, maps.rules); swap(2, maps.accounts); break;
     case "overdue": swap(1, maps.rules); break;
   }

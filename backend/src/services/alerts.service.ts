@@ -6,7 +6,8 @@ import { logger } from "../logger.js";
 import { alertsPushMessage, notifyUser } from "./push.service.js";
 import { todayIso } from "../utils/dates.js";
 import {
-  evalCategoryOverspent, evalLowBalance, evalOverduePending, financeAlertConfigSchemas,
+  evalCategoryOverspent, evalDuplicateCharge, evalLowBalance, evalLowBalanceForecast, evalOverduePending,
+  evalSubscriptionPriceIncrease, evalUnusualCategorySpend, financeAlertConfigSchemas,
 } from "./finance-alerts.service.js";
 import { isIrpfAmount } from "../parsers/concept-classifier.js";
 
@@ -306,6 +307,14 @@ async function evaluateRule(rule: Rule): Promise<Candidate[]> {
       return evalLowBalance(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.low_balance>);
     case "overdue_pending":
       return evalOverduePending(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.overdue_pending>);
+    case "low_balance_forecast":
+      return evalLowBalanceForecast(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.low_balance_forecast>);
+    case "subscription_price_increase":
+      return evalSubscriptionPriceIncrease(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.subscription_price_increase>);
+    case "duplicate_charge":
+      return evalDuplicateCharge(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.duplicate_charge>);
+    case "unusual_category_spend":
+      return evalUnusualCategorySpend(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.unusual_category_spend>);
     default:
       return [];
   }
