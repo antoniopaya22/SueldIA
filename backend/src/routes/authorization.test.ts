@@ -273,10 +273,11 @@ describeDb("autorización entre usuarios (integración)", () => {
       form.append("files", new Blob([pdf], { type: "application/pdf" }), "Nómina abril.pdf");
       const res = await fetch(`${api}/api/payslips/upload`, { method: "POST", headers: { Authorization: `Bearer ${tokens.a}` }, body: form });
       expect(res.status).toBe(201);
-      return ((await res.json()) as Array<{ id: number; fileName: string; periodMonth: number; parsingStatus: string; alreadyUploaded: boolean }>)[0];
+      return ((await res.json()) as Array<{ id: number; fileName: string; periodMonth: number; parsingStatus: string; alreadyUploaded: boolean; parseMs: number }>)[0];
     };
     const first = await upload();
-    expect(first).toMatchObject({ fileName: "Nómina abril.pdf", periodMonth: 4, parsingStatus: "parsed", alreadyUploaded: false });
+    expect(first).toMatchObject({ fileName: "Nómina abril.pdf", periodMonth: 4, parsingStatus: "parsed", alreadyUploaded: false, parserFormat: "private-generic" });
+    expect(first.parseMs).toBeGreaterThanOrEqual(0);
     const second = await upload();
     expect(second).toMatchObject({ id: first.id, alreadyUploaded: true });
   });

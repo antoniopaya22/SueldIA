@@ -79,4 +79,15 @@ La integración continua (`.github/workflows/ci.yml`) hace todo esto en cada PR.
 
 ## Añadir un formato de nómina
 
-El analizador está en `backend/src/parsers/`: `pdf-text-extractor.ts` reconstruye el texto por filas y columnas y `concept-matcher.ts` aplica las reglas de cada formato. Para un formato nuevo, añade su detección y su extracción con una nómina anonimizada como prueba en `concept-matcher.test.ts`.
+El analizador está en `backend/src/parsers/`: `pdf-text-extractor.ts` reconstruye el texto por filas y columnas, y cada formato vive en `parsers/formats/` con la interfaz `PayslipFormat` (`detect(texto)` → confianza de 0 a 1, `parse(texto)` → nómina). Para uno nuevo:
+
+1. Crea `parsers/formats/<programa>.ts` con su `id` (estable: se guarda en `payslips.parser_format`), su detección y su extracción.
+2. Añádelo a `FORMATS` en `parsers/formats/index.ts` (gana el de más confianza; `private-generic` es el de reserva y va el último).
+3. Pruebas con nóminas **anonimizadas** (sin NIF, IBAN, nombres ni número de afiliación) junto al formato.
+
+Cada subida registra el formato, el estado final y el tiempo (`payslips.parser_format`, `payslips.parse_ms` y la línea «Nómina analizada» del log), sin datos personales. Para ver qué formato falla más:
+
+```sql
+SELECT parser_format, parsing_status, count(*), round(avg(parse_ms)) AS ms
+FROM payslips GROUP BY 1, 2 ORDER BY 1, 2;
+```

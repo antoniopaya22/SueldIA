@@ -73,6 +73,11 @@ export const payslips = pgTable(
     // sha256 (hex) del texto extraído: subir dos veces el mismo PDF no crea
     // otra nómina (contaba doble en totales, IRPF y medias).
     contentHash: text("content_hash"),
+    // Métricas del analizador: formato con el que se leyó (ver parsers/formats)
+    // y lo que tardó al subirla. Para saber qué formato falla más y si una
+    // mejora del analizador mejora algo.
+    parserFormat: text("parser_format"),
+    parseMs: integer("parse_ms"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

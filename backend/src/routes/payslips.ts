@@ -5,7 +5,8 @@ import { eq, and, asc, desc, ilike, or, ne, isNull, inArray } from "drizzle-orm"
 import { sql } from "drizzle-orm";
 import { upload, validatePdfMagicBytes, fixFilenameEncoding } from "../middleware/upload.js";
 import { parsePayslip } from "../parsers/parser-engine.js";
-import { matchConcepts, detectPayslipType, type ParsedPayslip } from "../parsers/concept-matcher.js";
+import { detectPayslipType, type ParsedPayslip } from "../parsers/concept-matcher.js";
+import { matchConcepts } from "../parsers/formats/index.js";
 import { createHash } from "node:crypto";
 import { classifyConcept } from "../parsers/concept-classifier.js";
 import { buildTaxSummary, diffConcepts } from "../services/payslip-compare.service.js";
@@ -69,7 +70,7 @@ payslipsRouter.post(
         try {
           parsed = await parsePayslip(file.buffer);
         } catch (err) {
-          logger.error({ err, fileName: file.originalname }, "Parse error");
+          logger.error({ err }, "Parse error");
         }
         const contentHash = parsed ? hashText(parsed.rawText) : null;
 
@@ -111,6 +112,13 @@ payslipsRouter.post(
             : [];
           return { payslip, concepts };
         });
+        // Métrica de calidad del analizador (sin datos personales): qué formato,
+        // cómo acabó y cuánto tardó. Junto con payslips.parser_format/parse_ms
+        // dice qué formato falla más y si un cambio del analizador mejora algo.
+        logger.info(
+          { parser: { format: parsed?.format ?? null, status: created.parsingStatus, ms: parsed?.parseMs ?? null, concepts: concepts.length } },
+          "Nómina analizada",
+        );
 
         // Aviso de posible duplicado (mismo perfil + periodo + tipo, contenido
         // distinto) — no bloquea (puede ser una nómina corregida a propósito).
@@ -710,6 +718,9 @@ function parsedPayslipValues(result: ParsedPayslip) {
     periodMonth: result.periodMonth,
     periodYear: result.periodYear,
     company: result.company,
+    parserFormat: result.format ?? null,
+    // Solo al subir (al reprocesar no se vuelve a leer el PDF): undefined = no se toca.
+    parseMs: result.parseMs,
     // Sin conceptos o sin periodo, la nómina necesita que el usuario la mire.
     parsingStatus: (result.concepts.length > 0 && result.periodMonth && result.periodYear ? "parsed" : "review") as "parsed" | "review",
   };

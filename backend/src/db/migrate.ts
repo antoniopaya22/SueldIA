@@ -45,6 +45,29 @@ await migrate(db, { migrationsFolder: resolve(__dirname, "./migrations") });
   }
   if (pending.length) console.log(`🏷️  Tipo semántico asignado a ${pending.length} conceptos`);
 }
+{
+  // Formato con el que se leyó cada nómina ya subida (métricas del analizador).
+  const { detectFormat } = await import("../parsers/formats/index.js");
+  let lastId = 0;
+  let filled = 0;
+  for (;;) {
+    const rows = await client<{ id: number; raw_text: string }[]>`
+      SELECT id, raw_text FROM payslips
+      WHERE parser_format IS NULL AND raw_text IS NOT NULL AND id > ${lastId}
+      ORDER BY id LIMIT 200
+    `;
+    if (rows.length === 0) break;
+    const chunk = rows.map((r) => ({ id: r.id, format: detectFormat(r.raw_text).format.id }));
+    await client`
+      UPDATE payslips AS p SET parser_format = v.format
+      FROM (SELECT * FROM jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb) AS x(id int, format text)) AS v
+      WHERE p.id = v.id
+    `;
+    lastId = rows[rows.length - 1].id;
+    filled += rows.length;
+  }
+  if (filled) console.log(`🧾 Formato del analizador anotado en ${filled} nóminas`);
+}
 
 // Red de seguridad: ninguna tabla de `public` puede quedar sin RLS (Supabase
 // la expone por la Data API con la anon key, que es pública). Si alguien añade

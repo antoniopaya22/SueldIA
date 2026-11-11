@@ -58,8 +58,11 @@ No hay `tesseract.js`/`canvas` ni disco para PDFs — decisión deliberada (ver 
 
 `src/parsers/`:
 1. **`pdf-text-extractor.ts`** — Extracción posicional con `pdfjs-dist`: agrupa los text items por fila (coordenada Y) y los ordena por columna (X), en vez del volcado lineal de `pdf-parse` (retirado — ni siquiera abría algunos PDFs reales). Huecos grandes en X se marcan con 2+ espacios.
-2. **`concept-matcher.ts`** — Regex sobre el texto ya reconstruido: periodo, empresa, salario bruto/neto, conceptos (devengos/deducciones). Dos formatos: `type1` (empresa privada) y `type2` (organismo público, antes basado en bordes `│` — ahora cada fila ya llega limpia, una por línea).
-3. **`parser-engine.ts`** — Orquestador mínimo: `extractTextFromPdfBuffer` → `matchConcepts`. Sin reintento (no hay OCR de respaldo en este target).
+2. **`formats/`** — Registro de formatos (`PayslipFormat`: `id`, `detect(texto) → 0..1`, `parse(texto)`). `matchConcepts` (en `formats/index.ts`) elige el de más confianza y anota su `id` en el resultado. Hoy: `public-notification` (notificación de retribuciones de la Administración) y `private-generic` (modelo oficial de empresa privada, formato de reserva). Ver «Añadir un formato de nómina» en el README.
+3. **`concept-matcher.ts`** — Las reglas (regex) de los dos formatos actuales sobre el texto ya reconstruido: periodo, empresa, salario bruto/neto, conceptos (devengos/deducciones).
+4. **`parser-engine.ts`** — Orquestador mínimo: `extractTextFromPdfBuffer` → `matchConcepts`, y mide el tiempo (`parseMs`). Sin reintento (no hay OCR de respaldo en este target).
+
+Métricas de calidad: `payslips.parser_format` y `payslips.parse_ms`, más la línea de log «Nómina analizada» (formato, estado, ms, nº de conceptos — nunca nombres ni importes).
 
 `POST /:id/reprocess` y `POST /reparse` no releen ningún archivo — re-ejecutan `matchConcepts` sobre el `rawText` ya guardado (para aplicar mejoras del parser, no del extractor).
 

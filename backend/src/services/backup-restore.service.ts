@@ -42,6 +42,8 @@ const payslipRow = z.object({
   payslipType: z.enum(["ordinal", "extra"]),
   manuallyEdited: z.boolean().optional(),
   contentHash: optText(128),
+  parserFormat: optText(64),
+  parseMs: z.number().int().min(0).max(600_000).nullable().optional(),
   createdAt,
 });
 const conceptRow = z.object({
