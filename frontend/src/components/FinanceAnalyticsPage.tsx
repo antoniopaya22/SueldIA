@@ -9,10 +9,7 @@ import {
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, Download, GitCompareArrows, RefreshCcw, Scale, SlidersHorizontal, Wallet, X,
 } from "lucide-react";
-import {
-  getAccounts, getCategories, getFinanceAnalytics,
-  type FinanceAnalyticsCategoryItem, type FinanceAnalyticsFilters, type FinanceAnalyticsGroupItem,
-} from "../lib/api";
+import { getAccounts, getCategories, getFinanceAnalytics, type FinanceAnalyticsFilters } from "../lib/api";
 import { Providers } from "./Providers";
 import { formatCompact, formatCurrency, formatMonthLabel, formatPct, plural } from "../lib/format";
 import { EmptyState } from "./ui/EmptyState";
@@ -21,9 +18,23 @@ import {
   chartAxis, chartGrid, chartCursor, chartBarCursor, chartActiveDot, chartColors, type SegmentedOption,
 } from "./app";
 import {
-  AccountSelect, ChangeBadge, ChartEmpty, ChartLegend, FilterSelect, LimitSelect, PieTooltip, RankedList, SeriesTooltip,
-  adaptiveColor, flowColors, paletteColor, presetRange, rangeLabel, shortenLabel,
-  tickFormatter as fmtTick, valueFormatter as fmtValue, type RangePreset, type ValueMode,
+  AccountSelect,
+  ChangeBadge,
+  ChartEmpty,
+  ChartLegend,
+  FilterSelect,
+  LimitSelect,
+  PieTooltip,
+  RankedList,
+  SeriesTooltip,
+  flowColors,
+  presetRange,
+  rangeLabel,
+  shortenLabel,
+  tickFormatter as fmtTick,
+  valueFormatter as fmtValue,
+  type RangePreset,
+  type ValueMode,
 } from "./finance/finance-ui";
 import { AnalyticsPanel, ExpandedPanelDialog, MatrixHeatmap, type PanelConfig } from "./finance/AnalyticsPanel";
 import { AnalyticsCustomizeSheet } from "./finance/AnalyticsCustomizeSheet";
@@ -38,17 +49,16 @@ import { AmountsChart } from "./finance/charts/AmountsChart";
 import { SmallMultiples } from "./finance/charts/SmallMultiples";
 import { AnalyticsViewsMenu } from "./finance/AnalyticsViewsMenu";
 import { usePreference } from "../hooks/use-preference";
-import { alignPrevious, changeByKey, changeTrend, isPartialMonth, pctChange, previousRange } from "../lib/analytics-compare";
-import type { ExportTable } from "../lib/export-utils";
+import { changeTrend, pctChange, previousRange } from "../lib/analytics-compare";
+
 import type { StatDelta } from "./app/StatCard";
-import {
-  DEFAULT_PANEL_SETTINGS, normalizeLayout, normalizePanelSettings, normalizeViews,
-  type AnalyticsView, type LayoutEntry, type PanelKey, type PanelSettings,
-} from "../lib/analytics-settings";
+import { normalizeLayout, normalizeViews, type AnalyticsView, type LayoutEntry, type PanelKey } from "../lib/analytics-settings";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "cn";
 import { useAnalyticsSettings } from "../hooks/use-analytics-settings";
+import { useDerivedAnalytics } from "./finance/analytics/use-derived-analytics";
+import { type RankValue } from "./finance/analytics/model";
 import { setUrlParams, useUrlEnumParam, useUrlOptionalIdParam, useUrlParam } from "../lib/url-state";
 
 // Los paneles que son un gráfico con controles (todos menos las "lecturas rápidas", que es una tarjeta aparte).
@@ -61,7 +71,6 @@ type TrendMetric = "all" | "income" | "expenses" | "net" | "count" | "savingsRat
 type ChartView = "bars" | "area" | "line";
 type FlowType = "expense" | "income";
 type Scope = "category" | "group";
-type RankValue = "total" | "count" | "average";
 type WeekdayMetric = "expense" | "income" | "net" | "count";
 type AccountMetric = "balance" | "income" | "expenses" | "net" | "count";
 type CumulativeMetric = "net" | "income" | "expenses" | "count";
@@ -92,24 +101,6 @@ const RANK_VALUE_OPTIONS: SegmentedOption<RankValue>[] = [
 
 const RANK_VALUE_LABEL: Record<RankValue, string> = { total: "Importe", count: "Movimientos", average: "Importe medio" };
 
-function rankValue(total: number, count: number, mode: RankValue): number {
-  if (mode === "count") return count;
-  if (mode === "average") return total / Math.max(count, 1);
-  return total;
-}
-
-interface CompareDatum {
-  key: string;
-  label: string;
-  shortLabel: string;
-  incomeTotal: number;
-  expenseTotal: number;
-  incomeCount: number;
-  expenseCount: number;
-  incomeValue: number;
-  expenseValue: number;
-}
-
 // ─── Skeleton ───────────────────────────────────────────────────
 function AnalyticsSkeleton() {
   return (
@@ -137,21 +128,6 @@ function Insight({ label, value, hint }: { label: string; value: string; hint: s
   );
 }
 
-/** Acumulados mes a mes (ingresos, gastos, neto y movimientos). */
-function accumulate<T extends { income: number; expenses: number; net: number; transactionCount: number }>(items: T[]) {
-  let income = 0;
-  let expenses = 0;
-  let net = 0;
-  let count = 0;
-  return items.map((item) => {
-    income += item.income;
-    expenses += item.expenses;
-    net += item.net;
-    count += item.transactionCount;
-    return { ...item, cumulativeIncome: income, cumulativeExpenses: expenses, cumulativeNet: net, cumulativeCount: count };
-  });
-}
-
 // ─── Vista ──────────────────────────────────────────────────────
 function FinanceAnalyticsView() {
   const defaultRange = useMemo(() => presetRange(DEFAULT_PRESET), []);
@@ -175,6 +151,7 @@ function FinanceAnalyticsView() {
   const [expandedPanel, setExpandedPanel] = useState<ChartPanelKey | null>(null);
 
   // Lo que cada panel recuerda (tipo de gráfico, métrica, "Top N"): se guarda en la cuenta y se valida al leerlo.
+  const analyticsSettings = useAnalyticsSettings();
   const {
     trendMetric,
     setTrendMetric,
@@ -252,7 +229,7 @@ function FinanceAnalyticsView() {
     setMultiplesLimit,
     budgetLimit,
     setBudgetLimit,
-  } = useAnalyticsSettings();
+  } = analyticsSettings;
 
   const { data: accounts = [], isLoading: loadingAccounts, error: accountsError } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const { data: categoryGroups = [], isLoading: loadingCategories, error: categoriesError } = useQuery({ queryKey: ["categories"], queryFn: getCategories });
@@ -316,230 +293,27 @@ function FinanceAnalyticsView() {
   const hasFiltersApplied = hasCustomDateRange || Boolean(accountId) || Boolean(groupId) || Boolean(categoryId);
 
   // ─── Datos derivados ──────────────────────────────────────────
-  const monthlyChartData = useMemo(() => (analytics?.monthly ?? []).map((item) => ({
-    ...item,
-    label: formatMonthLabel(item.month),
-    count: item.transactionCount,
-    savingsRate: item.income > 0 ? (item.net / item.income) * 100 : 0,
-    avgMovement: item.transactionCount > 0 ? (item.income + item.expenses) / item.transactionCount : 0,
-    netPerMovement: item.transactionCount > 0 ? item.net / item.transactionCount : 0,
-  })), [analytics]);
-
-  const prevMonthly = useMemo(() => (prev?.monthly ?? []).map((item) => ({
-    ...item,
-    label: formatMonthLabel(item.month),
-    count: item.transactionCount,
-    savingsRate: item.income > 0 ? (item.net / item.income) * 100 : 0,
-  })), [prev]);
-
-  const cumulativeChartData = useMemo(() => accumulate(monthlyChartData), [monthlyChartData]);
-  const prevCumulative = useMemo(() => accumulate(prevMonthly), [prevMonthly]);
-
-  // Series con el periodo anterior alineado por posición (mes 1 con mes 1…). Solo con una métrica concreta: con "Todo" serían seis líneas.
-  const trendData = useMemo(
-    () => (compareActive && trendMetric !== "all"
-      // Los meses cortados por el borde del periodo anterior se dejan sin punto: compararlos con un mes entero dibujaría una caída que no existe.
-      ? alignPrevious(monthlyChartData, prevMonthly, (m) => (prevRange && isPartialMonth(m.month, prevRange) ? null : m[trendMetric]))
-      : monthlyChartData),
-    [compareActive, monthlyChartData, prevMonthly, prevRange, trendMetric],
-  );
-  const cumulativeData = useMemo(() => {
-    if (!compareActive) return cumulativeChartData;
-    const key = cumulativeMetric === "income" ? "cumulativeIncome"
-      : cumulativeMetric === "expenses" ? "cumulativeExpenses"
-        : cumulativeMetric === "count" ? "cumulativeCount"
-          : "cumulativeNet";
-    return alignPrevious(cumulativeChartData, prevCumulative, (m) => m[key]);
-  }, [compareActive, cumulativeChartData, cumulativeMetric, prevCumulative]);
-
-  const distributionData = useMemo(() => {
-    const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      distributionScope === "category" ? analytics?.categories ?? [] : analytics?.groups ?? [];
-    const ranked = source
-      .filter((item) => item.type === distributionMetric)
-      .map((item) => {
-        const isCategory = distributionScope === "category";
-        const label = isCategory ? (item as FinanceAnalyticsCategoryItem).categoryName : (item as FinanceAnalyticsGroupItem).groupName;
-        // Sin categoría/grupo el bucket es "sin categoría" (null): enlaza a ese filtro.
-        const id = isCategory ? (item as FinanceAnalyticsCategoryItem).categoryId : (item as FinanceAnalyticsGroupItem).groupId;
-        const href = transactionsHref({
-          ...(id === null ? { uncategorized: true } : isCategory ? { categoryId: id } : { groupId: id }),
-          type: distributionMetric,
-          from: from || undefined,
-          to: to || undefined,
-          accountId,
-          cleared: "true", // la analítica solo cuenta lo liquidado: así el total del enlace coincide
-        });
-        return {
-          key: item.bucketKey,
-          href,
-          label,
-          parentLabel: isCategory ? (item as FinanceAnalyticsCategoryItem).groupName : null,
-          count: item.count,
-          value: rankValue(item.total, item.count, distributionValue),
-        };
-      })
-      .sort((a, b) => b.value - a.value)
-      .slice(0, distributionLimit);
-    const totalValue = ranked.reduce((sum, item) => sum + item.value, 0);
-    return ranked.map((item, index) => ({ ...item, share: totalValue > 0 ? (item.value / totalValue) * 100 : 0, color: paletteColor(index) }));
-  }, [accountId, analytics, distributionLimit, distributionMetric, distributionScope, distributionValue, from, to]);
-
-  const payeeData = useMemo(() => (analytics?.payees ?? [])
-    .filter((item) => item.type === payeeMetric)
-    .map((item) => ({
-      key: item.bucketKey,
-      label: item.payee,
-      count: item.count,
-      value: rankValue(item.total, item.count, payeeValue),
-      // "Sin beneficiario" no se puede buscar por texto.
-      href: item.payee === "Sin beneficiario"
-        ? undefined
-        : transactionsHref({ search: item.payee, type: payeeMetric, from: from || undefined, to: to || undefined, accountId, cleared: "true" }),
-    }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, payeeLimit), [accountId, analytics, from, payeeLimit, payeeMetric, payeeValue, to]);
-
-  const stackTrend = useMemo(() => {
-    const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      stackGrouping === "category" ? analytics?.categories ?? [] : analytics?.groups ?? [];
-    const series = source
-      .filter((item) => item.type === stackMetric)
-      .slice(0, stackLimit)
-      .map((item, index) => ({
-        key: item.bucketKey,
-        label: stackGrouping === "category" ? (item as FinanceAnalyticsCategoryItem).categoryName : (item as FinanceAnalyticsGroupItem).groupName,
-        color: paletteColor(index),
-      }));
-    const buckets = stackGrouping === "category" ? analytics?.monthlyCategories ?? [] : analytics?.monthlyGroups ?? [];
-    const keys = new Set(series.map((s) => s.key));
-    const rows = new Map<string, Record<string, number | string>>();
-    for (const month of analytics?.monthly ?? []) {
-      const row: Record<string, number | string> = { month: month.month, label: formatMonthLabel(month.month) };
-      for (const s of series) row[s.key] = 0;
-      rows.set(month.month, row);
-    }
-    for (const item of buckets) {
-      if (item.type !== stackMetric || !keys.has(item.bucketKey)) continue;
-      const row = rows.get(item.month);
-      if (row) row[item.bucketKey] = item.total;
-    }
-    return { data: Array.from(rows.values()), series };
-  }, [analytics, stackGrouping, stackLimit, stackMetric]);
-
-  const weekdayChartData = useMemo(() => (analytics?.weekdays ?? []).map((item) => ({
-    ...item,
-    label: item.weekdayLabel,
-    value: weekdayMetric === "expense" ? item.expenses
-      : weekdayMetric === "income" ? item.income
-        : weekdayMetric === "count" ? item.transactionCount
-          : item.net,
-  })), [analytics, weekdayMetric]);
-
-  const accountChartData = useMemo(() => {
-    const metricValue = (a: { balance: number; income: number; expenses: number; net: number; transactionCount: number }) =>
-      accountMetric === "balance" ? a.balance
-        : accountMetric === "income" ? a.income
-          : accountMetric === "expenses" ? a.expenses
-            : accountMetric === "count" ? a.transactionCount
-              : a.net;
-    return [...(analytics?.accounts ?? [])]
-      .sort((a, b) => Math.abs(metricValue(b)) - Math.abs(metricValue(a)))
-      .slice(0, accountLimit)
-      .map((item, index) => ({
-        ...item,
-        key: String(item.accountId),
-        label: item.accountName,
-        value: metricValue(item),
-        color: adaptiveColor(item.color, paletteColor(index)),
-      }));
-  }, [accountLimit, accountMetric, analytics]);
-
-  const efficiencyChartData = useMemo(() => monthlyChartData.map((item) => ({
-    ...item,
-    displayMetric: efficiencyMetric === "savingsRate" ? item.savingsRate
-      : efficiencyMetric === "avgMovement" ? item.avgMovement
-        : efficiencyMetric === "netPerMovement" ? item.netPerMovement
-          : item.count,
-  })), [efficiencyMetric, monthlyChartData]);
-
-  const compareData = useMemo(() => {
-    const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      compareScope === "category" ? analytics?.categories ?? [] : analytics?.groups ?? [];
-    const map = new Map<string, CompareDatum>();
-    for (const item of source) {
-      const isCategory = compareScope === "category";
-      const cat = item as FinanceAnalyticsCategoryItem;
-      const grp = item as FinanceAnalyticsGroupItem;
-      const key = isCategory ? `category:${cat.categoryId ?? cat.categoryName}` : `group:${grp.groupId ?? grp.groupName}`;
-      const label = isCategory ? cat.categoryName : grp.groupName;
-      const current = map.get(key) ?? {
-        key, label, shortLabel: shortenLabel(label, 18),
-        incomeTotal: 0, expenseTotal: 0, incomeCount: 0, expenseCount: 0, incomeValue: 0, expenseValue: 0,
-      };
-      if (item.type === "income") {
-        current.incomeTotal += item.total;
-        current.incomeCount += item.count;
-      } else {
-        current.expenseTotal += item.total;
-        current.expenseCount += item.count;
-      }
-      map.set(key, current);
-    }
-    return Array.from(map.values())
-      .map((item) => ({
-        ...item,
-        incomeValue: rankValue(item.incomeTotal, item.incomeCount, compareValue),
-        expenseValue: rankValue(item.expenseTotal, item.expenseCount, compareValue),
-      }))
-      .sort((a, b) => (b.incomeValue + b.expenseValue) - (a.incomeValue + a.expenseValue))
-      .slice(0, compareLimit);
-  }, [analytics, compareLimit, compareScope, compareValue]);
-
-  const matrixData = useMemo(() => {
-    const ranking: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      matrixScope === "category" ? analytics?.categories ?? [] : analytics?.groups ?? [];
-    const monthly = matrixScope === "category" ? analytics?.monthlyCategories ?? [] : analytics?.monthlyGroups ?? [];
-    const byKey = new Map<string, number>();
-    for (const item of monthly) {
-      if (item.type === matrixMetric) byKey.set(`${item.bucketKey}|${item.month}`, item.total);
-    }
-    const months = (analytics?.monthly ?? []).map((m) => ({ month: m.month, label: formatMonthLabel(m.month) }));
-    const rows = ranking
-      .filter((item) => item.type === matrixMetric)
-      .slice(0, matrixLimit)
-      .map((item) => {
-        const values = months.map((m) => ({ ...m, value: byKey.get(`${item.bucketKey}|${m.month}`) ?? 0 }));
-        return {
-          key: item.bucketKey,
-          label: matrixScope === "category" ? (item as FinanceAnalyticsCategoryItem).categoryName : (item as FinanceAnalyticsGroupItem).groupName,
-          total: values.reduce((s, v) => s + v.value, 0),
-          values,
-        };
-      });
-    return { months, rows };
-  }, [analytics, matrixLimit, matrixMetric, matrixScope]);
-
-  // Valor de cada categoría/grupo y beneficiario en el periodo anterior, con el mismo valor (importe, nº, media) elegido en el panel.
-  const prevDistribution = useMemo(() => {
-    const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      distributionScope === "category" ? prev?.categories ?? [] : prev?.groups ?? [];
-    return new Map(source.filter((i) => i.type === distributionMetric).map((i) => [i.bucketKey, rankValue(i.total, i.count, distributionValue)]));
-  }, [distributionMetric, distributionScope, distributionValue, prev]);
-  const prevPayees = useMemo(
-    () => new Map((prev?.payees ?? []).filter((i) => i.type === payeeMetric).map((i) => [i.bucketKey, rankValue(i.total, i.count, payeeValue)])),
-    [payeeMetric, payeeValue, prev],
-  );
-  const distributionChange = useMemo(
-    () => (prev ? changeByKey(distributionData, prevDistribution) : null),
-    [distributionData, prev, prevDistribution],
-  );
-  const payeeChange = useMemo(() => (prev ? changeByKey(payeeData, prevPayees) : null), [payeeData, prev, prevPayees]);
-
-  const topWeekday = useMemo(
-    () => [...weekdayChartData].sort((a, b) => Math.abs(b.value) - Math.abs(a.value))[0],
-    [weekdayChartData],
-  );
+  const {
+    monthlyChartData,
+    prevMonthly,
+    cumulativeChartData,
+    prevCumulative,
+    trendData,
+    cumulativeData,
+    distributionData,
+    payeeData,
+    stackTrend,
+    weekdayChartData,
+    accountChartData,
+    efficiencyChartData,
+    compareData,
+    matrixData,
+    prevDistribution,
+    prevPayees,
+    distributionChange,
+    payeeChange,
+    topWeekday,
+  } = useDerivedAnalytics({ analytics, prev, from, to, prevRange, compareActive, accountId, settings: analyticsSettings });
 
   const loading = loadingAccounts || loadingCategories || loadingAnalytics;
   const error = accountsError || categoriesError || analyticsError;
