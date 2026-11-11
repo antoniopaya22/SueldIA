@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Postgres para las pruebas de integración (autorización entre usuarios,
+    # borrados con reasignación…). Sin TEST_DATABASE_URL se saltarían.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sueldia_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sueldia_test
+      # Valores de mentira: el build del frontend los exige, pero no se usan.
+      PUBLIC_SUPABASE_URL: https://ci.supabase.co
+      PUBLIC_SUPABASE_ANON_KEY: ci-anon-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Tipos
+        run: npm run typecheck
+
+      - name: Migraciones (BBDD de pruebas)
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # Informativo de momento: quedan avisos que requieren cambios de versión
+      # mayor (astro, zod, pdfjs-dist). Pasarlo a bloqueante cuando se resuelvan.
+      - name: Auditoría de dependencias
+        run: npm audit --omit=dev --audit-level=high
+        continue-on-error: true
