@@ -1,0 +1,232 @@
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { describeDb, resetDb } from "../test/db.js";
+
+// Autorización entre usuarios, contra la API real (Express + Postgres): el
+// usuario B no puede leer, modificar ni borrar nada del usuario A por ninguna
+// ruta que reciba un id. Es la clase de error que no se ve a simple vista y
+// que hasta ahora dependía de que cada ruta repitiera el filtro a mano.
+//
+// Necesita TEST_DATABASE_URL (ver src/test/setup.ts).
+
+describeDb("autorización entre usuarios (integración)", () => {
+  let jwksServer: http.Server;
+  let apiServer: http.Server;
+  let api: string;
+  let privateKey: CryptoKey;
+  let issuer: string;
+  const tokens: Record<string, string> = {};
+  const ids: Record<string, number> = {};
+
+  async function mint(sub: string): Promise<string> {
+    return new SignJWT({ email: `${sub}@test.local`, role: "authenticated" })
+      .setProtectedHeader({ alg: "RS256", kid: "test" })
+      .setIssuer(issuer)
+      .setAudience("authenticated")
+      .setSubject(sub)
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(privateKey);
+  }
+
+  async function call(user: "a" | "b", method: string, path: string, body?: unknown) {
+    const res = await fetch(`${api}/api${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${tokens[user]}`, "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    let json: unknown = null;
+    try { json = JSON.parse(text); } catch { json = text; }
+    return { status: res.status, json: json as Record<string, unknown> & { data?: unknown[] } };
+  }
+
+  async function ok<T = Record<string, unknown>>(method: string, path: string, body?: unknown): Promise<T> {
+    const r = await call("a", method, path, body);
+    if (r.status >= 300) throw new Error(`${method} ${path} → ${r.status} ${JSON.stringify(r.json)}`);
+    return r.json as T;
+  }
+
+  beforeAll(async () => {
+    // JWKS propio: el middleware verifica los tokens contra él como si fuera Supabase.
+    const keys = await generateKeyPair("RS256");
+    privateKey = keys.privateKey;
+    const jwk = { ...(await exportJWK(keys.publicKey)), kid: "test", alg: "RS256", use: "sig" };
+    jwksServer = http.createServer((_req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify({ keys: [jwk] }));
+    });
+    await new Promise<void>((r) => jwksServer.listen(0, "127.0.0.1", r));
+    const supabaseUrl = `http://127.0.0.1:${(jwksServer.address() as AddressInfo).port}`;
+    issuer = `${supabaseUrl}/auth/v1`;
+
+    // Antes de importar la app: config.ts lee el entorno al cargarse, e
+    // index.ts no abre su propio puerto con VERCEL definida.
+    process.env.SUPABASE_URL = supabaseUrl;
+    process.env.VERCEL = "1";
+    await resetDb();
+    const { default: app } = await import("../index.js");
+    apiServer = app.listen(0, "127.0.0.1");
+    await new Promise((r) => apiServer.once("listening", r));
+    api = `http://127.0.0.1:${(apiServer.address() as AddressInfo).port}`;
+
+    tokens.a = await mint("user-a");
+    tokens.b = await mint("user-b");
+
+    // ─── Datos del usuario A ──────────────────────────────────────
+    const { db } = await import("../db/index.js");
+    const s = await import("../db/schema.js");
+
+    ids.profile = (await ok<{ id: number }>("POST", "/profiles", { name: "A" })).id;
+    const [payslip] = await db.insert(s.payslips).values({
+      profileId: ids.profile, fileName: "a.pdf", periodMonth: 1, periodYear: 2026,
+      grossSalary: 2000, netSalary: 1500, rawText: "SALARIO BASE 2.000,00", parsingStatus: "parsed",
+    }).returning();
+    ids.payslip = payslip.id;
+    ids.account = (await ok<{ id: number }>("POST", "/accounts", { name: "Banco A", type: "bank" })).id;
+    ids.account2 = (await ok<{ id: number }>("POST", "/accounts", { name: "Ahorro A", type: "bank" })).id;
+    ids.group = (await ok<{ id: number }>("POST", "/categories/groups", { name: "Grupo A" })).id;
+    ids.category = (await ok<{ id: number }>("POST", "/categories", { groupId: ids.group, name: "Cat A" })).id;
+    ids.transaction = (await ok<{ id: number }>("POST", "/transactions", {
+      accountId: ids.account, type: "expense", amount: 12.5, date: "2026-01-10", categoryId: ids.category, payee: "Tienda",
+    })).id;
+    ids.income = (await ok<{ id: number }>("POST", "/transactions", {
+      accountId: ids.account, type: "income", amount: 1500, date: "2026-01-28", payee: "Empresa",
+    })).id;
+    ids.recurring = (await ok<{ id: number }>("POST", "/recurring-transactions", {
+      accountId: ids.account, type: "expense", amount: 10, cadence: "monthly", intervalCount: 1, startDate: "2026-01-01",
+    })).id;
+    ids.rule = (await ok<{ id: number }>("POST", "/category-rules", { match: "tienda", categoryId: ids.category })).id;
+    ids.tag = (await ok<{ id: number }>("POST", "/tags", { name: "Revisada" })).id;
+    await ok("POST", "/tags/assign", { payslipId: ids.payslip, tagId: ids.tag });
+    ids.note = (await ok<{ id: number }>("POST", "/notes", { payslipId: ids.payslip, content: "Nota de A" })).id;
+    ids.alertRule = (await ok<{ id: number }>("POST", "/alerts/rules", {
+      name: "Bajada", type: "salary_drop", config: { thresholdPercent: 5 },
+    })).id;
+    const [hist] = await db.insert(s.alertHistory).values({
+      userId: (await db.select().from(s.users)).find((u) => u.supabaseUserId === "user-a")!.id,
+      type: "salary_drop", severity: "warning", message: "Aviso de A",
+    }).returning();
+    ids.alertHistory = hist.id;
+    await ok("PUT", "/budgets", { categoryId: ids.category, month: "2026-01", assigned: 100 });
+    await ok("PUT", "/budgets/targets", { categoryId: ids.category, type: "monthly", amount: 50 });
+
+    // B existe (primera petición) y tiene lo mínimo para mandar cuerpos válidos.
+    const bProfile = await call("b", "POST", "/profiles", { name: "B" });
+    ids.bProfile = (bProfile.json as { id: number }).id;
+    const bAccount = await call("b", "POST", "/accounts", { name: "Banco B", type: "bank" });
+    ids.bAccount = (bAccount.json as { id: number }).id;
+  }, 60_000);
+
+  afterAll(async () => {
+    await new Promise((r) => apiServer?.close(r));
+    await new Promise((r) => jwksServer?.close(r));
+    const { client } = await import("../db/index.js");
+    await client.end();
+  });
+
+  // Cada caso: B intenta tocar algo de A. Ninguno puede acabar en 2xx.
+  const attacks = (): Array<[string, string, unknown?]> => [
+    ["GET", `/profiles/${ids.profile}`],
+    ["PUT", `/profiles/${ids.profile}`, { name: "hack" }],
+    ["DELETE", `/profiles/${ids.profile}`],
+    ["GET", `/payslips/${ids.payslip}`],
+    ["PUT", `/payslips/${ids.payslip}/concepts`, { concepts: [] }],
+    ["POST", `/payslips/${ids.payslip}/reprocess`],
+    ["GET", `/payslips/${ids.payslip}/link-suggestions`],
+    ["PUT", `/payslips/${ids.payslip}/link`, { transactionId: ids.income }],
+    ["PATCH", `/payslips/${ids.payslip}/type`, { payslipType: "extra" }],
+    ["DELETE", `/payslips/${ids.payslip}`],
+    ["GET", `/accounts/${ids.account}`],
+    ["PUT", `/accounts/${ids.account}`, { name: "hack", type: "bank" }],
+    ["PATCH", `/accounts/${ids.account}/archive`],
+    ["DELETE", `/accounts/${ids.account}`],
+    ["PUT", `/categories/groups/${ids.group}`, { name: "hack" }],
+    ["GET", `/categories/groups/${ids.group}/usage`],
+    ["DELETE", `/categories/groups/${ids.group}`],
+    ["PUT", `/categories/${ids.category}`, { name: "hack" }],
+    ["GET", `/categories/${ids.category}/usage`],
+    ["DELETE", `/categories/${ids.category}`],
+    ["POST", `/categories`, { groupId: ids.group, name: "intrusa" }],
+    ["GET", `/transactions/${ids.transaction}`],
+    ["PUT", `/transactions/${ids.transaction}`, { amount: 1 }],
+    ["PATCH", `/transactions/${ids.transaction}/clear`, { cleared: true }],
+    ["POST", `/transactions/${ids.transaction}/split`, { parts: [{ categoryId: null, amount: 6 }, { categoryId: null, amount: 6.5 }] }],
+    ["DELETE", `/transactions/${ids.transaction}`],
+    ["POST", `/transactions`, { accountId: ids.account, type: "expense", amount: 1, date: "2026-01-01" }],
+    ["POST", `/transactions`, { accountId: ids.bAccount, type: "expense", amount: 1, date: "2026-01-01", categoryId: ids.category }],
+    ["POST", `/transactions`, { accountId: ids.bAccount, type: "transfer", amount: 1, date: "2026-01-01", targetAccountId: ids.account }],
+    ["PUT", `/recurring-transactions/${ids.recurring}`, { accountId: ids.bAccount, type: "expense", amount: 1, cadence: "monthly", intervalCount: 1, startDate: "2026-01-01" }],
+    ["PATCH", `/recurring-transactions/${ids.recurring}/active`, { active: false }],
+    ["DELETE", `/recurring-transactions/${ids.recurring}`],
+    ["POST", `/recurring-transactions`, { accountId: ids.account, type: "expense", amount: 1, cadence: "monthly", intervalCount: 1, startDate: "2026-01-01" }],
+    ["POST", `/category-rules`, { match: "x", categoryId: ids.category }],
+    ["DELETE", `/category-rules/${ids.rule}`],
+    ["DELETE", `/tags/${ids.tag}`],
+    ["POST", `/tags/assign`, { payslipId: ids.payslip, tagId: ids.tag }],
+    ["DELETE", `/tags/assign/${ids.payslip}/${ids.tag}`],
+    ["GET", `/tags/payslip/${ids.payslip}`],
+    ["GET", `/notes/${ids.payslip}`],
+    ["POST", `/notes`, { payslipId: ids.payslip, content: "intrusa" }],
+    ["DELETE", `/notes/${ids.note}`],
+    ["PUT", `/alerts/rules/${ids.alertRule}`, { name: "hack" }],
+    ["DELETE", `/alerts/rules/${ids.alertRule}`],
+    ["PUT", `/alerts/history/${ids.alertHistory}/read`],
+    ["PUT", `/budgets`, { categoryId: ids.category, month: "2026-01", assigned: 1 }],
+    ["PUT", `/budgets/targets`, { categoryId: ids.category, type: "monthly", amount: 1 }],
+    ["DELETE", `/budgets/targets/${ids.category}`],
+    ["POST", `/payslips/upload`],
+  ];
+
+  it("B no puede tocar ningún recurso de A por id", async () => {
+    const leaks: string[] = [];
+    for (const [method, path, body] of attacks()) {
+      const r = await call("b", method, path, body);
+      if (r.status < 300) leaks.push(`${method} ${path} → ${r.status}`);
+    }
+    expect(leaks).toEqual([]);
+  }, 60_000);
+
+  it("las operaciones en lote ignoran los ids de A", async () => {
+    const batch = await call("b", "POST", "/transactions/batch", { action: "delete", ids: [ids.transaction] });
+    expect(batch.status).toBeLessThan(300);
+    expect(batch.json.updated ?? 0).toBe(0);
+    await call("b", "POST", "/category-rules/apply", { ids: [ids.transaction] });
+    await call("b", "PUT", "/accounts/order", { ids: [ids.account, ids.account2] });
+  });
+
+  it("los listados y exportaciones de B no contienen nada de A", async () => {
+    const lists = [
+      "/profiles", "/payslips", "/accounts", "/categories", "/transactions", "/recurring-transactions",
+      "/category-rules", "/tags", "/alerts/rules", "/alerts/history", "/budgets?month=2026-01", "/export/all",
+      `/payslips?profileId=${ids.profile}`, `/transactions?accountId=${ids.account}`, `/dashboard?profileId=${ids.profile}`,
+      `/analytics?profileId=${ids.profile}`, "/finance/summary", "/finance/analytics", "/transactions/payees?q=Tien",
+    ];
+    const markers = ["Banco A", "Ahorro A", "Grupo A", "Cat A", "Tienda", "Empresa", "Revisada", "Bajada", "Aviso de A", "a.pdf", "Nota de A"];
+    const leaks: string[] = [];
+    for (const path of lists) {
+      const r = await call("b", "GET", path);
+      const text = JSON.stringify(r.json);
+      for (const m of markers) if (text.includes(m)) leaks.push(`${path} contiene «${m}»`);
+    }
+    expect(leaks).toEqual([]);
+  }, 60_000);
+
+  it("los datos de A siguen intactos", async () => {
+    expect((await call("a", "GET", `/profiles/${ids.profile}`)).json).toMatchObject({ name: "A" });
+    expect((await call("a", "GET", `/accounts/${ids.account}`)).json).toMatchObject({ name: "Banco A", archived: false });
+    expect((await call("a", "GET", `/transactions/${ids.transaction}`)).json).toMatchObject({ amount: 12.5, cleared: true });
+    const payslip = (await call("a", "GET", `/payslips/${ids.payslip}`)).json;
+    expect(payslip).toMatchObject({ payslipType: "ordinal" });
+    const notes = (await call("a", "GET", `/notes/${ids.payslip}`)).json as unknown as unknown[];
+    expect(notes).toHaveLength(1);
+    const rules = (await call("a", "GET", "/alerts/rules")).json as unknown as Array<{ name: string }>;
+    expect(rules.map((r) => r.name)).toEqual(["Bajada"]);
+    const recurring = (await call("a", "GET", "/recurring-transactions")).json.data as Array<{ active: boolean }>;
+    expect(recurring[0].active).toBe(true);
+    const cats = (await call("a", "GET", "/categories")).json.data as Array<{ name: string; categories: Array<{ name: string }> }>;
+    expect(cats.flatMap((g) => g.categories.map((c) => c.name))).toEqual(["Cat A"]);
+  });
+});
