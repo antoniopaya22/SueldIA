@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { payslips, payslipConcepts, profiles, transactions, accounts } from "../db/schema.js";
+import { payslips, payslipConcepts, payslipNotes, payslipTags, profiles, tags, transactions, accounts } from "../db/schema.js";
 import { eq, and, asc, desc, ilike, or, ne, isNull, inArray } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { upload, validatePdfMagicBytes, fixFilenameEncoding } from "../middleware/upload.js";
@@ -16,6 +16,7 @@ import { logger } from "../logger.js";
 import { evaluateRulesForUser } from "../services/alerts.service.js";
 import { scoreLinkCandidates, payslipReferenceDateMs } from "../services/payslip-links.service.js";
 import { validatePayslip } from "../services/payslip-validation.service.js";
+import { escapeLike } from "../services/payee-suggestions.service.js";
 
 export const payslipsRouter = Router();
 payslipsRouter.param("id", validateIdParam);
@@ -165,6 +166,7 @@ const payslipListQuerySchema = z.object({
   search: z.string().max(200).optional(),
   status: z.enum(["pending", "parsed", "error", "review"]).optional(),
   type: z.enum(["ordinal", "extra"]).optional(),
+  tagId: z.coerce.number().int().positive().max(2_147_483_647).optional(),
   sortBy: z.enum(["period", "fileName", "grossSalary", "netSalary", "parsingStatus"]).default("period"),
   sortDir: z.enum(["asc", "desc"]).default("desc"),
   page: z.coerce.number().int().positive().default(1),
@@ -187,7 +189,7 @@ payslipsRouter.get("/", async (req, res, next) => {
     if (userProfileIds.length === 0)
       return res.json({ data: [], total: 0, page: 1, limit: 50 });
 
-    const { profileId, year, search, status, type, sortBy, sortDir, page, limit } = parsed.data;
+    const { profileId, year, search, status, type, tagId, sortBy, sortDir, page, limit } = parsed.data;
     const offset = (page - 1) * limit;
 
     const conditions = [
@@ -201,9 +203,21 @@ payslipsRouter.get("/", async (req, res, next) => {
     if (year) conditions.push(eq(payslips.periodYear, year));
     if (status) conditions.push(eq(payslips.parsingStatus, status));
     if (type) conditions.push(eq(payslips.payslipType, type));
-    if (search) {
+    if (tagId) {
+      conditions.push(sql`EXISTS (SELECT 1 FROM ${payslipTags} WHERE ${payslipTags.payslipId} = ${payslips.id} AND ${payslipTags.tagId} = ${tagId})`);
+    }
+    if (search?.trim()) {
+      // No solo el nombre del fichero y la empresa: también los conceptos, las
+      // notas y el texto extraído del PDF («plus transporte», «atrasos»…).
+      const like = `%${escapeLike(search.trim())}%`;
       conditions.push(
-        or(ilike(payslips.fileName, `%${search}%`), ilike(payslips.company, `%${search}%`))!
+        or(
+          ilike(payslips.fileName, like),
+          ilike(payslips.company, like),
+          ilike(payslips.rawText, like),
+          sql`EXISTS (SELECT 1 FROM ${payslipConcepts} WHERE ${payslipConcepts.payslipId} = ${payslips.id} AND ${payslipConcepts.name} ILIKE ${like})`,
+          sql`EXISTS (SELECT 1 FROM ${payslipNotes} WHERE ${payslipNotes.payslipId} = ${payslips.id} AND ${payslipNotes.content} ILIKE ${like})`,
+        )!,
       );
     }
 
@@ -232,7 +246,24 @@ payslipsRouter.get("/", async (req, res, next) => {
       .limit(limit)
       .offset(offset);
 
-    res.json({ data: result, total: count, page, limit });
+    // Etiquetas de cada nómina de la página (para verlas en la lista).
+    const ids = result.map((p) => p.id);
+    const tagRows = ids.length
+      ? await db
+        .select({ payslipId: payslipTags.payslipId, id: tags.id, name: tags.name, color: tags.color })
+        .from(payslipTags)
+        .innerJoin(tags, eq(payslipTags.tagId, tags.id))
+        .where(inArray(payslipTags.payslipId, ids))
+        .orderBy(tags.name)
+      : [];
+    const tagsByPayslip = new Map<number, Array<{ id: number; name: string; color: string }>>();
+    for (const t of tagRows) {
+      const list = tagsByPayslip.get(t.payslipId) ?? [];
+      list.push({ id: t.id, name: t.name, color: t.color });
+      tagsByPayslip.set(t.payslipId, list);
+    }
+
+    res.json({ data: result.map((p) => ({ ...p, tags: tagsByPayslip.get(p.id) ?? [] })), total: count, page, limit });
   } catch (err) {
     next(err);
   }
@@ -653,24 +684,62 @@ payslipsRouter.patch("/:id/profile", async (req, res, next) => {
 
 // Reparse all payslips (useful after parser improvements) — igual que
 // reprocess, sobre el rawText ya guardado de cada una.
+// Reprocesar con el analizador actual (sin releer el PDF: sobre el texto ya
+// guardado), todas las nóminas o las de `ids`. Las corregidas a mano se
+// respetan salvo ?force=true. Con ?dryRun=true no cambia nada y devuelve,
+// nómina por nómina, qué cambiaría (bruto, neto, periodo y nº de conceptos).
+const reparseBodySchema = z.object({ ids: z.array(z.number().int().positive().max(2_147_483_647)).min(1).max(500).optional() }).default({});
+
 payslipsRouter.post("/reparse", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    const body = reparseBodySchema.safeParse(req.body ?? {});
+    if (!body.success) return res.status(400).json({ error: "Datos inválidos", details: body.error.flatten().fieldErrors });
     const userProfileIds = await getUserProfileIds(userId);
-    if (userProfileIds.length === 0)
-      return res.json({ ok: true, reparsed: 0, errors: 0, skippedEdited: 0 });
-
-    // ?force=true reprocesa también las corregidas a mano (pisando esas correcciones).
+    const dryRun = req.query.dryRun === "true";
     const force = req.query.force === "true";
-    const allPayslips = await db
-      .select({ id: payslips.id, rawText: payslips.rawText, manuallyEdited: payslips.manuallyEdited })
+    if (userProfileIds.length === 0) {
+      return res.json(dryRun ? { changes: [], unchanged: 0, skippedEdited: 0 } : { ok: true, reparsed: 0, errors: 0, skippedEdited: 0 });
+    }
+
+    const conditions = [inArray(payslips.profileId, userProfileIds)];
+    if (body.data.ids) conditions.push(inArray(payslips.id, body.data.ids));
+    const candidates = await db
+      .select({
+        id: payslips.id, rawText: payslips.rawText, manuallyEdited: payslips.manuallyEdited, fileName: payslips.fileName,
+        periodMonth: payslips.periodMonth, periodYear: payslips.periodYear, grossSalary: payslips.grossSalary,
+        netSalary: payslips.netSalary, parsingStatus: payslips.parsingStatus,
+      })
       .from(payslips)
-      .where(inArray(payslips.profileId, userProfileIds));
-    const toReparse = allPayslips.filter((p) => p.rawText && (force || !p.manuallyEdited));
-    const skippedEdited = allPayslips.filter((p) => p.rawText && !force && p.manuallyEdited).length;
+      .where(and(...conditions));
+    const toReparse = candidates.filter((p) => p.rawText && (force || !p.manuallyEdited));
+    const skippedEdited = candidates.filter((p) => p.rawText && !force && p.manuallyEdited).length;
+
+    if (dryRun) {
+      const ids = toReparse.map((p) => p.id);
+      const counts = ids.length
+        ? await db
+          .select({ payslipId: payslipConcepts.payslipId, n: sql<number>`count(*)::int` })
+          .from(payslipConcepts)
+          .where(inArray(payslipConcepts.payslipId, ids))
+          .groupBy(payslipConcepts.payslipId)
+        : [];
+      const conceptCount = new Map(counts.map((c) => [c.payslipId, c.n]));
+      const changes = [];
+      for (const p of toReparse) {
+        const result = matchConcepts(p.rawText!);
+        const after = parsedPayslipValues(result);
+        const afterConcepts = result.concepts.length;
+        const before = { grossSalary: p.grossSalary, netSalary: p.netSalary, periodMonth: p.periodMonth, periodYear: p.periodYear, concepts: conceptCount.get(p.id) ?? 0, status: p.parsingStatus };
+        const next = { grossSalary: after.grossSalary, netSalary: after.netSalary, periodMonth: after.periodMonth, periodYear: after.periodYear, concepts: afterConcepts, status: after.parsingStatus };
+        const changed = (Object.keys(before) as Array<keyof typeof before>).some((k) => before[k] !== next[k]);
+        if (changed) changes.push({ id: p.id, fileName: p.fileName, before, after: next });
+      }
+      return res.json({ changes, unchanged: toReparse.length - changes.length, skippedEdited });
+    }
+
     let success = 0;
     let errors = 0;
-
     const BATCH_SIZE = 5;
     for (let i = 0; i < toReparse.length; i += BATCH_SIZE) {
       const batch = toReparse.slice(i, i + BATCH_SIZE);
@@ -684,6 +753,47 @@ payslipsRouter.post("/reparse", async (req, res, next) => {
     }
 
     res.json({ ok: true, reparsed: success, errors, skippedEdited });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Acciones sobre varias nóminas a la vez (selección en «Mis nóminas»).
+const batchSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("delete"), ids: z.array(z.number().int().positive()).min(1).max(200) }),
+  z.object({ action: z.literal("set-type"), ids: z.array(z.number().int().positive()).min(1).max(200), type: z.enum(["ordinal", "extra"]) }),
+  z.object({ action: z.literal("add-tag"), ids: z.array(z.number().int().positive()).min(1).max(200), tagId: z.number().int().positive() }),
+  z.object({ action: z.literal("remove-tag"), ids: z.array(z.number().int().positive()).min(1).max(200), tagId: z.number().int().positive() }),
+]);
+
+payslipsRouter.post("/batch", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = batchSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
+    const input = parsed.data;
+    const ids = [...new Set(input.ids)];
+    const userProfileIds = await getUserProfileIds(userId);
+    const owned = userProfileIds.length
+      ? await db.select({ id: payslips.id }).from(payslips).where(and(inArray(payslips.id, ids), inArray(payslips.profileId, userProfileIds)))
+      : [];
+    // Todas o ninguna: con un id ajeno (o inexistente) no se toca nada.
+    if (owned.length !== ids.length) return res.status(404).json({ error: "Alguna de las nóminas no existe" });
+
+    if (input.action === "delete") {
+      await db.delete(payslips).where(inArray(payslips.id, ids));
+    } else if (input.action === "set-type") {
+      await db.update(payslips).set({ payslipType: input.type }).where(inArray(payslips.id, ids));
+    } else {
+      const [tag] = await db.select({ id: tags.id }).from(tags).where(and(eq(tags.id, input.tagId), eq(tags.userId, userId)));
+      if (!tag) return res.status(404).json({ error: "Etiqueta no encontrada" });
+      if (input.action === "add-tag") {
+        await db.insert(payslipTags).values(ids.map((payslipId) => ({ payslipId, tagId: tag.id }))).onConflictDoNothing();
+      } else {
+        await db.delete(payslipTags).where(and(eq(payslipTags.tagId, tag.id), inArray(payslipTags.payslipId, ids)));
+      }
+    }
+    res.json({ ok: true, affected: ids.length });
   } catch (err) {
     next(err);
   }

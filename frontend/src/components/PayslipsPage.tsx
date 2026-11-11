@@ -2,13 +2,18 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, CircleDollarSign,
-  Download, FileSearch, FileText, Gift, Landmark, Loader2, Search, Upload, X,
+  Download, FileSearch, FileText, Gift, Landmark, Loader2, MoreHorizontal, RefreshCw, Search, Tag as TagIcon, Tags, Trash2,
+  Upload, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  deletePayslip, exportData, getDashboard, getPayslip, getPayslips, getProfiles, reprocessPayslip,
-  type PayslipSortField,
+  batchPayslips, deletePayslip, exportData, getDashboard, getPayslip, getPayslips, getProfiles, getTags, reprocessPayslip,
+  type PayslipBatchAction, type PayslipSortField,
 } from "../lib/api";
+import { plural } from "../lib/format";
+import { ReparsePreviewDialog } from "./payroll/ReparsePreviewDialog";
+import { TagManagerDialog } from "./payroll/TagManagerDialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency } from "../lib/format";
 import { setUrlParams, useUrlEnumParam, useUrlIntParam, useUrlParam } from "../lib/url-state";
 import { useSelectedProfile } from "../hooks/use-selected-profile";
@@ -120,6 +125,7 @@ function PayslipsList() {
   const [monthFilter, setMonthParam] = useUrlParam("mes");
   const [statusFilter, setStatusParam] = useUrlParam("estado");
   const [typeFilter, setTypeParam] = useUrlParam("tipo");
+  const [tagFilter, setTagParam] = useUrlParam("etiqueta");
   const [sortField, setSortFieldParam] = useUrlEnumParam<PayslipSortField>("orden", SORT_FIELDS, "period");
   const [sortDir, setSortDirParam] = useUrlEnumParam("dir", ["asc", "desc"] as const, "desc");
   const [page, setPageParam] = useUrlIntParam("pagina", 1);
@@ -135,6 +141,12 @@ function PayslipsList() {
   const setMonthFilter = setFilter(setMonthParam);
   const setStatusFilter = setFilter(setStatusParam);
   const setTypeFilter = setFilter(setTypeParam);
+  const setTagFilter = setFilter(setTagParam);
+  const { data: allTags = [] } = useQuery({ queryKey: ["tags"], queryFn: getTags });
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [reparseIds, setReparseIds] = useState<number[] | "all" | null>(null);
+  const [tagsOpen, setTagsOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   // Búsqueda con retardo: antes se lanzaba una petición por cada tecla.
   useEffect(() => setSearchInput(search), [search]);
@@ -149,7 +161,7 @@ function PayslipsList() {
   const pageSize = monthFilter ? MONTH_FILTER_LIMIT : PAGE_SIZE;
 
   const { data: payslipsData, isLoading, isFetching, error: payslipsError, refetch: refetchPayslips } = useQuery({
-    queryKey: ["payslips", profileId, yearFilter, search, statusFilter, typeFilter, sortField, sortDir, monthFilter ? 1 : page, pageSize],
+    queryKey: ["payslips", profileId, yearFilter, search, statusFilter, typeFilter, tagFilter, sortField, sortDir, monthFilter ? 1 : page, pageSize],
     queryFn: () =>
       getPayslips({
         profileId,
@@ -157,6 +169,7 @@ function PayslipsList() {
         search: search || undefined,
         status: statusFilter || undefined,
         type: (typeFilter as "ordinal" | "extra") || undefined,
+        tagId: tagFilter ? Number(tagFilter) : undefined,
         sortBy: sortField,
         sortDir,
         page: monthFilter ? 1 : page,
@@ -234,7 +247,27 @@ function PayslipsList() {
     }
   };
 
-  const handleExport = async (format: "csv" | "json") => {
+  const batchMut = useMutation({
+    mutationFn: (input: PayslipBatchAction) => batchPayslips(input),
+    onSuccess: (res, input) => {
+      queryClient.invalidateQueries({ queryKey: ["payslips"] });
+      queryClient.invalidateQueries({ queryKey: ["payslip-tags"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      const n = plural(res.affected, "nómina", "nóminas");
+      toast.success(
+        input.action === "delete" ? `${n} eliminada${res.affected === 1 ? "" : "s"}`
+          : input.action === "set-type" ? `${n}: tipo cambiado`
+            : input.action === "add-tag" ? `Etiqueta añadida a ${n}` : `Etiqueta quitada de ${n}`,
+      );
+      if (input.action === "delete") setSelected(new Set());
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const selectedIds = [...selected];
+  const runBatch = (input: Omit<PayslipBatchAction, "ids"> & Record<string, unknown>) =>
+    batchMut.mutate({ ...input, ids: selectedIds } as PayslipBatchAction);
+
+  const handleExport = async (format: "xlsx" | "csv" | "json") => {
     if (!profileId) return;
     setExporting(true);
     try {
@@ -250,16 +283,32 @@ function PayslipsList() {
     const data = payslipsData?.data ?? [];
     return monthFilter ? data.filter((p) => p.periodMonth === Number(monthFilter)) : data;
   }, [payslipsData, monthFilter]);
+  // La selección es de la página visible: al cambiar de página o de filtros se vacía.
+  const rowKey = rows.map((p) => p.id).join(",");
+  useEffect(() => setSelected((prev) => {
+    const visible = new Set(rowKey ? rowKey.split(",").map(Number) : []);
+    const next = new Set([...prev].filter((id) => visible.has(id)));
+    return next.size === prev.size ? prev : next;
+  }), [rowKey]);
+  const allSelected = rows.length > 0 && rows.every((p) => selected.has(p.id));
+  const toggleOne = (id: number) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(rows.map((p) => p.id)));
+  const selectedTags = allTags.filter((t) => rows.some((p) => selected.has(p.id) && p.tags?.some((pt) => pt.id === t.id)));
 
   const total = payslipsData?.total ?? 0;
   const totalPages = monthFilter ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
   // Años desde el resumen anual del perfil: si salen de la página actual,
   // al filtrar por un año el desplegable se quedaba solo con ese año.
   const years = (summary?.annualSummaries ?? []).map((s) => s.year).sort((a, b) => b - a);
-  const hasFilters = Boolean(search || yearFilter || monthFilter || statusFilter || typeFilter);
+  const hasFilters = Boolean(search || yearFilter || monthFilter || statusFilter || typeFilter || tagFilter);
   const clearFilters = () => {
     setSearchInput("");
-    setUrlParams({ buscar: null, anio: null, mes: null, estado: null, tipo: null, pagina: null });
+    setUrlParams({ buscar: null, anio: null, mes: null, estado: null, tipo: null, etiqueta: null, pagina: null });
   };
 
   // ─── Detalle ──────────────────────────────────────────────────
@@ -360,6 +409,7 @@ function PayslipsList() {
             : "Todas tus nóminas, con sus conceptos, en un solo sitio."
         }
         actions={
+          <>
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button variant="outline" className="gap-1.5" disabled={exporting || isEmptyProfile} />}>
               {exporting ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
@@ -368,7 +418,8 @@ function PayslipsList() {
             <DropdownMenuContent align="end" className="min-w-48">
               <DropdownMenuGroup>
                 <DropdownMenuLabel>{yearFilter ? `Nóminas de ${yearFilter}` : "Todo el histórico"}</DropdownMenuLabel>
-                <DropdownMenuItem onClick={() => handleExport("csv")}>CSV (Excel, Numbers…)</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport("xlsx")}>Excel (.xlsx)</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport("csv")}>CSV</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleExport("json")}>JSON</DropdownMenuItem>
               </DropdownMenuGroup>
               {!yearFilter && years.length > 0 && (
@@ -379,6 +430,20 @@ function PayslipsList() {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="outline" size="icon" aria-label="Más acciones" />}>
+              <MoreHorizontal className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuItem onClick={() => setReparseIds("all")} disabled={isEmptyProfile} className="gap-2">
+                <RefreshCw className="size-4" /> Reprocesar todas…
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setTagsOpen(true)} className="gap-2">
+                <Tags className="size-4" /> Gestionar etiquetas…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          </>
         }
       >
         {profiles.length > 1 && (
@@ -464,7 +529,7 @@ function PayslipsList() {
                   type="search"
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  placeholder="Buscar por empresa o archivo…"
+                  placeholder="Buscar en empresa, archivo, conceptos o notas…"
                   aria-label="Buscar nóminas"
                   className="h-8 pl-9"
                 />
@@ -486,6 +551,9 @@ function PayslipsList() {
                 />
                 <FilterSelect value={statusFilter} onChange={setStatusFilter} placeholder="Estado" options={STATUS_OPTIONS} />
                 <FilterSelect value={typeFilter} onChange={setTypeFilter} placeholder="Tipo" options={TYPE_OPTIONS} />
+                {allTags.length > 0 && (
+                  <FilterSelect value={tagFilter} onChange={setTagFilter} placeholder="Etiqueta" options={allTags.map((t) => ({ value: String(t.id), label: t.name }))} />
+                )}
                 {hasFilters && (
                   <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-1 text-muted-foreground">
                     <X className="size-3.5" /> Limpiar
@@ -507,7 +575,10 @@ function PayslipsList() {
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                      <TableHead className="pl-5 text-xs" aria-sort={sortField === "period" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+                      <TableHead className="w-10 pr-0 pl-5">
+                        <Checkbox checked={allSelected} indeterminate={selected.size > 0 && !allSelected} onCheckedChange={toggleAll} aria-label="Seleccionar todas las de esta página" />
+                      </TableHead>
+                      <TableHead className="pl-3 text-xs" aria-sort={sortField === "period" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
                         <SortHeader label="Periodo" field="period" sortField={sortField} sortDir={sortDir} onSort={handleSort} />
                       </TableHead>
                       <TableHead className="hidden text-xs md:table-cell" aria-sort={sortField === "fileName" ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
@@ -535,9 +606,16 @@ function PayslipsList() {
                           onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPayslip(p.id); } }}
                           tabIndex={0}
                           aria-label={`Abrir nómina de ${formatPeriod(p.periodMonth, p.periodYear, true)}`}
-                          className="group cursor-pointer outline-none focus-visible:bg-muted/60"
+                          className={cn("group cursor-pointer outline-none focus-visible:bg-muted/60", selected.has(p.id) && "bg-primary/5")}
                         >
-                          <TableCell className="py-3 pl-5">
+                          <TableCell className="w-10 py-3 pr-0 pl-5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={selected.has(p.id)}
+                              onCheckedChange={() => toggleOne(p.id)}
+                              aria-label={`Seleccionar la nómina de ${formatPeriod(p.periodMonth, p.periodYear, true)}`}
+                            />
+                          </TableCell>
+                          <TableCell className="py-3 pl-3">
                             <div className="flex items-center gap-3">
                               <div className="hidden size-9 shrink-0 flex-col items-center justify-center rounded-lg border border-border bg-muted/40 leading-none sm:flex">
                                 <span className="text-[10px] font-medium uppercase text-muted-foreground">{p.periodMonth ? MONTHS_SHORT[p.periodMonth - 1] : "—"}</span>
@@ -558,6 +636,16 @@ function PayslipsList() {
                           <TableCell className="hidden max-w-64 py-3 md:table-cell">
                             <p className="truncate text-sm text-foreground">{p.company ?? "Empresa sin detectar"}</p>
                             <p className="truncate text-xs text-muted-foreground" title={p.fileName}>{p.fileName}</p>
+                            {p.tags && p.tags.length > 0 && (
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {p.tags.map((t) => (
+                                  <span key={t.id} className="inline-flex h-5 items-center gap-1 rounded-full border border-border px-1.5 text-[11px] text-muted-foreground">
+                                    <span className="size-1.5 rounded-full" style={{ backgroundColor: t.color }} aria-hidden="true" />
+                                    {t.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </TableCell>
                           <TableCell className="hidden py-3 text-right text-sm tabular-nums text-muted-foreground sm:table-cell">{formatCurrency(p.grossSalary)}</TableCell>
                           <TableCell className="py-3 text-right text-sm font-semibold tabular-nums text-foreground">{formatCurrency(p.netSalary)}</TableCell>
@@ -574,6 +662,60 @@ function PayslipsList() {
             )}
           </SectionCard>
 
+          {selected.size > 0 && (
+            <div
+              role="region"
+              aria-label="Acciones sobre las nóminas seleccionadas"
+              className="fixed inset-x-4 bottom-[calc(var(--mobile-nav-h)+1rem)] z-40 mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-xl border border-border bg-card/95 p-2.5 shadow-lg backdrop-blur md:bottom-6"
+            >
+              <span className="px-2 text-sm font-medium">{plural(selected.size, "seleccionada", "seleccionadas")}</span>
+              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<Button variant="outline" size="sm" className="gap-1.5" disabled={batchMut.isPending || allTags.length === 0} />}>
+                    <TagIcon className="size-3.5" /> Etiquetar
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {allTags.map((t) => (
+                      <DropdownMenuItem key={t.id} onClick={() => runBatch({ action: "add-tag", tagId: t.id })} className="gap-2">
+                        <span className="size-2 rounded-full" style={{ backgroundColor: t.color }} /> {t.name}
+                      </DropdownMenuItem>
+                    ))}
+                    {selectedTags.length > 0 && (
+                      <>
+                        <DropdownMenuSeparator />
+                        {/* Base UI exige que la etiqueta de un menú vaya dentro de un grupo. */}
+                        <DropdownMenuGroup>
+                          <DropdownMenuLabel>Quitar</DropdownMenuLabel>
+                          {selectedTags.map((t) => (
+                            <DropdownMenuItem key={`rm-${t.id}`} onClick={() => runBatch({ action: "remove-tag", tagId: t.id })} className="gap-2">
+                              <X className="size-3.5" /> {t.name}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuGroup>
+                      </>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger render={<Button variant="outline" size="sm" disabled={batchMut.isPending} />}>Tipo</DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => runBatch({ action: "set-type", type: "ordinal" })}>Mensual</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => runBatch({ action: "set-type", type: "extra" })}>Paga extra</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setReparseIds(selectedIds)} disabled={batchMut.isPending}>
+                  <RefreshCw className="size-3.5" /> Reprocesar
+                </Button>
+                <Button variant="outline" size="sm" className="gap-1.5 text-destructive" onClick={() => setBulkDeleteOpen(true)} disabled={batchMut.isPending}>
+                  <Trash2 className="size-3.5" /> Eliminar
+                </Button>
+                <Button variant="ghost" size="icon-sm" onClick={() => setSelected(new Set())} aria-label="Quitar la selección">
+                  <X className="size-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+
           {reviewCount > 0 && !statusFilter && (
             <div className="mt-4 flex flex-col gap-3 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="flex items-center gap-2 text-sm text-foreground">
@@ -586,6 +728,17 @@ function PayslipsList() {
         </>
       )}
 
+      <ReparsePreviewDialog open={reparseIds !== null} ids={Array.isArray(reparseIds) ? reparseIds : undefined} onClose={() => setReparseIds(null)} />
+      <TagManagerDialog open={tagsOpen} onClose={() => setTagsOpen(false)} />
+      <ConfirmModal
+        open={bulkDeleteOpen}
+        title={`Eliminar ${plural(selected.size, "nómina", "nóminas")}`}
+        message="Se borrarán también sus conceptos, notas y etiquetas. Esta acción no se puede deshacer."
+        confirmLabel="Eliminar"
+        variant="danger"
+        onConfirm={() => { runBatch({ action: "delete" }); setBulkDeleteOpen(false); }}
+        onCancel={() => setBulkDeleteOpen(false)}
+      />
     </div>
   );
 }

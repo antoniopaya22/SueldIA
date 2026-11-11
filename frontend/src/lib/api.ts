@@ -197,6 +197,8 @@ export interface Payslip {
   createdAt: string;
   rawText?: string | null;
   concepts?: PayslipConcept[];
+  /** Solo en la lista (GET /payslips). */
+  tags?: Tag[];
   /** Solo presente en la respuesta de /payslips/upload: id de otra nómina ya
    *  existente con el mismo perfil, periodo y tipo, o null si no hay ninguna. */
   duplicateOfId?: number | null;
@@ -230,6 +232,7 @@ export interface PayslipFilters {
   search?: string;
   status?: string;
   type?: "ordinal" | "extra";
+  tagId?: number;
   sortBy?: PayslipSortField;
   sortDir?: ApiSortDirection;
   page?: number;
@@ -243,6 +246,7 @@ export const getPayslips = (filters: PayslipFilters = {}) => {
   if (filters.search) params.set("search", filters.search);
   if (filters.status) params.set("status", filters.status);
   if (filters.type) params.set("type", filters.type);
+  if (filters.tagId) params.set("tagId", String(filters.tagId));
   if (filters.sortBy) params.set("sortBy", filters.sortBy);
   if (filters.sortDir) params.set("sortDir", filters.sortDir);
   params.set("page", String(filters.page ?? 1));
@@ -460,6 +464,9 @@ export const createNote = (payslipId: number, content: string) =>
 export const deleteNote = (id: number) =>
   request<{ ok: boolean }>(`/notes/${id}`, { method: "DELETE" });
 
+export const updateNote = (id: number, content: string) =>
+  request<Note>(`/notes/${id}`, { method: "PATCH", body: JSON.stringify({ content }) });
+
 // ─── Tags ───────────────────────────────────────────────────────
 export interface Tag {
   id: number;
@@ -477,6 +484,43 @@ export const createTag = (name: string, color: string) =>
 
 export const deleteTag = (id: number) =>
   request<{ ok: boolean }>(`/tags/${id}`, { method: "DELETE" });
+
+export const updateTag = (id: number, data: { name?: string; color?: string }) =>
+  request<Tag>(`/tags/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+
+// ─── Nóminas en lote y reprocesado ──────────────────────────────
+export type PayslipBatchAction =
+  | { action: "delete"; ids: number[] }
+  | { action: "set-type"; ids: number[]; type: "ordinal" | "extra" }
+  | { action: "add-tag" | "remove-tag"; ids: number[]; tagId: number };
+
+export const batchPayslips = (input: PayslipBatchAction) =>
+  request<{ ok: boolean; affected: number }>("/payslips/batch", { method: "POST", body: JSON.stringify(input) });
+
+export interface ReparseSnapshot {
+  grossSalary: number | null;
+  netSalary: number | null;
+  periodMonth: number | null;
+  periodYear: number | null;
+  concepts: number;
+  status: string;
+}
+export interface ReparsePreview {
+  changes: Array<{ id: number; fileName: string; before: ReparseSnapshot; after: ReparseSnapshot }>;
+  unchanged: number;
+  /** Corregidas a mano: no se tocan. */
+  skippedEdited: number;
+}
+
+/** Qué cambiaría al reprocesar (todas, o las de `ids`), sin cambiar nada. */
+export const previewReparse = (ids?: number[]) =>
+  request<ReparsePreview>("/payslips/reparse?dryRun=true", { method: "POST", body: JSON.stringify(ids ? { ids } : {}) });
+
+export const reparsePayslips = (ids?: number[]) =>
+  request<{ ok: boolean; reparsed: number; errors: number; skippedEdited: number }>("/payslips/reparse", {
+    method: "POST",
+    body: JSON.stringify(ids ? { ids } : {}),
+  });
 
 export const getPayslipTags = (payslipId: number) =>
   request<Tag[]>(`/tags/payslip/${payslipId}`);

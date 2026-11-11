@@ -85,3 +85,6 @@ export function ProfileDot({ color: rawColor, name, size = "md" }: { color: stri
     </span>
   );
 }
+
+/** Colores que se proponen al crear una etiqueta (por orden). */
+export const TAG_COLORS = ["#2a8558", "#f59e0b", "#3b82f6", "#8b5cf6", "#ef4444", "#14b8a6"];

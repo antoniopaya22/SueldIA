@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import {
-  assignTag, createNote, createTag, deleteNote, getNotes, getPayslipTags, getTags, removeTag,
+  assignTag, createNote, createTag, deleteNote, getNotes, getPayslipTags, getTags, removeTag, updateNote,
   getPayslipLinkSuggestions, getTransactions, linkPayslipTransaction,
   updatePayslipConcepts, updatePayslipType, markPayslipReviewed, movePayslipToProfile, getPayslipComparison,
   type Payslip, type PayslipConcept, type PayslipLinkCandidate,
@@ -19,7 +19,7 @@ import {
 import { formatCurrency, formatPct } from "../../lib/format";
 import { DecimalInput, PageHeader, SectionCard, StatCard, StatGrid } from "../app";
 import { ConfirmModal } from "../ui/ConfirmModal";
-import { StatusBadge, ExtraBadge, MONTHS_FULL, formatPeriod } from "./shared";
+import { StatusBadge, ExtraBadge, MONTHS_FULL, TAG_COLORS, formatPeriod } from "./shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -40,7 +40,6 @@ import { cn } from "cn";
 // el tipo compartido no lo declare.
 export type PayslipWithConcepts = Payslip & { concepts: PayslipConcept[]; rawText?: string | null };
 
-const TAG_COLORS = ["#2a8558", "#f59e0b", "#3b82f6", "#8b5cf6", "#ef4444", "#14b8a6"];
 
 function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
@@ -212,7 +211,11 @@ function TagsCard({ payslipId }: { payslipId: number }) {
   const [newTag, setNewTag] = useState("");
   const [open, setOpen] = useState(false);
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["payslip-tags", payslipId] });
+  // La lista de nóminas también enseña las etiquetas: se refrescan las dos.
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["payslip-tags", payslipId] });
+    queryClient.invalidateQueries({ queryKey: ["payslips"] });
+  };
   const assignMut = useMutation({
     mutationFn: (tagId: number) => assignTag(payslipId, tagId),
     onSuccess: refresh,
@@ -300,8 +303,17 @@ function NotesCard({ payslipId }: { payslipId: number }) {
   const queryClient = useQueryClient();
   const { data: notes = [] } = useQuery({ queryKey: ["notes", payslipId], queryFn: () => getNotes(payslipId) });
   const [content, setContent] = useState("");
+  const [editing, setEditing] = useState<{ id: number; content: string } | null>(null);
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["notes", payslipId] });
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["notes", payslipId] });
+    queryClient.invalidateQueries({ queryKey: ["payslips"] }); // la búsqueda mira las notas
+  };
+  const editMut = useMutation({
+    mutationFn: (e: { id: number; content: string }) => updateNote(e.id, e.content.trim()),
+    onSuccess: () => { setEditing(null); refresh(); },
+    onError: () => toast.error("No se pudo guardar la nota"),
+  });
   const addMut = useMutation({
     mutationFn: () => createNote(payslipId, content.trim()),
     onSuccess: () => { setContent(""); refresh(); },
@@ -324,20 +336,56 @@ function NotesCard({ payslipId }: { payslipId: number }) {
       {notes.length > 0 && (
         <ul className="mb-4 space-y-3">
           {notes.map((n) => (
-            <li key={n.id} className="group relative rounded-lg border border-border bg-muted/30 p-3 pr-9">
-              <p className="whitespace-pre-wrap text-sm text-foreground">{n.content}</p>
-              <p className="mt-1.5 text-[11px] text-muted-foreground">
-                {new Date(n.createdAt).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}
-              </p>
-              <button
-                type="button"
-                onClick={() => removeNote(n.id)}
-                // Visible siempre en pantallas táctiles (sin hover no se veía).
-                className="absolute top-1.5 right-1.5 flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-opacity hover:bg-muted hover:text-destructive focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
-                aria-label="Borrar nota"
-              >
-                <Trash2 className="size-3.5" />
-              </button>
+            <li key={n.id} className="group relative rounded-lg border border-border bg-muted/30 p-3 pr-16">
+              {editing?.id === n.id ? (
+                <form
+                  onSubmit={(e) => { e.preventDefault(); if (editing.content.trim()) editMut.mutate(editing); }}
+                  className="space-y-2"
+                >
+                  <Label htmlFor={`edit-note-${n.id}`} className="sr-only">Editar nota</Label>
+                  <Textarea
+                    id={`edit-note-${n.id}`}
+                    value={editing.content}
+                    onChange={(e) => setEditing({ id: n.id, content: e.target.value })}
+                    onKeyDown={(e) => { if (e.key === "Escape") setEditing(null); }}
+                    rows={3}
+                    maxLength={2000}
+                    autoFocus
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancelar</Button>
+                    <Button type="submit" size="sm" disabled={!editing.content.trim() || editMut.isPending}>Guardar</Button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <p className="whitespace-pre-wrap text-sm text-foreground">{n.content}</p>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    {new Date(n.createdAt).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}
+                  </p>
+                </>
+              )}
+              {editing?.id !== n.id && (
+                // Visibles siempre en pantallas táctiles (sin hover no se veían).
+                <div className="absolute top-1.5 right-1.5 flex transition-opacity focus-within:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100">
+                  <button
+                    type="button"
+                    onClick={() => setEditing({ id: n.id, content: n.content })}
+                    className="flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label="Editar nota"
+                  >
+                    <Pencil className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeNote(n.id)}
+                    className="flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-destructive"
+                    aria-label="Borrar nota"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              )}
             </li>
           ))}
         </ul>

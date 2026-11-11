@@ -183,6 +183,11 @@ describeDb("autorización entre usuarios (integración)", () => {
     ["GET", `/notes/${ids.payslip}`],
     ["POST", `/notes`, { payslipId: ids.payslip, content: "intrusa" }],
     ["DELETE", `/notes/${ids.note}`],
+    ["PATCH", `/notes/${ids.note}`, { content: "intrusa" }],
+    ["PATCH", `/tags/${ids.tag}`, { name: "intrusa" }],
+    ["POST", `/payslips/batch`, { action: "delete", ids: [ids.payslip] }],
+    ["POST", `/payslips/batch`, { action: "set-type", ids: [ids.payslip], type: "extra" }],
+    ["POST", `/payslips/batch`, { action: "remove-tag", ids: [ids.payslip], tagId: ids.tag }],
     ["PUT", `/alerts/rules/${ids.alertRule}`, { name: "hack" }],
     ["DELETE", `/alerts/rules/${ids.alertRule}`],
     ["PUT", `/alerts/history/${ids.alertHistory}/read`],
@@ -200,6 +205,26 @@ describeDb("autorización entre usuarios (integración)", () => {
     }
     expect(leaks).toEqual([]);
   }, 60_000);
+
+  it("nóminas: búsqueda en notas y conceptos, filtro por etiqueta y reprocesado con vista previa", async () => {
+    const list = async (q: string) => ((await call("a", "GET", `/payslips?${q}`)).json.data as Array<{ id: number; tags: Array<{ name: string }> }>);
+    expect((await list("search=nota%20de")).map((p) => p.id)).toContain(ids.payslip);
+    expect((await list("search=100%25")).map((p) => p.id)).not.toContain(ids.payslip); // «%» no es comodín
+    const tagged = await list(`tagId=${ids.tag}`);
+    expect(tagged.map((p) => p.id)).toEqual([ids.payslip]);
+    expect(tagged[0].tags.map((t) => t.name)).toEqual(["Revisada"]);
+    // B no ve nada de A buscando ni filtrando por su etiqueta.
+    expect(((await call("b", "GET", `/payslips?tagId=${ids.tag}`)).json.data as unknown[])).toHaveLength(0);
+    expect(((await call("b", "GET", "/payslips?search=nota")).json.data as unknown[])).toHaveLength(0);
+    // Vista previa: estructura y sin cambios en la base de datos; B no ve las de A.
+    const preview = await call("a", "POST", "/payslips/reparse?dryRun=true", {});
+    expect(preview.json).toMatchObject({ changes: expect.any(Array), unchanged: expect.any(Number), skippedEdited: expect.any(Number) });
+    const bPreview = await call("b", "POST", "/payslips/reparse?dryRun=true", { ids: [ids.payslip] });
+    expect(bPreview.json).toMatchObject({ changes: [], unchanged: 0 });
+    // Editar la nota y renombrar la etiqueta propias.
+    expect((await call("a", "PATCH", `/notes/${ids.note}`, { content: "Nota de A" })).status).toBe(200);
+    expect((await call("a", "PATCH", `/tags/${ids.tag}`, { name: "Revisada" })).status).toBe(200);
+  });
 
   it("renombrar beneficiarios solo toca los propios", async () => {
     const r = await call("b", "POST", "/transactions/payees/rename", { from: ["Tienda"], to: "Hackeado" });

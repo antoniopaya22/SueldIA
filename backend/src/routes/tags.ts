@@ -45,6 +45,26 @@ tagsRouter.post("/", async (req, res, next) => {
   }
 });
 
+// Renombrar o cambiar el color de una etiqueta
+tagsRouter.patch("/:id", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = tagSchema.partial().refine((v) => v.name !== undefined || v.color !== undefined, "Nada que cambiar").safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
+    }
+    const [tag] = await db
+      .update(tags)
+      .set(parsed.data)
+      .where(and(eq(tags.id, Number(req.params.id)), eq(tags.userId, userId)))
+      .returning();
+    if (!tag) return res.status(404).json({ error: "Etiqueta no encontrada" });
+    res.json(tag);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Delete tag
 tagsRouter.delete("/:id", async (req, res, next) => {
   try {

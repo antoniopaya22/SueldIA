@@ -55,6 +55,31 @@ notesRouter.post("/", async (req, res, next) => {
   }
 });
 
+// Editar una nota
+notesRouter.patch("/:id", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = noteSchema.pick({ content: true }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
+    }
+    const ownedPayslipIds = db
+      .select({ id: payslips.id })
+      .from(payslips)
+      .innerJoin(profiles, eq(payslips.profileId, profiles.id))
+      .where(eq(profiles.userId, userId));
+    const [note] = await db
+      .update(payslipNotes)
+      .set({ content: parsed.data.content })
+      .where(and(eq(payslipNotes.id, Number(req.params.id)), inArray(payslipNotes.payslipId, ownedPayslipIds)))
+      .returning();
+    if (!note) return res.status(404).json({ error: "Nota no encontrada" });
+    res.json(note);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Delete note
 notesRouter.delete("/:id", async (req, res, next) => {
   try {
