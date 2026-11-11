@@ -75,7 +75,7 @@ La integración continua (`.github/workflows/ci.yml`) hace todo esto en cada PR.
 
 ## Despliegue
 
-`vercel.json` define dos servicios (`backend` con Express, `frontend` con Astro), las rutas, las cabeceras de seguridad y el cron diario (`/api/cron/daily`: recurrentes y alertas). Variables necesarias en Vercel: las de `.env.example` (`CRON_SECRET` para el cron; `SUPABASE_SERVICE_ROLE_KEY` para que eliminar la cuenta borre también el acceso de Google).
+`vercel.json` define dos servicios (`backend` con Express, `frontend` con Astro), las rutas, las cabeceras de seguridad y el cron diario (`/api/cron/daily`: recurrentes y alertas). Variables necesarias en Vercel: las de `.env.example` (`CRON_SECRET` para el cron; `SUPABASE_SERVICE_ROLE_KEY` para que eliminar la cuenta borre también el acceso de Google; `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` para los avisos push de las alertas, generadas una vez con `npx web-push generate-vapid-keys`).
 
 ## Añadir un formato de nómina
 

@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { alertHistory, alertRules, payslipConcepts, payslips, profiles } from "../db/schema.js";
 import { logger } from "../logger.js";
+import { alertsPushMessage, notifyUser } from "./push.service.js";
 import { todayIso } from "../utils/dates.js";
 import {
   evalCategoryOverspent, evalLowBalance, evalOverduePending, financeAlertConfigSchemas,
@@ -338,14 +339,20 @@ export async function evaluateRulesForUser(userId: number): Promise<number> {
     .where(and(eq(alertRules.userId, userId), eq(alertRules.enabled, true)));
 
   let created = 0;
+  const newRuleNames: string[] = [];
   for (const rule of rules) {
     try {
       const candidates = await evaluateRule(rule);
-      created += await insertCandidates(rule, candidates);
+      const n = await insertCandidates(rule, candidates);
+      created += n;
+      for (let i = 0; i < n; i++) newRuleNames.push(rule.name);
     } catch (err) {
       logger.error({ err, ruleId: rule.id }, "Error evaluando regla de alerta");
     }
   }
+  // Un solo aviso por evaluación (no uno por alerta), y solo si hay algo nuevo.
+  const message = alertsPushMessage(newRuleNames);
+  if (message) await notifyUser(userId, message).catch((err) => logger.warn({ err }, "Aviso push fallido"));
   return created;
 }
 

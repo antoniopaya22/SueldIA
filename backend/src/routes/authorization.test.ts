@@ -66,6 +66,10 @@ describeDb("autorización entre usuarios (integración)", () => {
     // index.ts no abre su propio puerto con VERCEL definida.
     process.env.SUPABASE_URL = supabaseUrl;
     process.env.VERCEL = "1";
+    const { default: webpush } = await import("web-push");
+    const vapid = webpush.generateVAPIDKeys();
+    process.env.VAPID_PUBLIC_KEY = vapid.publicKey;
+    process.env.VAPID_PRIVATE_KEY = vapid.privateKey;
     await resetDb();
     const { default: app } = await import("../index.js");
     apiServer = app.listen(0, "127.0.0.1");
@@ -367,6 +371,25 @@ describeDb("autorización entre usuarios (integración)", () => {
     const bAccounts = (await call("b", "GET", "/accounts")).json.data as Array<{ id: number; name: string }>;
     expect(bAccounts.map((x) => x.name)).toContain("Banco A");
     expect(bAccounts.map((x) => x.id)).not.toContain(ids.account);
+  });
+
+  it("notificaciones push: validación y cada uno solo borra lo suyo", async () => {
+    const key = await call("a", "GET", "/push/key");
+    expect(key.status).toBe(200);
+    expect((key.json as { publicKey: string }).publicKey).toBe(process.env.VAPID_PUBLIC_KEY);
+    const sub = { endpoint: "https://127.0.0.1:1/push/a", keys: { p256dh: "B".repeat(87), auth: "C".repeat(22) } };
+    expect((await call("a", "POST", "/push/subscriptions", { ...sub, endpoint: "http://inseguro/x" })).status).toBe(400);
+    expect((await call("a", "POST", "/push/subscriptions", { ...sub, keys: { p256dh: "no válido!", auth: "x" } })).status).toBe(400);
+    expect((await call("a", "POST", "/push/subscriptions", sub)).status).toBe(201);
+    // B no puede quitar el dispositivo de A conociendo su endpoint.
+    await call("b", "DELETE", "/push/subscriptions", { endpoint: sub.endpoint });
+    const { db } = await import("../db/index.js");
+    const { pushSubscriptions } = await import("../db/schema.js");
+    expect(await db.select().from(pushSubscriptions)).toHaveLength(1);
+    // Aviso de prueba: el endpoint no responde, no se cuenta como enviado y no rompe nada.
+    expect((await call("a", "POST", "/push/test")).json).toEqual({ sent: 0 });
+    expect((await call("a", "DELETE", "/push/subscriptions", { endpoint: sub.endpoint })).status).toBe(200);
+    expect(await db.select().from(pushSubscriptions)).toHaveLength(0);
   });
 
   it("los datos de A siguen intactos", async () => {

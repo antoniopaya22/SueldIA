@@ -1580,6 +1580,14 @@ export const importBankCsv = (file: File, accountId: number, headerIndex: number
   return postForm<BankCsvResult>(`/import/csv${dryRun ? "?dryRun=true" : ""}`, form);
 };
 
+// ─── Notificaciones push ────────────────────────────────────────
+export const getPushKey = () => request<{ publicKey: string }>("/push/key");
+export const savePushSubscription = (sub: PushSubscriptionJSON) =>
+  request<{ ok: boolean }>("/push/subscriptions", { method: "POST", body: JSON.stringify(sub) });
+export const deletePushSubscription = (endpoint: string) =>
+  request<{ ok: boolean }>("/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint }) });
+export const sendTestPush = () => request<{ sent: number }>("/push/test", { method: "POST" });
+
 // ─── Restaurar una copia («Exportar todos mis datos») ───────────
 export interface BackupCounts {
   profiles: number;

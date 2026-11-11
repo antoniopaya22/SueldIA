@@ -87,3 +87,4 @@ Variables de entorno validadas con Zod en `src/config.ts`:
 - `NODE_ENV`, `CORS_ORIGIN` (orígenes **extra** permitidos, separados por comas, p. ej. el frontend en local). El mismo origen se acepta siempre (`middleware/cors.ts`): el frontend de producción llama a `/api` en su propio dominio vía rewrite y no hace falta configurar nada en Vercel
 - `CRON_SECRET` (opcional — protege `/api/cron/daily`; sin ella esa ruta responde 503)
 - `SUPABASE_SERVICE_ROLE_KEY` (opcional — solo para borrar la identidad de Supabase Auth al eliminar una cuenta, `DELETE /api/auth/me`)
+- `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (opcionales — avisos push de las alertas, `services/push.service.ts`; sin ellas `/api/push/*` responde 503). `evaluateRulesForUser` manda un único aviso por evaluación con el nombre de la regla, nunca importes.

@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, Download, LogOut, Monitor, Moon, ShieldCheck, Sun, Loader2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -9,6 +9,9 @@ import {
   type BackupCounts, type BackupPreview,
 } from "../lib/api";
 import { plural } from "../lib/format";
+import { disablePush, enablePush, getPushState, isPushSupported, needsInstallForPush, type PushState } from "../lib/push";
+import { sendTestPush } from "../lib/api";
+import { Switch } from "@/components/ui/switch";
 import { supabase } from "../lib/supabase";
 import { PageHeader, SectionCard } from "./app";
 import { ProfileDot } from "./payroll/shared";
@@ -387,6 +390,75 @@ function RestoreBackupRow() {
   );
 }
 
+/** Avisos de alertas en este dispositivo (Web Push). */
+function NotificationsSection() {
+  const [state, setState] = useState<PushState | "loading">("loading");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    getPushState().then(setState).catch(() => setState("off"));
+  }, []);
+
+  const toggle = async (on: boolean) => {
+    setBusy(true);
+    try {
+      const next = on ? await enablePush() : await disablePush();
+      setState(next);
+      if (on && next === "denied") toast.error("El navegador ha bloqueado los avisos. Puedes permitirlos en los ajustes del sitio.");
+      if (on && next === "on") toast.success("Avisos activados en este dispositivo");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No se pudieron cambiar los avisos");
+      setState(await getPushState().catch(() => "off" as const));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    setBusy(true);
+    try {
+      const { sent } = await sendTestPush();
+      if (sent > 0) toast.success("Aviso de prueba enviado");
+      else toast.error("No se pudo entregar el aviso. Desactívalos y vuelve a activarlos.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No se pudo enviar el aviso");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const supported = isPushSupported();
+  const install = needsInstallForPush();
+  const description = !supported
+    ? install
+      ? "En iPhone y iPad, primero añade SueldIA a la pantalla de inicio (Compartir → Añadir a pantalla de inicio) y ábrela desde ahí."
+      : "Este navegador no admite avisos."
+    : state === "denied"
+      ? "Has bloqueado los avisos de SueldIA en este navegador. Para activarlos, permítelos en los ajustes del sitio."
+      : "Te avisamos cuando salta una alerta (bajada del neto, nómina sin subir, presupuesto superado…). El aviso solo dice qué regla saltó, nunca importes. Se activa en cada dispositivo por separado.";
+
+  return (
+    <SectionCard title="Avisos">
+      <SettingRow title="Avisos en este dispositivo" description={description}>
+        <div className="flex items-center justify-end gap-3">
+          {state === "on" && (
+            <Button variant="outline" size="sm" onClick={test} disabled={busy}>
+              Enviar uno de prueba
+            </Button>
+          )}
+          {state === "loading" || busy ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
+          <Switch
+            checked={state === "on"}
+            disabled={!supported || state === "denied" || state === "loading" || busy}
+            onCheckedChange={(checked) => void toggle(checked)}
+            aria-label="Avisos en este dispositivo"
+          />
+        </div>
+      </SettingRow>
+    </SectionCard>
+  );
+}
+
 function DataSection() {
   const { data: profiles = [], isLoading } = useQuery({ queryKey: ["profiles"], queryFn: getProfiles });
   const [busy, setBusy] = useState<string | null>(null);
@@ -549,6 +621,8 @@ function SettingsView() {
             <ChartPalettePicker />
           </SettingRow>
         </SectionCard>
+
+        <NotificationsSection />
 
         <DataSection />
 

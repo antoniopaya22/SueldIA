@@ -479,6 +479,25 @@ export const categoryRules = pgTable(
 // dispositivos: paleta de gráficos, qué paneles de la analítica se ven y en qué
 // orden, vistas guardadas, etc. Lo que se guarda lo valida el cliente de cada
 // pantalla; aquí solo se acotan tamaño y número de claves.
+// Dispositivos que han aceptado notificaciones push (una fila por navegador).
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    endpointIdx: uniqueIndex("push_subscriptions_endpoint_idx").on(table.endpoint),
+    userIdx: index("push_subscriptions_user_idx").on(table.userId),
+  }),
+).enableRLS();
+
 export const userPreferences = pgTable(
   "user_preferences",
   {
