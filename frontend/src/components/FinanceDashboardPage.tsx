@@ -287,7 +287,7 @@ function FinanceDashboardView() {
               }
             >
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={derived.monthly} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={3}>
+                <ComposedChart accessibilityLayer data={derived.monthly} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={3}>
                   <CartesianGrid {...chartGrid} />
                   <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={16} />
                   <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />
@@ -306,7 +306,7 @@ function FinanceDashboardView() {
                 <>
                   <div className="relative mx-auto h-40 w-40">
                     <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
+                      <PieChart accessibilityLayer>
                         <Pie data={derived.categorySlices} dataKey="value" nameKey="label" innerRadius={52} outerRadius={76} paddingAngle={2} strokeWidth={0}>
                           {derived.categorySlices.map((s) => <Cell key={s.key} fill={s.color} />)}
                         </Pie>

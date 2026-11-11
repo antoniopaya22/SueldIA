@@ -46,7 +46,7 @@ export function YearOverYearChart({ accountId, groupId, categoryId, metric, expa
     <div>
       <div className={expanded ? "h-96" : "h-64"}>
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={yoy.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+          <LineChart accessibilityLayer data={yoy.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
             <CartesianGrid {...chartGrid} />
             <XAxis dataKey="label" {...chartAxis} interval={0} padding={{ left: 8, right: 14 }} />
             <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />

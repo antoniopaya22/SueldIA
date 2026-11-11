@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { usePreference } from "@/hooks/use-preference";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 import { CHART_PALETTES, DEFAULT_CHART_PALETTE, isChartPaletteId, previewColors } from "@/lib/chart-palettes";
 import { cn } from "cn";
 
@@ -90,6 +91,7 @@ function ThemePreview({ variant }: { variant: ThemePreference }) {
 
 function ThemePicker() {
   const { preference, setPreference } = useTheme();
+  const keys = radioGroupKeys(THEME_OPTIONS.map((o) => o.value), preference, setPreference);
   return (
     <div role="radiogroup" aria-label="Tema" className="grid grid-cols-3 gap-3">
       {THEME_OPTIONS.map(({ value, label, icon: Icon }) => {
@@ -101,6 +103,8 @@ function ThemePicker() {
             role="radio"
             aria-checked={selected}
             aria-label={label}
+            tabIndex={keys.tabIndex(value)}
+            onKeyDown={keys.onKeyDown}
             onClick={() => setPreference(value)}
             className="group cursor-pointer text-left outline-none"
           >
@@ -133,6 +137,7 @@ function ChartPalettePicker() {
   const [palette, setPalette] = usePreference("chart-palette", DEFAULT_CHART_PALETTE, isChartPaletteId);
   const { resolved } = useTheme();
   const heights = [62, 88, 46, 74, 55];
+  const keys = radioGroupKeys(CHART_PALETTES.map((p) => p.id), palette, setPalette);
   return (
     <div role="radiogroup" aria-label="Paleta de los gráficos" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {CHART_PALETTES.map((p) => {
@@ -144,6 +149,8 @@ function ChartPalettePicker() {
             type="button"
             role="radio"
             aria-checked={selected}
+            tabIndex={keys.tabIndex(p.id)}
+            onKeyDown={keys.onKeyDown}
             onClick={() => setPalette(p.id)}
             className="group cursor-pointer text-left outline-none"
           >

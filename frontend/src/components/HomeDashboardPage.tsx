@@ -406,7 +406,7 @@ function HomeDashboardView() {
             }
           >
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={derived.cashflow} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={3}>
+              <ComposedChart accessibilityLayer data={derived.cashflow} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={3}>
                 <CartesianGrid {...chartGrid} />
                 <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={16} />
                 <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />
@@ -420,7 +420,7 @@ function HomeDashboardView() {
         ) : (
           <ChartCard className="lg:col-span-2" title="Evolución del neto" description="Tu salario neto mes a mes" action={<CardLink href="/app/payroll">Dashboard</CardLink>} height={260}>
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={derived.netSeries.map((v, i) => ({ i, net: v }))} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+              <ComposedChart accessibilityLayer data={derived.netSeries.map((v, i) => ({ i, net: v }))} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
                 <CartesianGrid {...chartGrid} />
                 <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />
                 <Tooltip content={<ChartTooltip />} />

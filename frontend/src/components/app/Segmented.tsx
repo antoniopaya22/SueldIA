@@ -1,5 +1,6 @@
 import type { ElementType } from "react";
 import { cn } from "cn";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 
 export interface SegmentedOption<T extends string> {
   value: T;
@@ -20,6 +21,7 @@ interface SegmentedProps<T extends string> {
 
 // Selector segmentado accesible (radiogroup) — tipo de gráfico, tema, periodo...
 export function Segmented<T extends string>({ value, onChange, options, size = "sm", iconOnly, className, ...rest }: SegmentedProps<T>) {
+  const keys = radioGroupKeys(options.map((o) => o.value), value, onChange);
   return (
     <div role="radiogroup" aria-label={rest["aria-label"]} className={cn("inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5", className)}>
       {options.map((opt) => {
@@ -31,6 +33,8 @@ export function Segmented<T extends string>({ value, onChange, options, size = "
             type="button"
             role="radio"
             aria-checked={selected}
+            tabIndex={keys.tabIndex(opt.value)}
+            onKeyDown={keys.onKeyDown}
             aria-label={iconOnly ? opt.label : undefined}
             title={iconOnly ? opt.label : undefined}
             onClick={() => onChange(opt.value)}

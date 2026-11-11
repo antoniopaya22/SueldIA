@@ -42,7 +42,7 @@ export function BudgetVsActualChart({ limit, expanded }: { limit: number; expand
         <>
           <div style={{ height: Math.max(expanded ? 380 : 260, rows.length * 38) }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 12, left: 0, bottom: 0 }} barGap={2}>
+              <BarChart accessibilityLayer data={rows} layout="vertical" margin={{ top: 4, right: 12, left: 0, bottom: 0 }} barGap={2}>
                 <CartesianGrid {...chartGrid} horizontal={false} vertical />
                 <XAxis type="number" {...chartAxis} tickFormatter={formatCompact} />
                 <YAxis type="category" dataKey="label" {...chartAxis} width={expanded ? 150 : 96} />

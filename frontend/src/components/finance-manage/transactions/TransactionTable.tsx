@@ -203,6 +203,8 @@ export function TransactionTable(props: Props) {
   const actionsFor = useRowActions(props);
   const rowActivate = useDoubleActivate(props.onEdit);
   const grouped = sortBy === "date";
+  // Lectores de pantalla: qué columna ordena la tabla y en qué sentido.
+  const ariaSort = (field: SortField) => (sortBy === field ? (sortDir === "asc" ? "ascending" : "descending") : undefined);
 
   const groups = useMemo(() => {
     if (!grouped) return [{ key: "all", date: null as string | null, items: transactions }];
@@ -235,18 +237,18 @@ export function TransactionTable(props: Props) {
               )}
               <th className={cn("w-12 py-2.5", selection ? "pl-1" : "pl-4")}><span className="sr-only">Estado</span></th>
               {!grouped && (
-                <th className="py-2.5 pr-4 font-medium whitespace-nowrap">
+                <th aria-sort={ariaSort("date")} className="py-2.5 pr-4 font-medium whitespace-nowrap">
                   <SortHeader field="date" label="Fecha" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 </th>
               )}
-              <th className="py-2.5 pr-4 font-medium">
+              <th aria-sort={ariaSort("payee")} className="py-2.5 pr-4 font-medium">
                 <SortHeader field="payee" label="Movimiento" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               </th>
-              <th className="py-2.5 pr-4 font-medium">
+              <th aria-sort={ariaSort("category")} className="py-2.5 pr-4 font-medium">
                 <SortHeader field="category" label="Categoría" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               </th>
               {showAccount && <th className="py-2.5 pr-4 font-medium">Cuenta</th>}
-              <th className="py-2.5 pr-2 text-right font-medium">
+              <th aria-sort={ariaSort("amount")} className="py-2.5 pr-2 text-right font-medium">
                 <SortHeader field="amount" label="Importe" sortBy={sortBy} sortDir={sortDir} onSort={onSort} align="right" />
               </th>
               <th className="w-12 py-2.5 pr-3"><span className="sr-only">Acciones</span></th>

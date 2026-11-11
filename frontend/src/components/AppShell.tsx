@@ -43,8 +43,9 @@ import { supabase } from "@/lib/supabase";
 import {
   clearAuth, getAlertHistory, getMe, markAlertRead, markAllAlertsRead, type AlertHistoryItem,
 } from "@/lib/api";
-import { formatRelativeDate } from "@/lib/format";
+import { formatRelativeDate, plural } from "@/lib/format";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 import { CommandMenu } from "@/components/app/CommandMenu";
 import { PreferencesBoot } from "@/components/app/PreferencesBoot";
 import { MobileTabBar } from "@/components/app/MobileTabBar";
@@ -210,6 +211,7 @@ function NavUser() {
   const user = useShellUser();
   const { preference, setPreference } = useTheme();
   const { isMobile } = useSidebar();
+  const themeKeys = radioGroupKeys(THEME_OPTIONS.map((o) => o.value), preference, setPreference);
 
   const logout = async () => {
     await clearAuth();
@@ -279,6 +281,8 @@ function NavUser() {
                       type="button"
                       role="radio"
                       aria-checked={selected}
+                      tabIndex={themeKeys.tabIndex(opt.value)}
+                      onKeyDown={themeKeys.onKeyDown}
                       onClick={() => setPreference(opt.value)}
                       className={cn(
                         "flex cursor-pointer flex-col items-center gap-1 rounded-lg border py-2 text-[11px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
@@ -352,7 +356,7 @@ function NotificationBell() {
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) refresh(); }}>
       <PopoverTrigger
-        render={<Button variant="ghost" size="icon" className="relative text-muted-foreground hover:text-foreground" aria-label="Alertas" />}
+        render={<Button variant="ghost" size="icon" className="relative text-muted-foreground hover:text-foreground" aria-label={count > 0 ? `Alertas: ${plural(count, "sin leer", "sin leer")}` : "Alertas"} />}
       >
         <Bell className="size-4" />
         {count > 0 && (

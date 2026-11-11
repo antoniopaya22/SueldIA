@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, type KeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getDailySeries } from "../../../lib/api";
 import { buildCalendar } from "../../../lib/analytics-charts";
@@ -43,6 +43,9 @@ export function CalendarHeatmap({ accountId, groupId, categoryId, from, to, metr
     queryFn: () => getDailySeries({ from: start, to: end, accountId, groupId, categoryId }),
   });
   const calendar = useMemo(() => (daily ? buildCalendar(daily, start, end, metric) : null), [daily, start, end, metric]);
+  // Foco itinerante: una sola parada de Tab para todo el calendario (antes eran
+  // ~370 enlaces seguidos) y las flechas para moverse: ↑↓ día, ←→ semana.
+  const [focusDate, setFocusDate] = useState<string | null>(null);
 
   if (isLoading || !calendar) return <div className="h-48 animate-pulse rounded-lg bg-muted/50" />;
   if (calendar.max === 0) {
@@ -52,6 +55,29 @@ export function CalendarHeatmap({ accountId, groupId, categoryId, from, to, metr
   const activeDays = calendar.weeks.flat().filter((c) => c && c.value > 0);
   const best = activeDays.reduce((a, c) => (c && (!a || c.value > a.value) ? c : a), null as (typeof activeDays)[number] | null);
   const cell = expanded ? 18 : 14;
+  const days = calendar.weeks.flat().filter((c) => c !== null).map((c) => c.date);
+  const activeDate = focusDate && days.includes(focusDate) ? focusDate : (best?.date ?? days[days.length - 1]);
+
+  const onGridKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const from = (e.target as HTMLElement).dataset.date;
+    if (!from) return;
+    let target: string | undefined;
+    const shift = (n: number) => {
+      const d = new Date(`${from}T00:00:00`);
+      d.setDate(d.getDate() + n);
+      return localIso(d);
+    };
+    if (e.key === "ArrowDown") target = shift(1);
+    else if (e.key === "ArrowUp") target = shift(-1);
+    else if (e.key === "ArrowRight") target = shift(7);
+    else if (e.key === "ArrowLeft") target = shift(-7);
+    else if (e.key === "Home") target = days[0];
+    else if (e.key === "End") target = days[days.length - 1];
+    else return;
+    e.preventDefault();
+    if (!days.includes(target)) return;
+    e.currentTarget.querySelector<HTMLElement>(`[data-date="${target}"]`)?.focus();
+  };
   const color = metric === "expense" ? "var(--chart-2)" : "var(--chart-1)";
 
   return (
@@ -69,7 +95,12 @@ export function CalendarHeatmap({ accountId, groupId, categoryId, from, to, metr
               return <span key={w} className="relative text-[10px] text-muted-foreground" style={{ width: cell }}>{label && <span className="absolute left-0 whitespace-nowrap">{label}</span>}</span>;
             })}
           </div>
-          <div className="flex gap-[3px]">
+          <div
+            className="flex gap-[3px]"
+            role="group"
+            aria-label={`Calendario de ${metric === "expense" ? "gasto" : "ingresos"} por día. Flechas arriba y abajo: día; izquierda y derecha: semana.`}
+            onKeyDown={onGridKeyDown}
+          >
             <div className="flex w-5 flex-col gap-[3px] text-[10px] text-muted-foreground" aria-hidden="true">
               {WEEKDAYS.map((d, i) => <span key={i} className="flex items-center" style={{ height: cell }}>{d}</span>)}
             </div>
@@ -81,6 +112,9 @@ export function CalendarHeatmap({ accountId, groupId, categoryId, from, to, metr
                   ) : (
                     <a
                       key={i}
+                      data-date={c.date}
+                      tabIndex={c.date === activeDate ? 0 : -1}
+                      onFocus={() => setFocusDate(c.date)}
                       href={transactionsHref({ from: c.date, to: c.date, type: metric, cleared: "true", accountId, groupId, categoryId })}
                       title={`${dayLabel(c.date)}: ${c.value > 0 ? `${formatCurrency(c.value)} (${c.count} ${c.count === 1 ? "mov." : "movs."})` : "sin movimientos"}`}
                       aria-label={`${dayLabel(c.date)}: ${formatCurrency(c.value)}`}

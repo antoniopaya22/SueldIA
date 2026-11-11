@@ -24,6 +24,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "cn";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 
 const COLORS = [
   "#2a8558", "#2e3a48", "#3b82f6", "#8b5cf6",
@@ -49,6 +50,7 @@ function ProfileDialog({
   const [name, setName] = useState(profile?.name ?? "");
   const [color, setColor] = useState(profile?.color ?? COLORS[0]);
   const editing = profile !== null;
+  const colorKeys = radioGroupKeys(COLORS, color, setColor);
 
   const saveMut = useMutation({
     mutationFn: () =>
@@ -105,6 +107,8 @@ function ProfileDialog({
                     role="radio"
                     aria-checked={selected}
                     aria-label={`Color ${c}`}
+                    tabIndex={colorKeys.tabIndex(c)}
+                    onKeyDown={colorKeys.onKeyDown}
                     onClick={() => setColor(c)}
                     className={cn(
                       "flex size-8 cursor-pointer items-center justify-center rounded-full ring-offset-2 ring-offset-background transition-all outline-none focus-visible:ring-2 focus-visible:ring-ring",

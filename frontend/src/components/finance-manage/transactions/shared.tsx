@@ -13,6 +13,7 @@ import { cn } from "cn";
 import { darkBoost } from "../../../lib/color";
 import { normalizeSearch } from "../../../lib/text";
 import { todayIso } from "../../../lib/dates";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 
 export type TxType = "expense" | "income" | "transfer";
 
@@ -276,6 +277,7 @@ export function TypeToggle<T extends TxType>({
   types: readonly T[];
   disabled?: T[];
 }) {
+  const keys = radioGroupKeys(types, value, onChange, (t) => disabled.includes(t));
   return (
     <div role="radiogroup" aria-label="Tipo de movimiento" className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${types.length}, minmax(0, 1fr))` }}>
       {types.map((t) => {
@@ -289,6 +291,8 @@ export function TypeToggle<T extends TxType>({
             role="radio"
             aria-checked={selected}
             disabled={isDisabled}
+            tabIndex={keys.tabIndex(t)}
+            onKeyDown={keys.onKeyDown}
             onClick={() => onChange(t)}
             className={cn(
               "flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40",

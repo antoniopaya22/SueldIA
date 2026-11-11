@@ -71,7 +71,7 @@ export function PaceChart({ accountId, groupId, categoryId, expanded }: Props) {
 
       <div className={expanded ? "h-96" : "h-64"}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={pace.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+          <ComposedChart accessibilityLayer data={pace.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
             <CartesianGrid {...chartGrid} />
             <XAxis dataKey="day" {...chartAxis} interval={4} tickFormatter={(d) => String(d)} />
             <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />

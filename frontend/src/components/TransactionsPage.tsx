@@ -70,6 +70,7 @@ import { SubscriptionSuggestions } from "./finance-manage/transactions/Subscript
 import { TransactionTable, type SortDir, type SortField } from "./finance-manage/transactions/TransactionTable";
 import { AccountOrderDialog } from "./finance-manage/AccountOrderDialog";
 import { cn } from "cn";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 
 const PAGE_SIZE = 50;
 
@@ -547,6 +548,8 @@ function TransactionsView() {
 
   const totalBalance = activeAccounts.reduce((s, a) => s + a.balance, 0);
 
+  const accountKeys = radioGroupKeys([null, ...activeAccounts.map((a) => a.id)], selectedAccountId, (id) => updateFilters({ accountId: id ?? undefined }));
+
   return (
     <div>
       <PageHeader
@@ -592,6 +595,8 @@ function TransactionsView() {
                     type="button"
                     role="radio"
                     aria-checked={selected}
+                    tabIndex={accountKeys.tabIndex(a.id)}
+                    onKeyDown={accountKeys.onKeyDown}
                     onClick={() => updateFilters({ accountId: a.id ?? undefined })}
                     className={cn(
                       "flex min-w-36 cursor-pointer flex-col items-start rounded-xl border px-3.5 py-2.5 text-left outline-none transition-all focus-visible:ring-2 focus-visible:ring-ring/50",

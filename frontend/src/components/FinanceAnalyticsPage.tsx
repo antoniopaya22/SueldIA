@@ -701,7 +701,7 @@ function FinanceAnalyticsView() {
     let chart;
     if (trendView === "line") {
       chart = (
-        <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <ComposedChart accessibilityLayer data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           {axes}
           <Tooltip content={<SeriesTooltip format={format} />} cursor={chartCursor} />
           {all ? [
@@ -716,7 +716,7 @@ function FinanceAnalyticsView() {
       );
     } else if (trendView === "area") {
       chart = (
-        <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <ComposedChart accessibilityLayer data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           {axes}
           <Tooltip content={<SeriesTooltip format={format} />} cursor={chartCursor} />
           {all ? [
@@ -731,7 +731,7 @@ function FinanceAnalyticsView() {
       );
     } else {
       chart = (
-        <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={3}>
+        <ComposedChart accessibilityLayer data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={3}>
           {axes}
           <Tooltip content={<SeriesTooltip format={format} />} cursor={chartBarCursor} />
           {all ? [
@@ -778,13 +778,13 @@ function FinanceAnalyticsView() {
       <div style={{ height: chartHeight(expanded, 260) }}>
         <ResponsiveContainer width="100%" height="100%">
           {cumulativeView === "line" ? (
-            <ComposedChart data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <ComposedChart accessibilityLayer data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               {common}
               <Line type="monotone" dataKey={key} name="Acumulado" stroke={color} strokeWidth={2} dot={false} activeDot={chartActiveDot} />
               {ghost}
             </ComposedChart>
           ) : (
-            <ComposedChart data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <ComposedChart accessibilityLayer data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               {common}
               <Area type="monotone" dataKey={key} name="Acumulado" stroke={color} fill={color} fillOpacity={0.14} strokeWidth={2} activeDot={chartActiveDot} />
               {ghost}
@@ -813,7 +813,7 @@ function FinanceAnalyticsView() {
       <div className="grid items-center gap-6 sm:grid-cols-[auto_minmax(0,1fr)]">
         <div className="mx-auto" style={{ width: size, height: size }}>
           <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
+            <PieChart accessibilityLayer>
               <Pie data={distributionData} dataKey="value" nameKey="label" innerRadius="64%" outerRadius="100%" paddingAngle={2} strokeWidth={0}>
                 {distributionData.map((d) => <Cell key={d.key} fill={d.color} />)}
               </Pie>
@@ -882,7 +882,7 @@ function FinanceAnalyticsView() {
               <Radar dataKey="value" name={weekdayMetric === "count" ? "Movimientos" : "Importe"} stroke={color} fill={color} fillOpacity={0.2} strokeWidth={2} />
             </RadarChart>
           ) : (
-            <BarChart data={weekdayChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <BarChart accessibilityLayer data={weekdayChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid {...chartGrid} />
               <XAxis dataKey="label" {...chartAxis} />
               <YAxis {...chartAxis} tickFormatter={fmtTick(weekdayMode)} width={56} />
@@ -910,7 +910,7 @@ function FinanceAnalyticsView() {
         <div style={{ height: chartHeight(expanded, 300) }}>
           <ResponsiveContainer width="100%" height="100%">
             {stackView === "area" ? (
-              <AreaChart data={stackTrend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <AreaChart accessibilityLayer data={stackTrend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 {common}
                 <Tooltip content={<SeriesTooltip format={fmtValue("currency")} />} cursor={chartCursor} />
                 {stackTrend.series.map((s) => (
@@ -918,7 +918,7 @@ function FinanceAnalyticsView() {
                 ))}
               </AreaChart>
             ) : (
-              <BarChart data={stackTrend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <BarChart accessibilityLayer data={stackTrend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 {common}
                 <Tooltip content={<SeriesTooltip format={fmtValue("currency")} />} cursor={chartBarCursor} />
                 {stackTrend.series.map((s, i) => (
@@ -946,7 +946,7 @@ function FinanceAnalyticsView() {
         <div className="grid items-center gap-6 sm:grid-cols-[auto_minmax(0,1fr)]">
           <div className="mx-auto" style={{ width: size, height: size }}>
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
+              <PieChart accessibilityLayer>
                 <Pie data={slices} dataKey="value" nameKey="label" innerRadius="64%" outerRadius="100%" paddingAngle={2} strokeWidth={0}>
                   {slices.map((a) => <Cell key={a.key} fill={a.color} />)}
                 </Pie>
@@ -996,7 +996,7 @@ function FinanceAnalyticsView() {
       <>
         <div style={{ height: chartHeight(expanded, 260) }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={efficiencyChartData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+            <ComposedChart accessibilityLayer data={efficiencyChartData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
               <CartesianGrid {...chartGrid} />
               <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={16} />
               <YAxis yAxisId="left" {...chartAxis} tickFormatter={fmtTick(efficiencyMode)} width={56} />
@@ -1029,7 +1029,7 @@ function FinanceAnalyticsView() {
       <>
         <div style={{ height: Math.max(data.length * rowHeight + 40, expanded ? 420 : 220) }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} layout="vertical" margin={{ top: 0, right: 8, left: 0, bottom: 0 }} barGap={-12} barCategoryGap="28%">
+            <BarChart accessibilityLayer data={data} layout="vertical" margin={{ top: 0, right: 8, left: 0, bottom: 0 }} barGap={-12} barCategoryGap="28%">
               <CartesianGrid {...chartGrid} vertical horizontal={false} />
               <XAxis type="number" {...chartAxis} tickFormatter={(v: number) => fmtTick(compareMode)(Math.abs(v))} />
               <YAxis type="category" dataKey="shortLabel" {...chartAxis} width={expanded ? 150 : 112} />

@@ -61,7 +61,7 @@ export function ForecastCard() {
 
       <div className="h-44">
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={rows} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+          <AreaChart accessibilityLayer data={rows} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
             <CartesianGrid {...chartGrid} />
             <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={36} />
             <YAxis {...chartAxis} tickFormatter={formatCompact} width={56} domain={["auto", "auto"]} />

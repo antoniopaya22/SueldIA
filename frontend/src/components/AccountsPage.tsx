@@ -31,6 +31,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "cn";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 
 type AccountType = Account["type"];
 
@@ -72,6 +73,7 @@ function AccountDialog({
   pending: boolean;
 }) {
   const TypeIcon = typeMeta(form.type).icon;
+  const typeKeys = radioGroupKeys(ACCOUNT_TYPES.map((t) => t.value), form.type, (type) => setForm({ ...form, type }));
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="gap-0 p-0 sm:max-w-md">
@@ -124,6 +126,8 @@ function AccountDialog({
                       type="button"
                       role="radio"
                       aria-checked={selected}
+                      tabIndex={typeKeys.tabIndex(t.value)}
+                      onKeyDown={typeKeys.onKeyDown}
                       onClick={() => setForm({ ...form, type: t.value })}
                       className={cn(
                         "flex cursor-pointer flex-col items-center gap-1 rounded-lg border px-1 py-2.5 text-[11px] font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",

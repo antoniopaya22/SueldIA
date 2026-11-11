@@ -74,7 +74,7 @@ export function BalanceHistoryCard({ accountId }: { accountId?: number }) {
           <div className="h-64 lg:h-96">
             <ResponsiveContainer width="100%" height="100%">
               {view === "total" || accountId ? (
-                <AreaChart data={chart.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                <AreaChart accessibilityLayer data={chart.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid {...chartGrid} />
                   <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={24} />
                   <YAxis {...chartAxis} tickFormatter={formatCompact} width={56} />
@@ -82,7 +82,7 @@ export function BalanceHistoryCard({ accountId }: { accountId?: number }) {
                   <Area dataKey="total" name={accountId ? chart.visible[0]?.name ?? "Saldo" : "Saldo total"} type="monotone" stroke={chartColors.primary} fill={chartColors.primary} fillOpacity={0.14} strokeWidth={2} />
                 </AreaChart>
               ) : (
-                <LineChart data={chart.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+                <LineChart accessibilityLayer data={chart.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid {...chartGrid} />
                   <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={24} />
                   <YAxis {...chartAxis} tickFormatter={formatCompact} width={56} />

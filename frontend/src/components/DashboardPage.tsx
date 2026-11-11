@@ -470,7 +470,7 @@ function DashboardView() {
       >
         <ResponsiveContainer width="100%" height="100%">
           {chartType === "area" ? (
-            <AreaChart data={evolutionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart accessibilityLayer data={evolutionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <defs>
                 {profileNames.map((name, i) => (
                   <linearGradient key={name} id={`gradNeto${i}`} x1="0" y1="0" x2="0" y2="1">
@@ -491,7 +491,7 @@ function DashboardView() {
               ))}
             </AreaChart>
           ) : (
-            <LineChart data={evolutionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <LineChart accessibilityLayer data={evolutionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid {...chartGrid} />
               <XAxis dataKey="monthLabel" {...chartAxis} interval="preserveStartEnd" minTickGap={24} />
               <YAxis {...chartAxis} tickFormatter={formatCompact} width={56} domain={evolutionDomain} />
@@ -522,7 +522,7 @@ function DashboardView() {
           }
         >
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={evolutionData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+            <ComposedChart accessibilityLayer data={evolutionData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
               <CartesianGrid {...chartGrid} />
               <XAxis dataKey="monthLabel" {...chartAxis} interval="preserveStartEnd" minTickGap={24} />
               <YAxis {...chartAxis} tickFormatter={formatCompact} width={56} />
@@ -562,7 +562,7 @@ function DashboardView() {
             <div className="flex flex-col items-center gap-6 sm:flex-row">
               <div className="relative size-44 shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
+                  <PieChart accessibilityLayer>
                     <Pie data={devengos} dataKey="average" nameKey="name" innerRadius="68%" outerRadius="100%" paddingAngle={2} strokeWidth={0}>
                       {devengos.map((_, i) => <Cell key={i} fill={chartPalette[i % chartPalette.length]} />)}
                     </Pie>
@@ -628,7 +628,7 @@ function DashboardView() {
             }
           >
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={irpfData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+              <ComposedChart accessibilityLayer data={irpfData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
                 <CartesianGrid {...chartGrid} />
                 <XAxis dataKey="monthLabel" {...chartAxis} interval="preserveStartEnd" minTickGap={24} />
                 <YAxis yAxisId="left" {...chartAxis} tickFormatter={formatCompact} width={52} />
@@ -642,7 +642,7 @@ function DashboardView() {
 
           <ChartCard title="Retención neta" description="Porcentaje del bruto que te llega" height={240}>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={retentionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <AreaChart accessibilityLayer data={retentionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gradRetention" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={chartColors.primary} stopOpacity={0.25} />

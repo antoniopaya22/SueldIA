@@ -55,7 +55,7 @@ export function AmountsChart({ accountId, groupId, categoryId, from, to, metric,
       </p>
       <div className={expanded ? "h-96" : "h-64"}>
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+          <BarChart accessibilityLayer data={rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
             <CartesianGrid {...chartGrid} />
             <XAxis dataKey="label" {...chartAxis} interval={0} tick={{ fontSize: 11, fill: "var(--muted-foreground)" }} angle={expanded ? 0 : -35} textAnchor={expanded ? "middle" : "end"} height={expanded ? 30 : 52} />
             <YAxis {...chartAxis} tickFormatter={view === "count" ? (v: number) => String(v) : formatCompact} width={48} allowDecimals={false} />

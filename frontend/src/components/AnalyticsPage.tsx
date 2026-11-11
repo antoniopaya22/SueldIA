@@ -337,7 +337,7 @@ function AnalyticsView() {
         }
       >
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={visibleEvolution} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <AreaChart accessibilityLayer data={visibleEvolution} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="an-neto" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={chartColors.primary} stopOpacity={0.22} />
@@ -381,7 +381,7 @@ function AnalyticsView() {
         >
           {yoy.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={yoy.map((d) => ({ label: formatMonthLabel(d.month).split(" ")[0], actual: d.current, anterior: d.previous }))} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={2}>
+              <BarChart accessibilityLayer data={yoy.map((d) => ({ label: formatMonthLabel(d.month).split(" ")[0], actual: d.current, anterior: d.previous }))} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={2}>
                 <CartesianGrid {...chartGrid} />
                 <XAxis dataKey="label" {...chartAxis} />
                 <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />
@@ -420,7 +420,7 @@ function AnalyticsView() {
         >
           {analytics.predictions.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={projection} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <ComposedChart accessibilityLayer data={projection} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid {...chartGrid} />
                 <XAxis dataKey="label" {...chartAxis} />
                 <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} domain={evolutionDomain} />
@@ -456,7 +456,7 @@ function AnalyticsView() {
           }
         >
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={conceptSeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart accessibilityLayer data={conceptSeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="an-concept" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={chartColors.secondary} stopOpacity={0.18} />

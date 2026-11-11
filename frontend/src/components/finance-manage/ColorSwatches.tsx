@@ -1,5 +1,6 @@
 import { Check } from "lucide-react";
 import { cn } from "cn";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 
 // Paleta elegible para cuentas/grupos: verde y navy de marca primero.
 export const SWATCH_COLORS = [
@@ -16,6 +17,8 @@ interface ColorSwatchesProps {
 }
 
 export function ColorSwatches({ value, onChange, colors = SWATCH_COLORS, label = "Color" }: ColorSwatchesProps) {
+  const marked = colors.find((c) => c.toLowerCase() === value.toLowerCase()) ?? colors[0];
+  const keys = radioGroupKeys(colors, marked, onChange);
   return (
     <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2">
       {colors.map((c) => {
@@ -27,6 +30,8 @@ export function ColorSwatches({ value, onChange, colors = SWATCH_COLORS, label =
             role="radio"
             aria-checked={selected}
             aria-label={`Color ${c}`}
+            tabIndex={keys.tabIndex(c)}
+            onKeyDown={keys.onKeyDown}
             onClick={() => onChange(c)}
             className={cn(
               "flex size-7 cursor-pointer items-center justify-center rounded-full outline-none transition-transform focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
