@@ -36,7 +36,7 @@ function addDaysIso(isoDate: string, days: number): string {
   return value.toISOString().slice(0, 10);
 }
 
-function addMonthsFromBase(isoDate: string, monthsToAdd: number): string {
+export function addMonthsFromBase(isoDate: string, monthsToAdd: number): string {
   const { year, month, day } = parseIsoDate(isoDate);
   const absoluteMonth = year * 12 + (month - 1) + monthsToAdd;
   const targetYear = Math.floor(absoluteMonth / 12);

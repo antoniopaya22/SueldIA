@@ -91,6 +91,7 @@ describeDb("autorización entre usuarios (integración)", () => {
     ids.payslip = payslip.id;
     ids.account = (await ok<{ id: number }>("POST", "/accounts", { name: "Banco A", type: "bank" })).id;
     ids.account2 = (await ok<{ id: number }>("POST", "/accounts", { name: "Ahorro A", type: "bank" })).id;
+    ids.valuation = (await ok<{ id: number }>("POST", `/accounts/${ids.account2}/valuations`, { value: 500, date: "2026-01-15" })).id;
     ids.group = (await ok<{ id: number }>("POST", "/categories/groups", { name: "Grupo A" })).id;
     ids.category = (await ok<{ id: number }>("POST", "/categories", { groupId: ids.group, name: "Cat A" })).id;
     ids.transaction = (await ok<{ id: number }>("POST", "/transactions", {
@@ -153,6 +154,10 @@ describeDb("autorización entre usuarios (integración)", () => {
     ["DELETE", `/accounts/${ids.account}`],
     ["GET", `/accounts/${ids.account}/reconcile`],
     ["POST", `/accounts/${ids.account}/reconcile`, { statementBalance: 0, createAdjustment: true }],
+    ["GET", `/accounts/${ids.account}/amortization`],
+    ["GET", `/accounts/${ids.account}/valuations`],
+    ["POST", `/accounts/${ids.account}/valuations`, { value: 1, date: "2026-01-01" }],
+    ["DELETE", `/accounts/${ids.account2}/valuations/${ids.valuation}`],
     ["PUT", `/categories/groups/${ids.group}`, { name: "hack" }],
     ["GET", `/categories/groups/${ids.group}/usage`],
     ["DELETE", `/categories/groups/${ids.group}`],
@@ -206,6 +211,32 @@ describeDb("autorización entre usuarios (integración)", () => {
     }
     expect(leaks).toEqual([]);
   }, 60_000);
+
+  it("inversiones y préstamos: la valoración fija el saldo sin crear movimientos; cuadro de amortización", async () => {
+    const fondo = (await ok<{ id: number }>("POST", "/accounts", { name: "Fondo A", type: "investment", initialBalance: 1000 })).id;
+    await ok("POST", "/transactions", { accountId: fondo, type: "income", amount: 100, date: "2026-01-10", cleared: true });
+    await ok("POST", `/accounts/${fondo}/valuations`, { value: 1500, date: "2026-02-01" });
+    await ok("POST", "/transactions", { accountId: fondo, type: "income", amount: 50, date: "2026-02-10", cleared: true });
+    const accounts = (await call("a", "GET", "/accounts")).json.data as Array<{ id: number; balance: number; valuation: { value: number } | null }>;
+    expect(accounts.find((x) => x.id === fondo)).toMatchObject({ balance: 1550, valuation: { value: 1500 } });
+    // La valoración no es un movimiento: sigue habiendo solo dos.
+    expect(((await call("a", "GET", `/transactions?accountId=${fondo}`)).json.data as unknown[]).length).toBe(2);
+    // Conciliar usa el mismo saldo.
+    expect((await call("a", "GET", `/accounts/${fondo}/reconcile`)).json).toMatchObject({ clearedBalance: 1550 });
+    expect((await call("a", "POST", `/accounts/${fondo}/valuations`, { value: 1, date: "2999-01-01" })).status).toBe(400);
+
+    const hipoteca = (await ok<{ id: number }>("POST", "/accounts", {
+      name: "Hipoteca A", type: "mortgage", initialBalance: -100000, loanPrincipal: 100000, loanRate: 3, loanTermMonths: 300, loanStartDate: "2026-01-05",
+    })).id;
+    const am = (await call("a", "GET", `/accounts/${hipoteca}/amortization`)).json as { payment: number; rows: unknown[] };
+    expect(am.payment).toBe(474.21);
+    expect(am.rows).toHaveLength(300);
+    expect((await call("a", "GET", `/accounts/${fondo}/amortization`)).status).toBe(409);
+    // La previsión en total es dinero disponible: la hipoteca no cuenta (sí por cuenta).
+    const total = (await call("a", "GET", "/finance/forecast?days=30")).json as { startBalance: number };
+    expect(total.startBalance).toBeGreaterThan(-50_000);
+    expect(((await call("a", "GET", `/finance/forecast?days=30&accountId=${hipoteca}`)).json as { startBalance: number }).startBalance).toBe(-100_000);
+  });
 
   it("nóminas: búsqueda en notas y conceptos, filtro por etiqueta y reprocesado con vista previa", async () => {
     const list = async (q: string) => ((await call("a", "GET", `/payslips?${q}`)).json.data as Array<{ id: number; tags: Array<{ name: string }> }>);

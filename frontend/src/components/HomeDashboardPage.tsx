@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, ArrowLeftRight, CreditCard, Download, FileText,
-  Landmark, PiggyBank, Plus, Receipt, TrendingUp, Upload, Users, Wallet, Banknote, CircleDollarSign,
+  Landmark, PiggyBank, Plus, Receipt, TrendingUp, HandCoins, House, Upload, Users, Wallet, Banknote, CircleDollarSign,
   AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
@@ -65,6 +65,8 @@ const ACCOUNT_ICONS: Record<Account["type"], LucideIcon> = {
   credit_card: CreditCard,
   cash: Banknote,
   investment: TrendingUp,
+  loan: HandCoins,
+  mortgage: House,
   other: Wallet,
 };
 

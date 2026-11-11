@@ -129,8 +129,8 @@ export function lowBalanceCandidates(
 ): FinanceAlertCandidate[] {
   return accounts
     .filter((a) => !a.archived)
-    // Una tarjeta de crédito en negativo es lo normal: solo se vigila si se elige a propósito.
-    .filter((a) => (config.accountId ? a.id === config.accountId : a.type !== "credit_card"))
+    // Una tarjeta, un préstamo o una hipoteca en negativo es lo normal: solo se vigilan si se eligen a propósito.
+    .filter((a) => (config.accountId ? a.id === config.accountId : !["credit_card", "loan", "mortgage"].includes(a.type)))
     .filter((a) => a.balance < config.threshold)
     .map((a) => ({
       severity: a.balance < 0 ? ("critical" as const) : ("warning" as const),

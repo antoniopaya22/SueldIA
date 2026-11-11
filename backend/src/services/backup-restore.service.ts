@@ -94,8 +94,13 @@ const accountRow = z.object({
   sortOrder: z.number().int().optional(),
   lastReconciledAt: z.coerce.date().nullable().optional(),
   lastReconciledBalance: optMoney,
+  loanPrincipal: optMoney,
+  loanRate: z.number().min(0).max(50).nullable().optional(),
+  loanTermMonths: z.number().int().min(1).max(600).nullable().optional(),
+  loanStartDate: isoDateSchema.nullable().optional(),
   createdAt,
 });
+const valuationRow = z.object({ accountId: id, date: isoDateSchema, value: moneySchema });
 const groupRow = z.object({ id, name: text(100), icon: optText(64), sortOrder: z.number().int(), createdAt });
 const categoryRow = z.object({ id, groupId: id, name: text(100), sortOrder: z.number().int(), createdAt });
 const transactionRow = z.object({
@@ -193,6 +198,7 @@ export const backupSchema = z.object({
   categoryRules: list(categoryRuleRow, USER_LIMITS.categoryRules),
   userPreferences: list(preferenceRow, 100),
   savingsGoals: list(goalRow, USER_LIMITS.savingsGoals),
+  accountValuations: list(valuationRow, 50_000),
 });
 
 export type Backup = z.infer<typeof backupSchema>;
@@ -440,6 +446,7 @@ export async function restoreBackup(userId: number, b: Backup): Promise<BackupCo
         ...x, userId, categoryId: must(categories, x.categoryId), accountId: pick(accounts, x.accountId),
       })));
       await insertChunked(tx, s.savingsGoals, b.savingsGoals.map((g) => ({ ...g, userId, accountId: pick(accounts, g.accountId) })));
+      await insertChunked(tx, s.accountValuations, b.accountValuations.map((v) => ({ ...v, userId, accountId: must(accounts, v.accountId) })));
       await insertChunked(tx, s.userPreferences, b.userPreferences.map((p) => ({ userId, key: p.key, value: JSON.stringify(p.value) ?? "null" })));
     });
   } catch (err) {
@@ -480,7 +487,7 @@ export async function buildFullExport(userId: number) {
   const payslipIds = userPayslips.map((p) => p.id);
   const none = payslipIds.length === 0;
 
-  const [concepts, notes, payslipTagLinks, tags, accounts, groups, categories, transactions, recurring, rules, history, budgets, targets, catRules, prefs, skips, goals] =
+  const [concepts, notes, payslipTagLinks, tags, accounts, groups, categories, transactions, recurring, rules, history, budgets, targets, catRules, prefs, skips, goals, valuations] =
     await Promise.all([
       none ? [] : db.select().from(s.payslipConcepts).where(inArray(s.payslipConcepts.payslipId, payslipIds)),
       none ? [] : db.select().from(s.payslipNotes).where(inArray(s.payslipNotes.payslipId, payslipIds)),
@@ -508,6 +515,10 @@ export async function buildFullExport(userId: number) {
         .innerJoin(s.recurringTransactions, eq(s.recurringSkips.recurringTransactionId, s.recurringTransactions.id))
         .where(eq(s.recurringTransactions.userId, userId)),
       db.select().from(s.savingsGoals).where(eq(s.savingsGoals.userId, userId)),
+      db
+        .select({ accountId: s.accountValuations.accountId, date: s.accountValuations.date, value: s.accountValuations.value })
+        .from(s.accountValuations)
+        .where(eq(s.accountValuations.userId, userId)),
     ]);
 
   return {
@@ -529,6 +540,7 @@ export async function buildFullExport(userId: number) {
     recurringTransactions: recurring,
     recurringSkips: skips,
     savingsGoals: goals,
+    accountValuations: valuations,
     alertRules: rules.map((r) => ({ ...r, config: safeJson(r.config) })),
     alertHistory: history,
     budgets,

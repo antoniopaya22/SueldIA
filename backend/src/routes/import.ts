@@ -484,8 +484,10 @@ importRouter.delete("/batches/:batchId", async (req, res, next) => {
   }
 });
 
-function inferAccountType(name: string): "bank" | "credit_card" | "cash" | "investment" | "other" {
+function inferAccountType(name: string): "bank" | "credit_card" | "cash" | "investment" | "loan" | "mortgage" | "other" {
   const lower = name.toLowerCase();
+  if (lower.includes("hipoteca")) return "mortgage";
+  if (lower.includes("préstamo") || lower.includes("prestamo")) return "loan";
   if (lower.includes("tarjeta") || lower.includes("credito") || lower.includes("crédito")) {
     return "credit_card";
   }

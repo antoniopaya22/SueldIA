@@ -28,7 +28,8 @@ Aplicación web monorepo de gestión y análisis de nóminas españolas. Solo ve
 | `payslip_tags` | Relación M:N nóminas ↔ tags |
 | `alert_rules` | Reglas de alerta configurables (nóminas y finanzas) |
 | `alert_history` | Historial de alertas emitidas |
-| `accounts` | Cuentas (banco, tarjeta, efectivo, inversión) con saldo inicial y orden |
+| `accounts` | Cuentas (banco, tarjeta, efectivo, inversión, préstamo, hipoteca) con saldo inicial y orden; los préstamos guardan importe, TIN, plazo y primera cuota (cuadro de amortización) |
+| `account_valuations` | «Actualizar valor» de una cuenta (inversiones): desde esa fecha, saldo = valor + movimientos posteriores. No es un movimiento |
 | `category_groups` / `categories` | Grupos y categorías del presupuesto (categories no tiene `user_id`: la propiedad va por el grupo) |
 | `transactions` | Movimientos: gastos, ingresos, traspasos (dos filas enlazadas por `transfer_id`), partes de un gasto dividido (`split_group_id`), ocurrencias de recurrentes, enlace opcional a una nómina |
 | `recurring_transactions` | Reglas recurrentes que generan ocurrencias (cron diario y al crear/editar) |

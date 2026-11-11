@@ -72,7 +72,9 @@ describeDb("copia de seguridad (integración)", () => {
     const [bank, savings] = await db.insert(s.accounts).values([
       { userId: a, name: "Banco", initialBalance: 1000 },
       { userId: a, name: "Ahorro", type: "investment", initialBalance: 0 },
+      { userId: a, name: "Hipoteca", type: "mortgage", initialBalance: -90000, loanPrincipal: 100000, loanRate: 3, loanTermMonths: 300, loanStartDate: "2020-01-05" },
     ]).returning();
+    await db.insert(s.accountValuations).values({ userId: a, accountId: savings.id, date: "2026-03-31", value: 320 });
     const [group] = await db.insert(s.categoryGroups).values({ userId: a, name: "Casa" }).returning();
     const [cat] = await db.insert(s.categories).values({ groupId: group.id, name: "Super" }).returning();
     const [rec] = await db.insert(s.recurringTransactions).values({
@@ -114,7 +116,10 @@ describeDb("copia de seguridad (integración)", () => {
 
     const after = (await buildFullExport(b))!;
     expect(after.profiles.map((p) => p.name)).toEqual(["Ana"]);
-    expect(after.accounts.map((x) => x.name).sort()).toEqual(["Ahorro", "Banco"]);
+    expect(after.accounts.map((x) => x.name).sort()).toEqual(["Ahorro", "Banco", "Hipoteca"]);
+    expect(after.accounts.find((x) => x.name === "Hipoteca")).toMatchObject({ type: "mortgage", loanPrincipal: 100000, loanRate: 3, loanTermMonths: 300, loanStartDate: "2020-01-05" });
+    const newSavings = after.accounts.find((x) => x.name === "Ahorro")!;
+    expect(after.accountValuations).toEqual([{ accountId: newSavings.id, date: "2026-03-31", value: 320 }]);
     const newProfile = after.profiles[0];
     const newPayslip = after.payslips[0];
     expect(newPayslip).toMatchObject({ profileId: newProfile.id, fileName: "marzo.pdf", rawText: "SALARIO BASE 2.600,00", contentHash: "abc" });

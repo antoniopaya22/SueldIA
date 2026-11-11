@@ -237,7 +237,7 @@ export const accounts = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     type: text("type", {
-      enum: ["bank", "credit_card", "cash", "investment", "other"],
+      enum: ["bank", "credit_card", "cash", "investment", "loan", "mortgage", "other"],
     })
       .notNull()
       .default("bank"),
@@ -251,10 +251,41 @@ export const accounts = pgTable(
     // Última conciliación con el extracto del banco (Cuentas → Conciliar).
     lastReconciledAt: timestamp("last_reconciled_at", { withTimezone: true }),
     lastReconciledBalance: doublePrecision("last_reconciled_balance"),
+    // Préstamo o hipoteca (type loan/mortgage): para el cuadro de amortización
+    // (sistema francés). Importe prestado, TIN anual en %, plazo en meses y
+    // fecha de la primera cuota. Todo opcional.
+    loanPrincipal: doublePrecision("loan_principal"),
+    loanRate: doublePrecision("loan_rate"),
+    loanTermMonths: integer("loan_term_months"),
+    loanStartDate: date("loan_start_date", { mode: "string" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     userIdx: index("accounts_user_idx").on(table.userId),
+  }),
+).enableRLS();
+
+// ─── Valoraciones de cuentas (inversiones) ─────────────────────
+// «Actualizar valor» sin crear un movimiento: desde esa fecha el saldo es el
+// valor apuntado más los movimientos posteriores. No cuenta como ingreso ni
+// gasto (no toca analítica ni presupuesto).
+export const accountValuations = pgTable(
+  "account_valuations",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    date: date("date", { mode: "string" }).notNull(),
+    value: doublePrecision("value").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("account_valuations_user_idx").on(table.userId),
+    accountDateIdx: uniqueIndex("account_valuations_account_date_idx").on(table.accountId, table.date),
   }),
 ).enableRLS();
 

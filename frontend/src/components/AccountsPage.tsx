@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Wallet, Plus, Pencil, Trash2, CreditCard, Landmark, Banknote, TrendingUp,
   Archive, ArchiveRestore, Download, PiggyBank, AlertTriangle, type LucideIcon,
-  Scale,
+  Scale, HandCoins, House, CalendarRange,
 } from "lucide-react";
 import {
   getAccounts, createAccount, updateAccount, deleteAccount, toggleAccountArchive,
@@ -11,16 +11,17 @@ import {
 } from "../lib/api";
 import { Providers } from "./Providers";
 import { toast } from "sonner";
-import { formatCurrency, formatPct, plural } from "../lib/format";
+import { formatCurrency, formatPct, formatRate, plural } from "../lib/format";
 import { EmptyState } from "./ui/EmptyState";
 import { ConfirmModal } from "./ui/ConfirmModal";
 import {
   PageHeader, StatCard, StatGrid, SectionCard, Segmented,
-  PageHeaderSkeleton, StatCardSkeleton,
+  PageHeaderSkeleton, StatCardSkeleton, DecimalInput,
 } from "./app";
 import { ColorSwatches, SWATCH_COLORS } from "./finance-manage/ColorSwatches";
 import { RowActions } from "./finance-manage/RowActions";
 import { ReconcileDialog } from "./finance-manage/ReconcileDialog";
+import { AmortizationDialog, ValuationDialog, hasLoanTerms } from "./finance-manage/LoanDialogs";
 import { transactionsHref } from "../lib/transaction-filters";
 import { darkBoost } from "../lib/color";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -40,11 +41,15 @@ const ACCOUNT_TYPES: { value: AccountType; label: string; icon: LucideIcon }[] =
   { value: "credit_card", label: "Tarjeta", icon: CreditCard },
   { value: "cash", label: "Efectivo", icon: Banknote },
   { value: "investment", label: "Inversión", icon: TrendingUp },
+  { value: "loan", label: "Préstamo", icon: HandCoins },
+  { value: "mortgage", label: "Hipoteca", icon: House },
   { value: "other", label: "Otro", icon: Wallet },
 ];
 
+const isLoan = (type: string) => type === "loan" || type === "mortgage";
+
 function typeMeta(type: string) {
-  return ACCOUNT_TYPES.find((t) => t.value === type) ?? ACCOUNT_TYPES[4];
+  return ACCOUNT_TYPES.find((t) => t.value === type) ?? ACCOUNT_TYPES[ACCOUNT_TYPES.length - 1];
 }
 
 function amountClass(n: number) {
@@ -57,9 +62,17 @@ interface FormState {
   type: AccountType;
   color: string;
   initialBalance: string;
+  // Préstamo o hipoteca
+  loanPrincipal: number | null;
+  loanRate: number | null;
+  loanYears: number | null;
+  loanStartDate: string;
 }
 
-const EMPTY_FORM: FormState = { name: "", type: "bank", color: SWATCH_COLORS[0], initialBalance: "" };
+const EMPTY_FORM: FormState = {
+  name: "", type: "bank", color: SWATCH_COLORS[0], initialBalance: "",
+  loanPrincipal: null, loanRate: null, loanYears: null, loanStartDate: "",
+};
 
 function AccountDialog({
   open, editing, form, setForm, onClose, onSubmit, pending,
@@ -84,7 +97,7 @@ function AccountDialog({
           <DialogHeader className="border-b border-border px-5 pt-5 pb-4">
             <DialogTitle>{editing ? "Editar cuenta" : "Nueva cuenta"}</DialogTitle>
             <DialogDescription>
-              {editing ? "Cambia el nombre, el tipo o el color de la cuenta." : "Añade una cuenta bancaria, tarjeta, efectivo o inversión."}
+              {editing ? "Cambia el nombre, el tipo o el color de la cuenta." : "Añade una cuenta bancaria, tarjeta, efectivo, inversión, préstamo o hipoteca."}
             </DialogDescription>
           </DialogHeader>
 
@@ -117,7 +130,7 @@ function AccountDialog({
 
             <div className="space-y-1.5">
               <Label>Tipo</Label>
-              <div role="radiogroup" aria-label="Tipo de cuenta" className="grid grid-cols-5 gap-1.5">
+              <div role="radiogroup" aria-label="Tipo de cuenta" className="grid grid-cols-4 gap-1.5">
                 {ACCOUNT_TYPES.map((t) => {
                   const selected = form.type === t.value;
                   return (
@@ -159,8 +172,36 @@ function AccountDialog({
                 />
                 <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted-foreground">€</span>
               </div>
-              <p className="text-xs text-muted-foreground">El saldo actual se calcula sumando las transacciones a este saldo inicial.</p>
+              <p className="text-xs text-muted-foreground">
+                {isLoan(form.type)
+                  ? "Lo que debías al empezar a usar la cuenta, en negativo (p. ej. −95000). Cada cuota será un traspaso desde tu banco."
+                  : "El saldo actual se calcula sumando las transacciones a este saldo inicial."}
+              </p>
             </div>
+
+            {isLoan(form.type) && (
+              <fieldset className="space-y-3 rounded-xl border border-border p-4">
+                <legend className="px-1 text-sm font-medium text-foreground">Condiciones <span className="font-normal text-muted-foreground">(para el cuadro de amortización)</span></legend>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="loan-principal">Importe prestado (€)</Label>
+                    <DecimalInput id="loan-principal" value={form.loanPrincipal} onValueChange={(v) => setForm({ ...form, loanPrincipal: v })} placeholder="150.000" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="loan-rate">Interés (TIN %)</Label>
+                    <DecimalInput id="loan-rate" value={form.loanRate} onValueChange={(v) => setForm({ ...form, loanRate: v })} placeholder="2,95" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="loan-years">Plazo (años)</Label>
+                    <DecimalInput id="loan-years" value={form.loanYears} onValueChange={(v) => setForm({ ...form, loanYears: v })} placeholder="25" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="loan-start">Primera cuota</Label>
+                    <Input id="loan-start" type="date" value={form.loanStartDate} onChange={(e) => setForm({ ...form, loanStartDate: e.target.value })} />
+                  </div>
+                </div>
+              </fieldset>
+            )}
 
             <div className="space-y-2">
               <Label>Color</Label>
@@ -182,11 +223,13 @@ function AccountDialog({
 
 // ─── Tarjeta de cuenta ──────────────────────────────────────────
 function AccountCard({
-  account, share, onEdit, onArchive, onDelete, onReconcile,
+  account, share, onEdit, onArchive, onDelete, onReconcile, onAmortization, onValuation,
 }: {
   account: Account;
   share: number | null;
   onReconcile: () => void;
+  onAmortization: () => void;
+  onValuation: () => void;
   onEdit: () => void;
   onArchive: () => void;
   onDelete: () => void;
@@ -216,6 +259,8 @@ function AccountCard({
         <RowActions
           itemLabel={account.name}
           actions={[
+            ...(isLoan(account.type) && hasLoanTerms(account) ? [{ label: "Cuadro de amortización", icon: CalendarRange, onSelect: onAmortization }] : []),
+            ...(account.type === "investment" ? [{ label: "Actualizar valor", icon: TrendingUp, onSelect: onValuation }] : []),
             { label: "Conciliar con el banco", icon: Scale, onSelect: onReconcile },
             { label: "Editar", icon: Pencil, onSelect: onEdit },
             { label: account.archived ? "Restaurar" : "Archivar", icon: account.archived ? ArchiveRestore : Archive, onSelect: onArchive },
@@ -240,9 +285,13 @@ function AccountCard({
       )}
       <div className="mt-4 flex items-center justify-between gap-2 border-t border-border pt-3 text-xs">
         <span className="text-muted-foreground">
-          {account.lastReconciledAt
-            ? `Conciliada el ${new Date(account.lastReconciledAt).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}`
-            : "Sin conciliar"}
+          {account.valuation
+            ? `Valorada el ${new Date(`${account.valuation.date}T00:00:00`).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}`
+            : isLoan(account.type) && account.loanPrincipal != null
+              ? `${formatCurrency(account.loanPrincipal)}${account.loanRate != null ? ` al ${formatRate(account.loanRate)}` : ""}`
+              : account.lastReconciledAt
+                ? `Conciliada el ${new Date(account.lastReconciledAt).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}`
+                : "Sin conciliar"}
           {account.unclearedCount > 0 && ` · ${plural(account.unclearedCount, "pendiente", "pendientes")}`}
         </span>
         {/* Antes la tarjeta no llevaba a sus movimientos. */}
@@ -263,6 +312,8 @@ function AccountsView() {
   });
 
   const [reconcileTarget, setReconcileTarget] = useState<Account | null>(null);
+  const [amortizationTarget, setAmortizationTarget] = useState<Account | null>(null);
+  const [valuationTarget, setValuationTarget] = useState<Account | null>(null);
   const [view, setView] = useState<"active" | "archived">("active");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
@@ -322,7 +373,12 @@ function AccountsView() {
 
   const openEdit = (a: Account) => {
     setEditing(a);
-    setForm({ name: a.name, type: a.type, color: a.color, initialBalance: String(a.initialBalance) });
+    setForm({
+      name: a.name, type: a.type, color: a.color, initialBalance: String(a.initialBalance),
+      loanPrincipal: a.loanPrincipal, loanRate: a.loanRate,
+      loanYears: a.loanTermMonths != null ? Math.round((a.loanTermMonths / 12) * 100) / 100 : null,
+      loanStartDate: a.loanStartDate ?? "",
+    });
     setDialogOpen(true);
   };
 
@@ -333,6 +389,15 @@ function AccountsView() {
       type: form.type,
       color: form.color,
       initialBalance: form.initialBalance ? parseFloat(form.initialBalance) : 0,
+      // Fuera de préstamos se borran (por si se cambió el tipo).
+      ...(isLoan(form.type)
+        ? {
+            loanPrincipal: form.loanPrincipal && form.loanPrincipal > 0 ? form.loanPrincipal : null,
+            loanRate: form.loanRate != null && form.loanRate >= 0 ? form.loanRate : null,
+            loanTermMonths: form.loanYears && form.loanYears > 0 ? Math.max(1, Math.round(form.loanYears * 12)) : null,
+            loanStartDate: form.loanStartDate || null,
+          }
+        : { loanPrincipal: null, loanRate: null, loanTermMonths: null, loanStartDate: null }),
     };
     if (editing) updateMut.mutate({ id: editing.id, data });
     else createMut.mutate(data);
@@ -348,6 +413,8 @@ function AccountsView() {
       liquid: sumBy(["bank", "cash"]),
       investment: sumBy(["investment"]),
       cards: sumBy(["credit_card"]),
+      debts: sumBy(["credit_card", "loan", "mortgage"]),
+      hasLoans: active.some((a) => isLoan(a.type)),
       positiveTotal: active.reduce((s, a) => s + Math.max(0, a.balance), 0),
     };
   }, [active]);
@@ -394,7 +461,7 @@ function AccountsView() {
       <PageHeader
         title="Tus cuentas,"
         accent="en orden."
-        description="Saldos de tus cuentas bancarias, tarjetas, efectivo e inversiones."
+        description="Saldos de tus cuentas bancarias, tarjetas, efectivo, inversiones y préstamos."
         actions={accounts.length > 0 ? newButton : undefined}
       />
 
@@ -414,7 +481,7 @@ function AccountsView() {
           <StatGrid className="grid-cols-2">
             <StatCard
               className="col-span-2 sm:col-span-1"
-              label="Saldo total"
+              label={stats.hasLoans ? "Patrimonio neto" : "Saldo total"}
               value={formatCurrency(stats.total)}
               icon={Wallet}
               hint={`${active.length} ${active.length === 1 ? "cuenta activa" : "cuentas activas"}`}
@@ -422,13 +489,23 @@ function AccountsView() {
             />
             <StatCard label="Liquidez" value={formatCurrency(stats.liquid)} icon={Landmark} hint="Bancos y efectivo" />
             <StatCard label="Inversión" value={formatCurrency(stats.investment)} icon={PiggyBank} hint="Cuentas de inversión" />
-            <StatCard
-              className="col-span-2 sm:col-span-1"
-              label="Tarjetas"
-              value={<span className={amountClass(stats.cards)}>{formatCurrency(stats.cards)}</span>}
-              icon={CreditCard}
-              hint={stats.cards < 0 ? "Saldo pendiente de pago" : "Sin deuda pendiente"}
-            />
+            {stats.hasLoans ? (
+              <StatCard
+                className="col-span-2 sm:col-span-1"
+                label="Deudas"
+                value={<span className={amountClass(stats.debts)}>{formatCurrency(stats.debts)}</span>}
+                icon={HandCoins}
+                hint="Tarjetas, préstamos e hipoteca"
+              />
+            ) : (
+              <StatCard
+                className="col-span-2 sm:col-span-1"
+                label="Tarjetas"
+                value={<span className={amountClass(stats.cards)}>{formatCurrency(stats.cards)}</span>}
+                icon={CreditCard}
+                hint={stats.cards < 0 ? "Saldo pendiente de pago" : "Sin deuda pendiente"}
+              />
+            )}
           </StatGrid>
 
           {distribution.length > 1 && stats.positiveTotal > 0 && (
@@ -491,6 +568,8 @@ function AccountsView() {
                   onArchive={() => archiveMut.mutate(a.id)}
                   onDelete={() => setDeleteTarget(a)}
                   onReconcile={() => setReconcileTarget(a)}
+                  onAmortization={() => setAmortizationTarget(a)}
+                  onValuation={() => setValuationTarget(a)}
                 />
               ))}
               {view === "active" && (
@@ -530,6 +609,8 @@ function AccountsView() {
         onCancel={() => setDeleteTarget(null)}
       />
       <ReconcileDialog account={reconcileTarget} onClose={() => setReconcileTarget(null)} />
+      <AmortizationDialog account={amortizationTarget} onClose={() => setAmortizationTarget(null)} />
+      <ValuationDialog account={valuationTarget} onClose={() => setValuationTarget(null)} />
     </div>
   );
 }

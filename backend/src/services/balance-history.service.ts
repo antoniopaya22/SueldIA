@@ -2,7 +2,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { accounts, transactions } from "../db/schema.js";
 import { shiftMonthKey } from "./budgets.service.js";
-import { signedAmountSql } from "./finance.service.js";
+import { getValuationAdjustments, signedAmountSql } from "./finance.service.js";
+import { adjustmentAt, type ValuationAdjustment } from "./loans.service.js";
+import { lastDayOfMonth } from "../utils/dates.js";
 import { getTodayIsoDate } from "./recurring-transactions.service.js";
 import { effectiveTransaction } from "./transaction-filters.js";
 
@@ -33,6 +35,9 @@ export interface BalanceHistory {
   accounts: { id: number; name: string; color: string; type: string; archived: boolean; series: number[] }[];
   /** Suma de las cuentas no archivadas. */
   total: number[];
+  /** Patrimonio: lo que tienes (saldos positivos) y lo que debes (negativos), por mes. */
+  assets: number[];
+  liabilities: number[];
 }
 
 const roundCents = (n: number) => Math.round(n * 100) / 100;
@@ -48,7 +53,12 @@ export function monthKeys(endMonth: string, count: number): string[] {
  * un movimiento liquidado con fecha futura) se suma al último mes, para que el
  * último punto coincida con el saldo actual.
  */
-export function buildBalanceHistory(historyAccounts: HistoryAccount[], nets: MonthlyNet[], months: string[]): BalanceHistory {
+export function buildBalanceHistory(
+  historyAccounts: HistoryAccount[],
+  nets: MonthlyNet[],
+  months: string[],
+  valuations: Map<number, ValuationAdjustment[]> = new Map(),
+): BalanceHistory {
   const last = months.length - 1;
   const result = historyAccounts.map((a) => {
     const deltas = new Array<number>(months.length).fill(0);
@@ -60,16 +70,21 @@ export function buildBalanceHistory(historyAccounts: HistoryAccount[], nets: Mon
       else deltas[months.indexOf(n.month)] += n.net;
     }
     let running = a.initialBalance + before;
-    const series = deltas.map((d) => roundCents((running += d)));
+    // Las valoraciones (inversiones) fijan el saldo desde su fecha: se suma el
+    // ajuste vigente a fin de cada mes.
+    const series = deltas.map((d, i) => roundCents((running += d) + adjustmentAt(valuations.get(a.id), lastDayOfMonth(months[i]))));
     return { id: a.id, name: a.name, color: a.color, type: a.type, archived: a.archived, series };
   });
-  const total = months.map((_, i) => roundCents(result.filter((a) => !a.archived).reduce((s, a) => s + a.series[i], 0)));
-  return { months, accounts: result, total };
+  const live = result.filter((a) => !a.archived);
+  const total = months.map((_, i) => roundCents(live.reduce((s, a) => s + a.series[i], 0)));
+  const assets = months.map((_, i) => roundCents(live.reduce((s, a) => s + Math.max(0, a.series[i]), 0)));
+  const liabilities = months.map((_, i) => roundCents(live.reduce((s, a) => s + Math.min(0, a.series[i]), 0)));
+  return { months, accounts: result, total, assets, liabilities };
 }
 
 export async function getBalanceHistory(userId: number, count = 12): Promise<BalanceHistory> {
   const months = monthKeys(getTodayIsoDate().slice(0, 7), count);
-  const [accountRows, netRows] = await Promise.all([
+  const [accountRows, netRows, valuations] = await Promise.all([
     db.select().from(accounts).where(eq(accounts.userId, userId)).orderBy(accounts.name),
     db
       .select({
@@ -80,6 +95,7 @@ export async function getBalanceHistory(userId: number, count = 12): Promise<Bal
       .from(transactions)
       .where(and(eq(transactions.userId, userId), effectiveTransaction()))
       .groupBy(transactions.accountId, sql`to_char(${transactions.date}, 'YYYY-MM')`),
+    getValuationAdjustments(userId),
   ]);
   return buildBalanceHistory(
     accountRows.map((a) => ({
@@ -87,5 +103,6 @@ export async function getBalanceHistory(userId: number, count = 12): Promise<Bal
     })),
     netRows.map((r) => ({ accountId: r.accountId, month: r.month, net: Number(r.net) })),
     months,
+    valuations,
   );
 }

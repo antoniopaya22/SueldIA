@@ -28,6 +28,11 @@ export function formatPct(n: number): string {
   return `${pctFmt.format(n)} %`;
 }
 
+/** Tipo de interés tal cual (hasta 3 decimales): 2,95 % no debe salir como «3,0 %». */
+export function formatRate(n: number): string {
+  return `${n.toLocaleString("es-ES", { maximumFractionDigits: 3 })} %`;
+}
+
 export function formatMonthLabel(m: string): string {
   const [y, mo] = m.split("-");
   return `${MONTH_NAMES[Number(mo) - 1]} ${y?.slice(2)}`;

@@ -197,6 +197,13 @@
       "when": 1794411438085,
       "tag": "0027_profile_details",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794412368908,
+      "tag": "0028_account_valuations_loans",
+      "breakpoints": true
     }
   ]
 }

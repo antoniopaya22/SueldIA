@@ -1,6 +1,6 @@
-import { and, eq, gte, inArray, isNotNull, lte, or } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { accounts, budgets, recurringTransactions, transactions } from "../db/schema.js";
+import { budgets, recurringTransactions, transactions } from "../db/schema.js";
 import { lastDayOfMonth } from "../utils/dates.js";
 import { getAccountsWithBalance } from "./finance.service.js";
 import { getTodayIsoDate, listOccurrenceDates, skippedOccurrenceKeys } from "./recurring-transactions.service.js";
@@ -169,48 +169,53 @@ export interface ForecastOptions {
 
 type PlannedItem = Omit<ForecastItem, "overdue"> & { categoryId: number | null; isExpense: boolean };
 
+/** Deuda a largo plazo: no es dinero disponible, así que la previsión en total no la cuenta. */
+const LONG_TERM_DEBT = new Set(["loan", "mortgage"]);
+
 export async function getForecast(userId: number, days = 90, options: ForecastOptions = {}): Promise<ForecastResult> {
   const today = getTodayIsoDate();
   const horizon = addDaysIso(today, days);
   const accountId = options.accountId ?? null;
 
-  const [balances, pending, rules, generated] = await Promise.all([
-    getAccountsWithBalance(userId),
-    db
-      .select({
-        id: transactions.id,
-        date: transactions.date,
-        amount: transactions.amount,
-        type: transactions.type,
-        payee: transactions.payee,
-        transferId: transactions.transferId,
-        categoryId: transactions.categoryId,
-      })
-      .from(transactions)
-      .innerJoin(accounts, eq(transactions.accountId, accounts.id))
-      .where(
-        and(
-          eq(transactions.userId, userId),
-          eq(transactions.cleared, false),
-          // En total, un traspaso entre cuentas propias no cambia nada; en una cuenta, sí.
-          accountId ? eq(transactions.accountId, accountId) : inArray(transactions.type, ["income", "expense"]),
-          eq(accounts.archived, false),
-          lte(transactions.date, horizon),
-        ),
-      ),
+  // Las cuentas que se prevén: una, o en total las activas que son dinero
+  // disponible (sin préstamos ni hipotecas: con una hipoteca, «tu saldo total
+  // quedaría en negativo» no tendría sentido). Un traspaso entre dos cuentas de
+  // este conjunto se anula solo; uno hacia fuera (la cuota de la hipoteca) resta.
+  const balances = await getAccountsWithBalance(userId);
+  const pool = balances.filter((a) => !a.archived && (accountId ? a.id === accountId : !LONG_TERM_DEBT.has(a.type)));
+  const poolIds = pool.map((a) => a.id);
+  const inPool = (id: number | null) => id != null && poolIds.includes(id);
+
+  const [pending, rules, generated] = await Promise.all([
+    poolIds.length === 0
+      ? []
+      : db
+          .select({
+            id: transactions.id,
+            date: transactions.date,
+            amount: transactions.amount,
+            type: transactions.type,
+            payee: transactions.payee,
+            transferId: transactions.transferId,
+            categoryId: transactions.categoryId,
+          })
+          .from(transactions)
+          .where(
+            and(
+              eq(transactions.userId, userId),
+              eq(transactions.cleared, false),
+              inArray(transactions.accountId, poolIds),
+              lte(transactions.date, horizon),
+            ),
+          ),
     db
       .select({ rule: recurringTransactions })
       .from(recurringTransactions)
-      .innerJoin(accounts, eq(recurringTransactions.accountId, accounts.id))
       .where(
         and(
           eq(recurringTransactions.userId, userId),
           eq(recurringTransactions.active, true),
-          eq(accounts.archived, false),
           lte(recurringTransactions.startDate, horizon),
-          accountId
-            ? or(eq(recurringTransactions.accountId, accountId), eq(recurringTransactions.targetAccountId, accountId))
-            : undefined,
         ),
       ),
     // Ocurrencias que ya existen como movimiento (liquidado o no): no se cuentan dos veces.
@@ -239,17 +244,20 @@ export async function getForecast(userId: number, days = 90, options: ForecastOp
     categoryId: p.categoryId,
     isExpense: p.type === "expense",
   }));
+  // Dos patas de un mismo traspaso dentro del conjunto se anulan: fuera de la lista.
+  const pendingIds = new Set(pending.map((p) => p.id));
+  const internal = new Set(pending.filter((p) => p.type === "transfer" && p.transferId != null && pendingIds.has(p.transferId)).map((p) => p.id));
+  for (let i = items.length - 1; i >= 0; i--) if (internal.has(pending[i].id)) items.splice(i, 1);
 
   for (const { rule } of rules) {
     let sign: number;
     if (rule.type === "transfer") {
-      // Un traspaso entre cuentas propias no cambia el saldo total; en una cuenta, entra o sale.
-      if (!accountId || !rule.targetAccountId) continue;
-      sign = rule.targetAccountId === accountId ? 1 : -1;
+      // Entra si el destino está en el conjunto y sale si lo está el origen: entre dos, nada.
+      sign = (inPool(rule.targetAccountId) ? 1 : 0) - (inPool(rule.accountId) ? 1 : 0);
     } else {
-      if (accountId && rule.accountId !== accountId) continue;
-      sign = rule.type === "income" ? 1 : -1;
+      sign = inPool(rule.accountId) ? (rule.type === "income" ? 1 : -1) : 0;
     }
+    if (sign === 0) continue;
     const dates = listOccurrenceDates(
       { startDate: rule.startDate, endDate: rule.endDate, cadence: rule.cadence, intervalCount: rule.intervalCount },
       horizon,
@@ -267,10 +275,7 @@ export async function getForecast(userId: number, days = 90, options: ForecastOp
     }
   }
 
-  const active = balances.filter((a) => !a.archived);
-  const startBalance = accountId
-    ? active.find((a) => a.id === accountId)?.balance ?? 0
-    : active.reduce((s, a) => s + a.balance, 0);
+  const startBalance = pool.reduce((s, a) => s + a.balance, 0);
   const plain = items.map(({ categoryId: _c, isExpense: _e, ...rest }) => rest);
   const forecast = buildForecast({ startBalance, today, days, items: plain });
 

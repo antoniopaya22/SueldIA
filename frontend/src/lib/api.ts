@@ -715,7 +715,7 @@ export const markAllAlertsRead = () =>
 export interface Account {
   id: number;
   name: string;
-  type: "bank" | "credit_card" | "cash" | "investment" | "other";
+  type: "bank" | "credit_card" | "cash" | "investment" | "loan" | "mortgage" | "other";
   currency: string;
   initialBalance: number;
   color: string;
@@ -733,8 +733,17 @@ export interface Account {
   /** Última conciliación con el extracto del banco. */
   lastReconciledAt?: string | null;
   lastReconciledBalance?: number | null;
+  /** Última valoración (inversiones): el saldo ya la incluye. */
+  valuation: { date: string; value: number } | null;
+  /** Préstamo o hipoteca: importe, TIN anual (%), plazo en meses y primera cuota. */
+  loanPrincipal: number | null;
+  loanRate: number | null;
+  loanTermMonths: number | null;
+  loanStartDate: string | null;
   createdAt: string;
 }
+
+export type LoanFields = Partial<Pick<Account, "loanPrincipal" | "loanRate" | "loanTermMonths" | "loanStartDate">>;
 
 export const getAccounts = () =>
   request<{ data: Account[] }>("/accounts").then((r) => r.data);
@@ -750,12 +759,41 @@ export const createAccount = (data: {
   initialBalance?: number;
   color?: string;
   icon?: string | null;
-}) => request<Account>("/accounts", { method: "POST", body: JSON.stringify(data) });
+} & LoanFields) => request<Account>("/accounts", { method: "POST", body: JSON.stringify(data) });
 
 export const updateAccount = (
   id: number,
-  data: { name: string; type?: string; color?: string; initialBalance?: number; icon?: string | null },
+  data: { name: string; type?: string; color?: string; initialBalance?: number; icon?: string | null } & LoanFields,
 ) => request<Account>(`/accounts/${id}`, { method: "PUT", body: JSON.stringify(data) });
+
+export interface AmortizationRow { n: number; date: string; payment: number; interest: number; principal: number; remaining: number }
+export interface Amortization {
+  payment: number;
+  totalInterest: number;
+  position: {
+    paidCount: number;
+    remainingCount: number;
+    interestPaid: number;
+    interestRemaining: number;
+    theoreticalRemaining: number;
+    nextPayment: AmortizationRow | null;
+    endDate: string;
+  };
+  rows: AmortizationRow[];
+}
+
+export const getAmortization = (accountId: number) => request<Amortization>(`/accounts/${accountId}/amortization`);
+
+export interface AccountValuation { id: number; date: string; value: number }
+
+export const getValuations = (accountId: number) =>
+  request<{ data: AccountValuation[] }>(`/accounts/${accountId}/valuations`).then((r) => r.data);
+
+export const addValuation = (accountId: number, data: { value: number; date?: string }) =>
+  request<AccountValuation>(`/accounts/${accountId}/valuations`, { method: "POST", body: JSON.stringify(data) });
+
+export const deleteValuation = (accountId: number, valuationId: number) =>
+  request<{ ok: boolean }>(`/accounts/${accountId}/valuations/${valuationId}`, { method: "DELETE" });
 
 export const deleteAccount = (id: number) =>
   request<{ ok: boolean }>(`/accounts/${id}`, { method: "DELETE" });
@@ -1390,6 +1428,9 @@ export interface BalanceHistory {
   accounts: Array<{ id: number; name: string; color: string; type: string; archived: boolean; series: number[] }>;
   /** Suma de las cuentas no archivadas. */
   total: number[];
+  /** Patrimonio: saldos positivos (lo que tienes) y negativos (lo que debes), por mes. */
+  assets: number[];
+  liabilities: number[];
 }
 
 export const getBalanceHistory = (months = 12) => request<BalanceHistory>(`/finance/balance-history?months=${months}`);

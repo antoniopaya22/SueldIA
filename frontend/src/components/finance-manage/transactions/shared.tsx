@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import {
-  ArrowDownRight, ArrowUpRight, ArrowLeftRight, Wallet, Landmark, CreditCard, Banknote, TrendingUp,
+  ArrowDownRight, ArrowUpRight, ArrowLeftRight, Wallet, Landmark, CreditCard, Banknote, TrendingUp, HandCoins, House,
   Check, ChevronDown, X, type LucideIcon,
 } from "lucide-react";
 import type { Account, CategoryGroup, RecurringCadence } from "../../../lib/api";
@@ -51,6 +51,8 @@ export const ACCOUNT_ICONS: Record<Account["type"], LucideIcon> = {
   credit_card: CreditCard,
   cash: Banknote,
   investment: TrendingUp,
+  loan: HandCoins,
+  mortgage: House,
   other: Wallet,
 };
 

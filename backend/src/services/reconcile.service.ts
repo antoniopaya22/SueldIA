@@ -2,7 +2,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { accounts, transactions } from "../db/schema.js";
 import { effectiveTransaction } from "./transaction-filters.js";
-import { signedAmountSql } from "./finance.service.js";
+import { getValuationAdjustments, signedAmountSql } from "./finance.service.js";
+import { adjustmentAt } from "./loans.service.js";
 import { todayIso } from "../utils/dates.js";
 
 // Conciliar una cuenta: comprobar que el saldo liquidado de SueldIA coincide
@@ -28,7 +29,9 @@ export async function clearedBalance(userId: number, accountId: number): Promise
     .select({ total: sql<number>`coalesce(sum(${signedAmountSql}) filter (where ${effectiveTransaction()}), 0)` })
     .from(transactions)
     .where(and(eq(transactions.userId, userId), eq(transactions.accountId, accountId)));
-  return round2(account.initialBalance + Number(row?.total ?? 0));
+  // Con valoraciones (inversiones), el saldo parte de la última: igual que en Cuentas.
+  const valuation = adjustmentAt((await getValuationAdjustments(userId)).get(accountId), todayIso());
+  return round2(account.initialBalance + Number(row?.total ?? 0) + valuation);
 }
 
 export async function reconcileAccount(

@@ -43,3 +43,25 @@ describe("buildBalanceHistory", () => {
     expect(history.total).toEqual([160, 150, 162]);
   });
 });
+
+describe("buildBalanceHistory con valoraciones y patrimonio", () => {
+  const months = ["2025-01", "2025-02", "2025-03"];
+  const accounts = [
+    { id: 1, name: "Fondo", color: "#000000", type: "investment", archived: false, initialBalance: 1000 },
+    { id: 2, name: "Tarjeta", color: "#111111", type: "credit_card", archived: false, initialBalance: -200 },
+  ];
+  const nets = [{ accountId: 1, month: "2025-03", net: 100 }];
+  // Valorado en 1.150 el 15 de febrero (ajuste +150 sobre el saldo contable de 1.000).
+  const valuations = new Map([[1, [{ date: "2025-02-15", value: 1150, adjustment: 150 }]]]);
+  const history = buildBalanceHistory(accounts, nets, months, valuations);
+
+  it("desde la valoración, el saldo es el valor más los movimientos posteriores", () => {
+    expect(history.accounts[0].series).toEqual([1000, 1150, 1250]);
+  });
+
+  it("separa lo que tienes de lo que debes", () => {
+    expect(history.assets).toEqual([1000, 1150, 1250]);
+    expect(history.liabilities).toEqual([-200, -200, -200]);
+    expect(history.total).toEqual([800, 950, 1050]);
+  });
+});
