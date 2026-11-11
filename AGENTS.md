@@ -26,8 +26,18 @@ Aplicación web monorepo de gestión y análisis de nóminas españolas. Solo ve
 | `payslip_notes` | Notas libres por nómina |
 | `tags` | Etiquetas reutilizables |
 | `payslip_tags` | Relación M:N nóminas ↔ tags |
-| `alert_rules` | Reglas de alerta configurables |
+| `alert_rules` | Reglas de alerta configurables (nóminas y finanzas) |
 | `alert_history` | Historial de alertas emitidas |
+| `accounts` | Cuentas (banco, tarjeta, efectivo, inversión) con saldo inicial y orden |
+| `category_groups` / `categories` | Grupos y categorías del presupuesto (categories no tiene `user_id`: la propiedad va por el grupo) |
+| `transactions` | Movimientos: gastos, ingresos, traspasos (dos filas enlazadas por `transfer_id`), partes de un gasto dividido (`split_group_id`), ocurrencias de recurrentes, enlace opcional a una nómina |
+| `recurring_transactions` | Reglas recurrentes que generan ocurrencias (cron diario y al crear/editar) |
+| `budgets` | Asignado por categoría y mes (`YYYY-MM`) |
+| `category_targets` | Objetivo por categoría (mensual o para una fecha) |
+| `category_rules` | «Si el beneficiario contiene X → categoría Y» |
+| `user_preferences` | Preferencias de interfaz (clave → JSON) |
+
+**RLS**: todas las tablas tienen Row Level Security activado y sin políticas (`.enableRLS()` en `schema.ts`). La app no usa la Data API de Supabase; el backend se conecta como propietario. Una tabla nueva sin `.enableRLS()` hace fallar `db:migrate`.
 
 ## Flujo de Parsing de Nóminas
 

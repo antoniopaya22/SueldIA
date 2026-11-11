@@ -120,8 +120,8 @@ app.use("/api/client-errors", authMiddleware, clientErrorsRouter);
 // ─── Error handler (must be last) ──────────────────────────────
 app.use(errorHandler);
 
-// En Vercel la app se importa como función (ver api/index.ts) — solo escucha
-// un puerto en desarrollo local.
+// En Vercel el servicio "backend" importa `app` directamente (vercel.json) —
+// solo se abre un puerto en desarrollo local.
 if (!process.env.VERCEL) {
   app.listen(env.PORT, () => {
     logger.info(`🚀 Backend running on http://localhost:${env.PORT}`);

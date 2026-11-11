@@ -15,7 +15,7 @@ const envSchema = z.object({
   // defecto solo evita que tests/typecheck exijan configurarlo en local.
   SUPABASE_URL: z.string().default("https://localhost.supabase.co"),
   // Secreto compartido con Vercel Cron para autenticar la llamada diaria a
-  // /api/cron/evaluate-alerts — sin configurar, esa ruta responde 503 (ver
+  // /api/cron/daily — sin configurar, esa ruta responde 503 (ver
   // routes/cron.ts). No hace falta en local/tests.
   CRON_SECRET: z.string().optional(),
   // Service role key de Supabase (Project Settings → API → service_role,

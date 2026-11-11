@@ -65,7 +65,14 @@ No hay `tesseract.js`/`canvas` ni disco para PDFs — decisión deliberada (ver 
 
 ## Schema de Base de Datos
 
-`src/db/schema.ts` (Drizzle `pg-core`). Tablas: `users`, `profiles`, `payslips` (sin `file_path` — no se guarda el PDF), `payslip_concepts`, `payslip_notes`, `tags`, `payslip_tags`, `alert_rules`, `alert_history`, `accounts`, `category_groups`, `categories`, `transactions`, `recurring_transactions`.
+`src/db/schema.ts` (Drizzle `pg-core`). Tablas: `users`, `profiles`, `payslips` (sin `file_path` — no se guarda el PDF), `payslip_concepts`, `payslip_notes`, `tags`, `payslip_tags`, `alert_rules`, `alert_history`, `accounts`, `category_groups`, `categories`, `transactions`, `recurring_transactions`, `budgets`, `category_targets`, `category_rules`, `user_preferences`.
+
+- **Toda tabla lleva `.enableRLS()`** (sin políticas): cierra la Data API de Supabase. `db:migrate` falla si falta.
+- **Fechas**: `isoDateSchema` / `monthKeySchema` de `utils/dates.ts` (rechazan fechas que no existen) y `todayIso()` para "hoy" en hora de Madrid. Nunca una regex suelta ni `new Date().toISOString()` para el día.
+- **Importes**: `moneySchema` / `positiveMoneySchema` de `utils/validation.ts` (finitos y acotados).
+- **CSV**: `toCsv()` de `utils/csv.ts` (escapa y neutraliza fórmulas).
+- **Altas**: `assertUnderLimit()` de `utils/limits.ts` para los topes por usuario.
+- **Pruebas de integración**: `src/test/` + `TEST_DATABASE_URL`. Toda ruta nueva que reciba un id debe añadirse a `routes/authorization.test.ts`.
 
 ## Configuración
 
