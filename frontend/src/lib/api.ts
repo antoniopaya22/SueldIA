@@ -1422,6 +1422,10 @@ export interface CategoryGroupBudget {
 export interface BudgetSummary {
   month: string;
   readyToAssign: number;
+  /** De dónde sale «Para presupuestar»: ingresos + saldos iniciales − asignado (todo hasta este mes). */
+  readyBreakdown: { income: number; initialBalances: number; assigned: number };
+  /** Gasto del mes sin categoría (en negativo). */
+  uncategorizedActivity: number;
   /** Lo que falta asignar este mes para cumplir todos los objetivos. */
   targetsShortfall: number;
   groups: CategoryGroupBudget[];

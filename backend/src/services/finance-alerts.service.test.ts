@@ -9,6 +9,8 @@ const cat = (id: number, name: string, assigned: number, carryIn: number, spent:
 const summary: BudgetSummary = {
   month: "2025-03",
   readyToAssign: 0,
+  readyBreakdown: { income: 0, initialBalances: 0, assigned: 0 },
+  uncategorizedActivity: 0,
   targetsShortfall: 0,
   groups: [{
     id: 1,

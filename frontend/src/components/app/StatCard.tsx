@@ -22,6 +22,8 @@ interface StatCardProps {
   delta?: StatDelta;
   /** Línea secundaria bajo el valor. */
   hint?: ReactNode;
+  /** Deja que el hint ocupe varias líneas (por defecto se recorta a una en escritorio). */
+  hintWrap?: boolean;
   /** Serie para el minigráfico (solo valores). */
   sparkline?: number[];
   sparklineColor?: string;
@@ -50,7 +52,7 @@ export function DeltaBadge({ delta }: { delta: StatDelta }) {
   );
 }
 
-export function StatCard({ label, value, icon: Icon, delta, hint, sparkline, sparklineColor, emphasis, className }: StatCardProps) {
+export function StatCard({ label, value, icon: Icon, delta, hint, hintWrap, sparkline, sparklineColor, emphasis, className }: StatCardProps) {
   return (
     // En móvil van de dos en dos (la destacada ocupa la fila entera): más compactas y sin minigráfico salvo en la destacada.
     <div className={cn("relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card p-4 shadow-[0_1px_2px_rgb(0_0_0/0.03)] sm:p-5", emphasis && "col-span-2 sm:col-span-1", className)}>
@@ -62,7 +64,7 @@ export function StatCard({ label, value, icon: Icon, delta, hint, sparkline, spa
       <div className="mt-auto flex items-end justify-between gap-3 pt-2 sm:pt-3">
         <div className="min-w-0 space-y-1">
           {delta && <DeltaBadge delta={delta} />}
-          {hint && <p className="line-clamp-2 text-xs text-muted-foreground sm:line-clamp-none sm:truncate">{hint}</p>}
+          {hint && <p className={cn("text-xs text-muted-foreground", hintWrap ? "" : "line-clamp-2 sm:line-clamp-none sm:truncate")}>{hint}</p>}
         </div>
         {sparkline && sparkline.length > 1 && (
           <Sparkline values={sparkline} color={sparklineColor} className={cn("h-9 w-20 shrink-0", !emphasis && "hidden sm:block")} />

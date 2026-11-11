@@ -1,6 +1,6 @@
-import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, lte, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { budgets, categories, categoryGroups, categoryTargets, transactions } from "../db/schema.js";
+import { accounts, budgets, categories, categoryGroups, categoryTargets, transactions } from "../db/schema.js";
 import { effectiveTransaction } from "./transaction-filters.js";
 
 // Presupuesto simplificado estilo YNAB: "asignar lo que ya tienes". No es
@@ -47,6 +47,10 @@ export interface CategoryGroupBudget {
 export interface BudgetSummary {
   month: string;
   readyToAssign: number;
+  /** De dónde sale «Para presupuestar» (ingresos + saldos iniciales − asignado, todo hasta este mes). */
+  readyBreakdown: { income: number; initialBalances: number; assigned: number };
+  /** Gasto del mes sin categoría (en negativo): no descuenta de ninguna categoría. */
+  uncategorizedActivity: number;
   /** Suma de lo que falta asignar este mes para cumplir todos los objetivos. */
   targetsShortfall: number;
   groups: CategoryGroupBudget[];
@@ -165,7 +169,7 @@ export async function getBudgetSummary(userId: number, month: string): Promise<B
   const endOfMonth = monthEndBoundary(month);
   const startOfMonth = `${month}-01`;
 
-  const [groupRows, catRows, assignedThisMonth, cumulativeAssigned, activityThisMonth, cumulativeActivity, incomeRow, targetRows] =
+  const [groupRows, catRows, assignedThisMonth, cumulativeAssigned, activityThisMonth, cumulativeActivity, incomeRow, targetRows, initialRow, uncatRow] =
     await Promise.all([
       db
         .select()
@@ -194,6 +198,22 @@ export async function getBudgetSummary(userId: number, month: string): Promise<B
           ),
         ),
       db.select().from(categoryTargets).where(eq(categoryTargets.userId, userId)),
+      db
+        .select({ total: sql<number>`coalesce(sum(${accounts.initialBalance}), 0)` })
+        .from(accounts)
+        // Cuentas que ya existían ese mes (endOfMonth es un límite de texto, no una fecha real).
+        .where(and(eq(accounts.userId, userId), sql`to_char(${accounts.createdAt} at time zone 'Europe/Madrid', 'YYYY-MM') <= ${month}`)),
+      db
+        .select({ total: sql<number>`coalesce(sum(${transactions.amount}), 0)` })
+        .from(transactions)
+        .where(and(
+          eq(transactions.userId, userId),
+          effectiveTransaction(),
+          eq(transactions.type, "expense"),
+          isNull(transactions.categoryId),
+          gte(transactions.date, startOfMonth),
+          lte(transactions.date, endOfMonth),
+        )),
     ]);
 
   return assembleBudgetSummary({
@@ -205,6 +225,8 @@ export async function getBudgetSummary(userId: number, month: string): Promise<B
     activityThisMonth,
     cumulativeActivity,
     incomeThroughMonth: Number(incomeRow[0]?.total ?? 0),
+    initialBalances: Number(initialRow[0]?.total ?? 0),
+    uncategorizedThisMonth: -Number(uncatRow[0]?.total ?? 0),
     targets: new Map(
       targetRows.map((t) => [t.categoryId, { type: t.type, amount: t.amount, targetMonth: t.targetMonth }]),
     ),
@@ -221,6 +243,10 @@ export interface BudgetSummaryInputs {
   activityThisMonth: Map<number, number>;
   cumulativeActivity: Map<number, number>;
   incomeThroughMonth: number;
+  /** Saldos iniciales de las cuentas (dinero que ya estaba ahí antes de empezar). */
+  initialBalances?: number;
+  /** Gasto del mes sin categoría, en negativo. */
+  uncategorizedThisMonth?: number;
   /** Objetivos por categoría; opcional (sin él, ninguna categoría tiene objetivo). */
   targets?: Map<number, TargetInput>;
 }
@@ -258,8 +284,12 @@ export function assembleBudgetSummary(input: BudgetSummaryInputs): BudgetSummary
   // "Para presupuestar" = todo lo ingresado hasta este mes, menos todo lo
   // asignado hasta este mes (a cualquier categoría) — arrastra de un mes a
   // otro igual que "available", así que no hace falta guardar un saldo aparte.
+  // Los saldos iniciales cuentan como dinero disponible: quien crea una cuenta
+  // con 5.000 € tenía 0 € para asignar (con YNAB no se notaba porque allí el
+  // saldo inicial llega como un ingreso).
   const totalAssignedThroughMonth = [...input.cumulativeAssigned.values()].reduce((s, v) => s + v, 0);
-  const readyToAssign = input.incomeThroughMonth - totalAssignedThroughMonth;
+  const initialBalances = input.initialBalances ?? 0;
+  const readyToAssign = input.incomeThroughMonth + initialBalances - totalAssignedThroughMonth;
 
   const targetsShortfall = groups
     .flatMap((g) => g.categories)
@@ -268,6 +298,12 @@ export function assembleBudgetSummary(input: BudgetSummaryInputs): BudgetSummary
   return {
     month: input.month,
     readyToAssign: Math.round(readyToAssign * 100) / 100,
+    readyBreakdown: {
+      income: roundCents(input.incomeThroughMonth),
+      initialBalances: roundCents(initialBalances),
+      assigned: roundCents(totalAssignedThroughMonth),
+    },
+    uncategorizedActivity: roundCents(input.uncategorizedThisMonth ?? 0),
     targetsShortfall: roundCents(targetsShortfall),
     groups,
   };

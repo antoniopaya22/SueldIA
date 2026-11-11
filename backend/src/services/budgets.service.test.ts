@@ -160,3 +160,23 @@ describe("assembleBudgetSummary · arrastre y objetivos", () => {
     expect(summary.groups[0].categories.every((c) => c.target === null)).toBe(true);
   });
 });
+
+describe("Para presupuestar con saldos iniciales", () => {
+  it("suma los saldos iniciales y explica de dónde sale la cifra", () => {
+    const s = assembleBudgetSummary({
+      month: "2026-03",
+      groupRows: [{ id: 1, name: "Casa" }],
+      catRows: [{ id: 10, groupId: 1, name: "Super" }],
+      assignedThisMonth: new Map([[10, 300]]),
+      cumulativeAssigned: new Map([[10, 300]]),
+      activityThisMonth: new Map([[10, -120]]),
+      cumulativeActivity: new Map([[10, -120]]),
+      incomeThroughMonth: 2000,
+      initialBalances: 5000,
+      uncategorizedThisMonth: -45,
+    });
+    expect(s.readyToAssign).toBe(6700);
+    expect(s.readyBreakdown).toEqual({ income: 2000, initialBalances: 5000, assigned: 300 });
+    expect(s.uncategorizedActivity).toBe(-45);
+  });
+});
