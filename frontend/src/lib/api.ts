@@ -1681,6 +1681,11 @@ export const updateSavingsGoal = (id: number, data: SavingsGoalInput) =>
   request<SavingsGoal>(`/savings-goals/${id}`, { method: "PATCH", body: JSON.stringify(data) });
 export const deleteSavingsGoal = (id: number) => request<{ ok: boolean }>(`/savings-goals/${id}`, { method: "DELETE" });
 
+// ─── Datos de ejemplo ───────────────────────────────────────────
+export const getDemoStatus = () => request<{ loaded: boolean }>("/demo");
+export const loadDemoData = () => request<{ loaded: boolean }>("/demo", { method: "POST" });
+export const removeDemoData = () => request<{ loaded: boolean; removed: boolean }>("/demo", { method: "DELETE" });
+
 // ─── Notificaciones push ────────────────────────────────────────
 export const getPushKey = () => request<{ publicKey: string }>("/push/key");
 export const savePushSubscription = (sub: PushSubscriptionJSON) =>

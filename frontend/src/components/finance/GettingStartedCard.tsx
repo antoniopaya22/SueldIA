@@ -1,4 +1,6 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
+import { usePreference } from "../../hooks/use-preference";
+import { LoadDemoButton } from "../app/DemoData";
 import { useQuery } from "@tanstack/react-query";
 import { Check, Circle, Rocket, X } from "lucide-react";
 import { getAccounts, getCategories, getTransactions } from "../../lib/api";
@@ -7,16 +9,6 @@ import { useSeedDefaultCategories } from "../categories/useSeedDefaultCategories
 import { SectionCard } from "../app";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
-
-const DISMISS_KEY = "sueldia:getting-started-dismissed";
-
-function wasDismissed(): boolean {
-  try {
-    return window.localStorage.getItem(DISMISS_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
 
 interface Step {
   key: string;
@@ -32,7 +24,8 @@ interface Step {
  * o si el usuario la oculta (salvo que `alwaysShow`, p. ej. sin cuentas).
  */
 export function GettingStartedCard({ alwaysShow = false }: { alwaysShow?: boolean }) {
-  const [dismissed, setDismissed] = useState(wasDismissed);
+  // Se recuerda en la cuenta (también en otros dispositivos), no solo en este navegador.
+  const [dismissed, setDismissed] = usePreference("getting-started-dismissed", false, (v): v is boolean => typeof v === "boolean");
   const seed = useSeedDefaultCategories();
 
   const { data: accounts, isLoading: loadingAccounts } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
@@ -84,14 +77,7 @@ export function GettingStartedCard({ alwaysShow = false }: { alwaysShow?: boolea
   if (doneCount === steps.length) return null;
   if (dismissed && !alwaysShow) return null;
 
-  const dismiss = () => {
-    try {
-      window.localStorage.setItem(DISMISS_KEY, "1");
-    } catch {
-      // Sin almacenamiento: se oculta solo en esta visita.
-    }
-    setDismissed(true);
-  };
+  const dismiss = () => setDismissed(true);
 
   return (
     <SectionCard
@@ -128,6 +114,10 @@ export function GettingStartedCard({ alwaysShow = false }: { alwaysShow?: boolea
           );
         })}
       </ol>
+      <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border pt-4">
+        <p className="min-w-0 flex-1 text-xs text-muted-foreground">¿Prefieres verlo funcionando antes? Carga un año de datos ficticios y quítalos cuando quieras.</p>
+        <LoadDemoButton />
+      </div>
     </SectionCard>
   );
 }

@@ -48,6 +48,7 @@ import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 import { CommandMenu } from "@/components/app/CommandMenu";
 import { ShortcutsDialog } from "@/components/app/ShortcutsDialog";
+import { DemoBanner } from "@/components/app/DemoData";
 import { PreferencesBoot } from "@/components/app/PreferencesBoot";
 import { MobileTabBar } from "@/components/app/MobileTabBar";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -625,7 +626,10 @@ function AppShellInner({ currentPath, children }: AppShellProps) {
         <SidebarInset className="md:h-[calc(100svh-1rem)] md:overflow-hidden md:ring-1 md:ring-black/[0.04] dark:md:ring-white/[0.06]">
           <div id="app-scroll" className="flex min-h-0 flex-1 flex-col md:overflow-y-auto">
             <AppHeader currentPath={currentPath} onOpenSearch={() => setSearchOpen(true)} />
-            <div className="app-page mx-auto w-full max-w-7xl flex-1 px-4 pt-5 pb-[calc(var(--mobile-nav-h)+1.5rem)] sm:px-6 sm:pt-6 md:pb-6 lg:px-10 lg:py-9">{children}</div>
+            <div className="app-page mx-auto w-full max-w-7xl flex-1 px-4 pt-5 pb-[calc(var(--mobile-nav-h)+1.5rem)] sm:px-6 sm:pt-6 md:pb-6 lg:px-10 lg:py-9">
+              <QueryClientProvider client={appQueryClient}><DemoBanner /></QueryClientProvider>
+              {children}
+            </div>
           </div>
         </SidebarInset>
         <MobileTabBar workspace={activeWorkspace} currentPath={currentPath} />

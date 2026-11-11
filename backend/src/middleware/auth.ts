@@ -3,7 +3,7 @@ import { jwtVerify, createRemoteJWKSet } from "jose";
 import { eq } from "drizzle-orm";
 import { env } from "../config.js";
 import { db } from "../db/index.js";
-import { users } from "../db/schema.js";
+import { profiles, users } from "../db/schema.js";
 import { createDefaultAlertRules } from "../services/alerts.service.js";
 import { logger } from "../logger.js";
 
@@ -70,8 +70,13 @@ async function findOrCreateUser(payload: SupabasePayload & { email: string }): P
   if (inserted) {
     try {
       await createDefaultAlertRules(inserted.id);
+      // Un perfil con el nombre de pila: así se puede subir la primera nómina
+      // sin pasar antes por «Perfiles».
+      const fullName = payload.user_metadata?.full_name ?? payload.user_metadata?.name ?? "";
+      const firstName = fullName.trim().split(/\s+/)[0] || "Yo";
+      await db.insert(profiles).values({ userId: inserted.id, name: firstName.slice(0, 100) });
     } catch (err) {
-      logger.error({ err, userId: inserted.id }, "No se pudieron crear las alertas por defecto");
+      logger.error({ err, userId: inserted.id }, "No se pudieron crear las alertas o el perfil por defecto");
     }
   }
   const [created] = await db

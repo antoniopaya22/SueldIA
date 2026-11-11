@@ -33,6 +33,7 @@ import {
 import { cn } from "cn";
 import { isIrpfConcept } from "../lib/payslip-concepts";
 import { setUrlParams, useUrlParam } from "../lib/url-state";
+import { LoadDemoButton } from "./app/DemoData";
 
 type ConceptBreakdownItem = DashboardData["conceptBreakdown"][number];
 type ConceptSortColumn = "name" | "category" | "average" | "total" | "count";
@@ -322,7 +323,9 @@ function DashboardView() {
       actionLabel="Subir nóminas"
       actionHref="/app/upload"
       actionIcon={FileText}
-    />
+    >
+      <LoadDemoButton />
+    </EmptyState>
   );
 
   if (loadError && !isLoading) {

@@ -267,6 +267,13 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect((await call("a", "DELETE", `/savings-goals/${goalId}`)).status).toBe(200);
   });
 
+  it("datos de ejemplo: B no puede quitar los de A", async () => {
+    expect((await call("a", "POST", "/demo")).status).toBe(201);
+    expect((await call("b", "DELETE", "/demo")).json).toMatchObject({ removed: false });
+    expect((await call("a", "GET", "/demo")).json).toEqual({ loaded: true });
+    expect((await call("a", "DELETE", "/demo")).json).toMatchObject({ removed: true });
+  }, 60_000);
+
   it("renombrar beneficiarios solo toca los propios", async () => {
     const r = await call("b", "POST", "/transactions/payees/rename", { from: ["Tienda"], to: "Hackeado" });
     expect(r.json).toMatchObject({ ok: true, updated: 0 });
