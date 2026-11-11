@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLeaveGuard } from "../../hooks/use-leave-guard";
+import { deferWithUndo } from "../../lib/undo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Building2, ChevronDown, FileText, Gift, Link2, Loader2, MoreHorizontal,
@@ -269,11 +270,17 @@ function NotesCard({ payslipId }: { payslipId: number }) {
     onSuccess: () => { setContent(""); refresh(); },
     onError: () => toast.error("No se pudo guardar la nota"),
   });
-  const deleteMut = useMutation({
-    mutationFn: deleteNote,
-    onSuccess: refresh,
-    onError: () => toast.error("No se pudo borrar la nota"),
-  });
+  // Borrar con «Deshacer»: desaparece al momento y se borra a los pocos segundos.
+  const removeNote = (id: number) => {
+    queryClient.setQueryData<typeof notes>(["notes", payslipId], (old) => old?.filter((n) => n.id !== id));
+    deferWithUndo({
+      message: "Nota borrada",
+      commit: () => deleteNote(id),
+      onUndo: refresh,
+      onCommitted: refresh,
+      onError: () => { toast.error("No se pudo borrar la nota"); refresh(); },
+    });
+  };
 
   return (
     <SectionCard title="Notas" icon={NotebookPen}>
@@ -287,8 +294,9 @@ function NotesCard({ payslipId }: { payslipId: number }) {
               </p>
               <button
                 type="button"
-                onClick={() => deleteMut.mutate(n.id)}
-                className="absolute top-2 right-2 flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-muted hover:text-destructive focus-visible:opacity-100"
+                onClick={() => removeNote(n.id)}
+                // Visible siempre en pantallas táctiles (sin hover no se veía).
+                className="absolute top-1.5 right-1.5 flex size-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-opacity hover:bg-muted hover:text-destructive focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
                 aria-label="Borrar nota"
               >
                 <Trash2 className="size-3.5" />

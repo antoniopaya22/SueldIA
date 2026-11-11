@@ -29,8 +29,16 @@ async function request<T>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
+  // Escrituras con keepalive: si la pestaña se cierra justo después (p. ej.
+  // un borrado con «Deshacer» que se confirma al salir), la petición llega
+  // igualmente. El navegador lo limita a cuerpos de 64 KB.
+  const method = (options?.method ?? "GET").toUpperCase();
+  const bodySize = typeof options?.body === "string" ? options.body.length : 0;
+  const keepalive = options?.keepalive ?? (method !== "GET" && bodySize < 60_000);
+
   const res = await fetch(`${BASE}${path}`, {
     ...options,
+    keepalive,
     headers,
   });
 

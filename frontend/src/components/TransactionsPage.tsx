@@ -33,6 +33,7 @@ import { Providers } from "./Providers";
 import { toast } from "sonner";
 import { formatCurrency } from "../lib/format";
 import { invalidateFinance } from "../lib/finance-cache";
+import { deferWithUndo, groupIdsBy } from "../lib/undo";
 import { useTransactionFilters } from "../hooks/use-transaction-filters";
 import { PERIOD_LABELS, activePeriod, periodRange, type PeriodKey } from "../lib/transaction-filters";
 import { EmptyState } from "./ui/EmptyState";
@@ -127,7 +128,6 @@ function TransactionsView() {
   const [recurringDialogOpen, setRecurringDialogOpen] = useState(false);
   const [editingRecurringId, setEditingRecurringId] = useState<number | null>(null);
   const [recurringForm, setRecurringForm] = useState<RecurringForm>(() => emptyRecurringForm(today, null));
-  const [deleteTxTarget, setDeleteTxTarget] = useState<Transaction | null>(null);
   const [settleTarget, setSettleTarget] = useState<Transaction | null>(null);
   const [splitTarget, setSplitTarget] = useState<Transaction | null>(null);
   const [deleteRecurringTarget, setDeleteRecurringTarget] = useState<RecurringTransaction | null>(null);
@@ -175,15 +175,58 @@ function TransactionsView() {
     setRecurringForm(emptyRecurringForm(today, selectedAccountId));
   };
 
-  const deleteMut = useMutation({
-    mutationFn: deleteTransaction,
-    onSuccess: () => { invalidateTx(); toast.success("Transacción eliminada"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
+  // Quita de la lista (al momento) los movimientos indicados y lo que se borra
+  // con ellos: la otra pata de un traspaso y las partes de un gasto dividido.
+  const hideTransactions = (ids: number[]) => {
+    const rows = txData?.data ?? [];
+    const hidden = new Set(ids);
+    for (const t of rows) {
+      if (!hidden.has(t.id)) continue;
+      if (t.transferId) hidden.add(t.transferId);
+      if (t.splitGroupId) for (const o of rows) if (o.splitGroupId === t.splitGroupId) hidden.add(o.id);
+    }
+    queryClient.setQueriesData<Awaited<ReturnType<typeof getTransactions>>>({ queryKey: ["transactions"] }, (old) =>
+      old && Array.isArray(old.data) ? { ...old, data: old.data.filter((t) => !hidden.has(t.id)), total: Math.max(0, old.total - (old.data.length - old.data.filter((t) => !hidden.has(t.id)).length)) } : old,
+    );
+  };
+
+  // Borrar con «Deshacer» en vez de confirmación: desaparece al momento y la
+  // petición sale a los pocos segundos si no se deshace.
+  const deleteWithUndo = (ids: number[], message: string, commit: () => Promise<unknown>) => {
+    hideTransactions(ids);
+    setSelectedIds(new Set());
+    deferWithUndo({
+      message,
+      commit,
+      onUndo: invalidateTx,
+      onCommitted: invalidateTx,
+      onError: (e) => { toast.error(e.message); invalidateTx(); },
+    });
+  };
+
+  // Para deshacer categorizar/liquidar en lote: el valor que tenía cada
+  // movimiento antes (la selección es de la página visible, así que está en caché).
+  const previousValues = (ids: number[]) => {
+    const byId = new Map((txData?.data ?? []).map((t) => [t.id, t]));
+    return ids.map((id) => byId.get(id)).filter((t): t is NonNullable<typeof t> => !!t);
+  };
+
+  const undoBatch = async (vars: Parameters<typeof batchTransactions>[0], before: ReturnType<typeof previousValues>) => {
+    if (vars.action === "set-category") {
+      const groups = groupIdsBy(before.filter((t) => t.type !== "transfer").map((t) => ({ id: t.id, value: t.categoryId })));
+      for (const [categoryId, ids] of groups) await batchTransactions({ action: "set-category", ids, categoryId });
+    } else if (vars.action === "set-cleared") {
+      const groups = groupIdsBy(before.map((t) => ({ id: t.id, value: t.cleared })));
+      for (const [cleared, ids] of groups) await batchTransactions({ action: "set-cleared", ids, cleared });
+    }
+  };
 
   const batchMut = useMutation({
-    mutationFn: batchTransactions,
-    onSuccess: (res, vars) => {
+    mutationFn: (vars: Parameters<typeof batchTransactions>[0]) => {
+      const before = previousValues(vars.ids);
+      return batchTransactions(vars).then((res) => ({ res, before }));
+    },
+    onSuccess: ({ res, before }, vars) => {
       invalidateTx();
       setSelectedIds(new Set());
       setBulkDeleteOpen(false);
@@ -193,7 +236,20 @@ function TransactionsView() {
         vars.action === "delete" ? (n === 1 ? "eliminado" : "eliminados")
         : vars.action === "set-category" ? (vars.categoryId === null ? "sin categoría" : n === 1 ? "categorizado" : "categorizados")
         : vars.cleared ? (n === 1 ? "liquidado" : "liquidados") : (n === 1 ? "pasado a pendiente" : "pasados a pendiente");
-      toast.success(`${n} ${noun} ${done}`);
+      toast.success(`${n} ${noun} ${done}`, {
+        duration: 8000,
+        action: n > 0 && vars.action !== "delete"
+          ? {
+              label: "Deshacer",
+              onClick: () => {
+                undoBatch(vars, before).then(
+                  () => { invalidateTx(); toast.success("Cambio deshecho"); },
+                  (e: Error) => toast.error(e.message),
+                );
+              },
+            }
+          : undefined,
+      });
       if (res.skipped > 0) {
         toast.info(`${res.skipped} ${res.skipped === 1 ? "omitido" : "omitidos"}: traspasos o pagos recurrentes que esa acción no admite`);
       }
@@ -854,7 +910,13 @@ function TransactionsView() {
                     onToggle: (id) => setSelectedIds((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; }),
                     onToggleAll: (ids, select) => setSelectedIds((cur) => { const next = new Set(cur); for (const id of ids) { if (select) next.add(id); else next.delete(id); } return next; }),
                   } : undefined}
-                  onDelete={setDeleteTxTarget}
+                  onDelete={(tx) => deleteWithUndo(
+                    [tx.id],
+                    tx.splitGroupId ? "Gasto dividido eliminado (todas sus partes)"
+                      : tx.type === "transfer" ? "Traspaso eliminado (las dos partes)"
+                      : "Transacción eliminada",
+                    () => deleteTransaction(tx.id),
+                  )}
                 />
               )}
             </div>
@@ -980,20 +1042,20 @@ function TransactionsView() {
       <ConfirmModal
         open={bulkDeleteOpen}
         title="Eliminar movimientos"
-        message={`¿Eliminar ${selectedIds.size} ${selectedIds.size === 1 ? "movimiento" : "movimientos"}? Los pagos recurrentes se omiten (se gestionan desde su programación) y de un traspaso se borran las dos partes. No se puede deshacer.`}
+        message={`¿Eliminar ${selectedIds.size} ${selectedIds.size === 1 ? "movimiento" : "movimientos"}? Los pagos recurrentes se omiten (se gestionan desde su programación) y de un traspaso se borran las dos partes. Tendrás unos segundos para deshacerlo.`}
         confirmLabel="Eliminar"
         variant="danger"
-        onConfirm={() => batchMut.mutate({ action: "delete", ids: [...selectedIds] })}
+        onConfirm={() => {
+          const ids = [...selectedIds].filter((id) => !transactions.find((t) => t.id === id)?.recurringTransactionId);
+          setBulkDeleteOpen(false);
+          if (ids.length === 0) {
+            toast.info("Los pagos recurrentes se gestionan desde su programación");
+            return;
+          }
+          deleteWithUndo(ids, `${ids.length} ${ids.length === 1 ? "movimiento eliminado" : "movimientos eliminados"}`, () =>
+            batchTransactions({ action: "delete", ids }));
+        }}
         onCancel={() => setBulkDeleteOpen(false)}
-      />
-      <ConfirmModal
-        open={!!deleteTxTarget}
-        title="Eliminar transacción"
-        message={deleteTxTarget?.splitGroupId ? "Es una parte de un gasto dividido: se eliminarán todas sus partes. Esta acción no se puede deshacer." : "¿Eliminar esta transacción? Esta acción no se puede deshacer."}
-        confirmLabel="Eliminar"
-        variant="danger"
-        onConfirm={() => { if (deleteTxTarget) deleteMut.mutate(deleteTxTarget.id); setDeleteTxTarget(null); }}
-        onCancel={() => setDeleteTxTarget(null)}
       />
       <ConfirmModal
         open={!!deleteRecurringTarget}
