@@ -420,7 +420,7 @@ function UploadManager() {
               {[
                 { icon: FileText, title: "PDF digital o escaneado", text: "El que descargas del portal del empleado; si es un escaneo, lo leemos con OCR en tu navegador." },
                 { icon: Building2, title: "Empresa privada y organismos públicos", text: "Reconocemos los dos formatos más habituales en España." },
-                { icon: ScanLine, title: "Sin fotos ni escaneos", text: "Leemos el texto del PDF directamente, sin OCR." },
+                { icon: ScanLine, title: "Escaneos, en tu navegador", text: "Un PDF escaneado se lee con OCR en tu dispositivo: el documento no sale de él." },
               ].map(({ icon: Icon, title, text }) => (
                 <li key={title} className="flex gap-3">
                   <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/60">
