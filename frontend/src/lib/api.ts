@@ -73,7 +73,7 @@ export const updateUserProfile = (data: { name: string }) =>
 // debe hacer clearAuth() y redirigir después. (No confundir con
 // deleteAccount, que borra una cuenta bancaria del módulo de finanzas.)
 export const deleteMyAccount = () =>
-  request<{ ok: boolean }>("/auth/me", { method: "DELETE" });
+  request<{ ok: boolean; identityDeleted?: boolean }>("/auth/me", { method: "DELETE" });
 
 // Exporta todos los datos de la cuenta como un único JSON (derecho de
 // portabilidad RGPD) y dispara la descarga en el navegador.

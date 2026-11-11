@@ -230,6 +230,24 @@ describeDb("autorización entre usuarios (integración)", () => {
     expect((await call("a", "GET", "/transactions?limit=10000")).status).toBe(400);
   });
 
+  it("eliminar la cuenta borra los datos y lo dice si la identidad sigue viva", async () => {
+    tokens.c = await mint("user-c");
+    const created = await fetch(`${api}/api/profiles`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${tokens.c}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "C" }),
+    });
+    expect(created.status).toBe(201);
+    const del = await fetch(`${api}/api/auth/me`, { method: "DELETE", headers: { Authorization: `Bearer ${tokens.c}` } });
+    // Sin SUPABASE_SERVICE_ROLE_KEY en tests: datos borrados, identidad no.
+    expect(await del.json()).toEqual({ ok: true, identityDeleted: false });
+    const { db } = await import("../db/index.js");
+    const s = await import("../db/schema.js");
+    const { eq } = await import("drizzle-orm");
+    expect(await db.select().from(s.users).where(eq(s.users.supabaseUserId, "user-c"))).toHaveLength(0);
+    expect((await db.select().from(s.profiles)).map((p) => p.name)).not.toContain("C");
+  });
+
   it("los datos de A siguen intactos", async () => {
     expect((await call("a", "GET", `/profiles/${ids.profile}`)).json).toMatchObject({ name: "A" });
     expect((await call("a", "GET", `/accounts/${ids.account}`)).json).toMatchObject({ name: "Banco A", archived: false });

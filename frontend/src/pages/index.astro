@@ -140,6 +140,24 @@ const faqs = [
     })),
   })} />
 
+  <!-- Aviso tras eliminar la cuenta (Ajustes → Eliminar cuenta redirige aquí). -->
+  <div id="account-deleted" role="status" hidden class="fixed inset-x-4 top-20 z-50 mx-auto max-w-lg rounded-xl border border-black/10 bg-white px-4 py-3 text-sm text-neutral-800 shadow-lg dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100">
+    <p data-msg="eliminada" hidden>Tu cuenta y todos tus datos se han eliminado.</p>
+    <p data-msg="datos-borrados" hidden>Tus datos se han eliminado. Tu acceso con Google sigue existiendo: si vuelves a entrar, empezarás con una cuenta vacía.</p>
+  </div>
+  <script is:inline>
+    (function () {
+      var state = new URLSearchParams(location.search).get("cuenta");
+      var box = document.getElementById("account-deleted");
+      var msg = box && box.querySelector('[data-msg="' + state + '"]');
+      if (!msg) return;
+      msg.hidden = false;
+      box.hidden = false;
+      history.replaceState(null, "", location.pathname);
+      setTimeout(function () { box.hidden = true; }, 10000);
+    })();
+  </script>
+
   <!-- ─── Hero ─────────────────────────────────────────────── -->
   <section class="relative isolate">
     <div class="absolute inset-x-0 top-0 h-[780px] mk-dots -z-10" aria-hidden="true"></div>

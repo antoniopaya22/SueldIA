@@ -342,9 +342,11 @@ function DangerZoneSection() {
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      await deleteMyAccount();
+      const result = await deleteMyAccount();
       await clearAuth();
-      window.location.href = "/";
+      // Los datos ya están borrados; si la identidad de Google no se pudo
+      // cerrar, se dice en la portada en vez de dar a entender que todo fue bien.
+      window.location.href = result.identityDeleted === false ? "/?cuenta=datos-borrados" : "/?cuenta=eliminada";
     } catch {
       toast.error("No se pudo eliminar la cuenta. Inténtalo de nuevo.");
       setDeleting(false);
