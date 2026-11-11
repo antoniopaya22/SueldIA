@@ -2,6 +2,17 @@
 
 Ordena todo lo anterior por urgencia y dependencia. Las referencias (`02 §2.1`, `05 §1.4`…) apuntan al fichero y apartado donde está el detalle. Esfuerzo: **S** horas · **M** días · **L** semanas.
 
+## Estado (11/11/2026)
+
+Fases 0 a 3 implementadas en las ramas `fix/fase-0-seguridad` → `fix/fase-1-datos` → `fix/fase-2` → `feat/fase-3` (apiladas, sin publicar). Quedan fuera del código, por hacer a mano:
+
+- **0.1** Comprobar con `curl` si la Data API devolvía filas antes del cambio.
+- **0.4** En el panel de Supabase: apagar la Data API, desactivar los proveedores de correo y anónimo, y limitar las Redirect URLs.
+- **0.7** Si 0.1 devolvió filas: revisar los logs y valorar la notificación.
+- Aplicar las migraciones 0011–0020 en producción (`db:migrate` corre en el build de Vercel de producción).
+
+La fase 4 sigue pendiente de decisiones de producto.
+
 ## Fase 0 — Hoy (seguridad, menos de un día)
 
 | # | Tarea | Ref. | Esf. |
