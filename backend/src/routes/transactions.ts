@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { flagSchema, normalizeFlag } from "../utils/flags.js";
 import { db } from "../db/index.js";
 import {
   transactions,
@@ -34,7 +35,7 @@ const transactionSchema = z.object({
   payee: z.string().max(200).nullish(),
   memo: z.string().max(500).nullish(),
   cleared: z.boolean().optional(),
-  flag: z.string().max(100).nullish(),
+  flag: flagSchema,
   // For transfers: destination account
   targetAccountId: z.number().int().positive().optional(),
 });
@@ -425,7 +426,7 @@ transactionsRouter.post("/", async (req, res, next) => {
             categoryId: null,
             payee: normalizeOptionalText(txData.payee),
             memo: normalizeOptionalText(txData.memo),
-            flag: normalizeOptionalText(txData.flag),
+            flag: normalizeFlag(txData.flag),
             cleared,
           })
           .returning();
@@ -441,7 +442,7 @@ transactionsRouter.post("/", async (req, res, next) => {
             payee: `Transfer : ${account.name}`,
             memo: normalizeOptionalText(txData.memo),
             cleared,
-            flag: normalizeOptionalText(txData.flag),
+            flag: normalizeFlag(txData.flag),
             userId,
             transferId: outflow.id,
           })
@@ -460,7 +461,7 @@ transactionsRouter.post("/", async (req, res, next) => {
         categoryId: null,
         payee: normalizeOptionalText(txData.payee),
         memo: normalizeOptionalText(txData.memo),
-        flag: normalizeOptionalText(txData.flag),
+        flag: normalizeFlag(txData.flag),
         transferId: inflow.id,
         targetAccountId,
         targetAccountName: target.name,
@@ -475,7 +476,7 @@ transactionsRouter.post("/", async (req, res, next) => {
           categoryId: txData.categoryId ?? null,
           payee: normalizeOptionalText(txData.payee),
           memo: normalizeOptionalText(txData.memo),
-          flag: normalizeOptionalText(txData.flag),
+          flag: normalizeFlag(txData.flag),
           cleared,
         })
         .returning();
@@ -565,7 +566,7 @@ transactionsRouter.put("/:id", async (req, res, next) => {
           : sourceTx.memo,
         cleared: parsed.data.cleared ?? sourceTx.cleared,
         flag: Object.prototype.hasOwnProperty.call(parsed.data, "flag")
-          ? normalizeOptionalText(parsed.data.flag)
+          ? normalizeFlag(parsed.data.flag)
           : sourceTx.flag,
       };
 
@@ -685,7 +686,7 @@ transactionsRouter.put("/:id", async (req, res, next) => {
             : existing.memo,
           cleared: parsed.data.cleared ?? existing.cleared,
           flag: Object.prototype.hasOwnProperty.call(parsed.data, "flag")
-            ? normalizeOptionalText(parsed.data.flag)
+            ? normalizeFlag(parsed.data.flag)
             : existing.flag,
           transferId: null,
         })

@@ -234,6 +234,9 @@ describeDb("autorización entre usuarios (integración)", () => {
   });
 
   it("las operaciones en lote ignoran los ids de A", async () => {
+    const flagged = await call("b", "POST", "/transactions/batch", { action: "set-flag", ids: [ids.transaction], flag: "red" });
+    expect(flagged.json.updated ?? 0).toBe(0);
+    expect((await call("a", "POST", "/transactions/batch", { action: "set-flag", ids: [ids.transaction], flag: "fucsia" })).status).toBe(400);
     const batch = await call("b", "POST", "/transactions/batch", { action: "delete", ids: [ids.transaction] });
     expect(batch.status).toBeLessThan(300);
     expect(batch.json.updated ?? 0).toBe(0);

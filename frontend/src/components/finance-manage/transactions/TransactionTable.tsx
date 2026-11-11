@@ -9,6 +9,7 @@ import { RowActions, type RowAction } from "../RowActions";
 import { darkBoost } from "../../../lib/color";
 import { TYPE_META, formatDateShort, formatDayHeading } from "./shared";
 import { cn } from "cn";
+import { FlagDot } from "./FlagPicker";
 
 export type SortField = "date" | "payee" | "category" | "amount" | "type";
 export type SortDir = "asc" | "desc";
@@ -300,8 +301,9 @@ export function TransactionTable(props: Props) {
                             <meta.icon className="size-4" aria-hidden="true" />
                           </div>
                           <div className="min-w-0">
-                            <p className="truncate font-medium text-foreground">
-                              {tx.payee || (tx.type === "transfer" ? "Traspaso" : "Sin beneficiario")}
+                            <p className="flex min-w-0 items-center gap-1.5 font-medium text-foreground">
+                              <FlagDot flag={tx.flag} />
+                              <span className="truncate">{tx.payee || (tx.type === "transfer" ? "Traspaso" : "Sin beneficiario")}</span>
                             </p>
                             {(tx.memo || tx.recurringTransactionId || tx.splitGroupId) && (
                               <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
@@ -382,8 +384,9 @@ export function TransactionTable(props: Props) {
                       <meta.icon className="size-4" aria-hidden="true" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-foreground">
-                        {tx.payee || (tx.type === "transfer" ? "Traspaso" : "Sin beneficiario")}
+                      <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
+                        <FlagDot flag={tx.flag} />
+                        <span className="truncate">{tx.payee || (tx.type === "transfer" ? "Traspaso" : "Sin beneficiario")}</span>
                       </p>
                       <p className="truncate text-xs text-muted-foreground">
                         {!grouped && `${formatDateShort(tx.date)} · `}

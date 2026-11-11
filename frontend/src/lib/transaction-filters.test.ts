@@ -26,3 +26,13 @@ describe("periodos", () => {
     expect(activePeriod("2026-10-02", "2026-10-31", today)).toBeNull();
   });
 });
+
+describe("marca de color en la URL", () => {
+  it("ida y vuelta en español", async () => {
+    const { parseTxFilters, transactionsHref } = await import("./transaction-filters");
+    expect(parseTxFilters("?marca=roja")).toEqual({ flag: "red" });
+    expect(parseTxFilters("?marca=cualquiera")).toEqual({ flag: "any" });
+    expect(parseTxFilters("?marca=fucsia")).toEqual({});
+    expect(transactionsHref({ flag: "purple" })).toBe("/app/transactions?marca=morada");
+  });
+});

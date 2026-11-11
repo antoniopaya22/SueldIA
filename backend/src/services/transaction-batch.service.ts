@@ -4,6 +4,7 @@ import { db } from "../db/index.js";
 import { transactions } from "../db/schema.js";
 import { categoryBelongsToUser } from "./budgets.service.js";
 import { splitSiblingIds } from "./transaction-split.service.js";
+import { flagSchema } from "../utils/flags.js";
 
 const ids = z.array(z.number().int().positive()).min(1, "Selecciona al menos un movimiento").max(500, "Máximo 500 movimientos por operación");
 
@@ -11,6 +12,7 @@ export const batchSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("set-category"), ids, categoryId: z.number().int().positive().nullable() }),
   z.object({ action: z.literal("set-cleared"), ids, cleared: z.boolean() }),
   z.object({ action: z.literal("delete"), ids }),
+  z.object({ action: z.literal("set-flag"), ids, flag: flagSchema }),
 ]);
 
 export type BatchInput = z.infer<typeof batchSchema>;
@@ -67,6 +69,16 @@ export async function applyBatch(userId: number, input: BatchInput): Promise<Bat
           .update(transactions)
           .set({ cleared: input.cleared })
           .where(and(eq(transactions.userId, userId), inArray(transactions.id, await withPairs(rows))));
+      }
+      return { ok: true, updated: rows.length, skipped: requested.length - rows.length };
+    }
+
+    case "set-flag": {
+      if (rows.length > 0) {
+        await db
+          .update(transactions)
+          .set({ flag: input.flag ?? null })
+          .where(and(eq(transactions.userId, userId), inArray(transactions.id, rows.map((r) => r.id))));
       }
       return { ok: true, updated: rows.length, skipped: requested.length - rows.length };
     }

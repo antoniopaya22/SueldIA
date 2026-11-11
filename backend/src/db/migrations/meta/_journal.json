@@ -155,6 +155,13 @@
       "when": 1794405417332,
       "tag": "0021_push_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794406645841,
+      "tag": "0022_normalize_flags",
+      "breakpoints": true
     }
   ]
 }

@@ -10,6 +10,7 @@ import {
   AccountSelect, CategorySelect, TypeToggle, amountInputClass, getTodayIsoDate, getYesterdayIsoDate, type TxType,
 } from "./shared";
 import { PayeeAutocomplete } from "./PayeeAutocomplete";
+import { FlagPicker } from "./FlagPicker";
 
 export interface TxForm {
   type: TxType;
@@ -21,6 +22,8 @@ export interface TxForm {
   payee: string;
   memo: string;
   cleared: boolean;
+  /** Marca de color ("" = ninguna). */
+  flag: string;
 }
 
 interface Props {
@@ -204,6 +207,11 @@ export function TransactionDialog({
             <div className="space-y-1.5">
               <Label htmlFor="tx-memo">Nota</Label>
               <Input id="tx-memo" value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} placeholder="Opcional" />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label id="tx-flag-label">Marca</Label>
+              <FlagPicker value={form.flag} onChange={(flag) => setForm({ ...form, flag })} />
             </div>
 
             <div className="flex items-start gap-2.5">

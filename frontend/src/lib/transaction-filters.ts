@@ -1,5 +1,6 @@
 import { writeUrl } from "./url-state";
 import { toIsoDate } from "./dates";
+import { flagFromSlug, flagToSlug, type FlagValue } from "./flags";
 
 // Los filtros de Transacciones viven en la URL (?cuenta=2&categoria=7&desde=…):
 // se pueden compartir, sobreviven a un refresco y, sobre todo, permiten que
@@ -20,6 +21,8 @@ export interface TxUrlFilters {
   uncategorized?: boolean;
   minAmount?: number;
   maxAmount?: number;
+  /** Marca de color, o "any" para los que tienen alguna. */
+  flag?: FlagValue | "any";
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -52,12 +55,13 @@ export function parseTxFilters(search: string): TxUrlFilters {
     uncategorized: p.get("sin_categoria") === "1" ? true : undefined,
     minAmount: amount(p.get("min")),
     maxAmount: amount(p.get("max")),
+    flag: flagFromSlug(p.get("marca")),
   };
   // Solo claves con valor: así `{}` es "sin filtros" y se compara fácil.
   return Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== undefined)) as TxUrlFilters;
 }
 
-const FILTER_PARAMS = ["cuenta", "buscar", "tipo", "categoria", "grupo", "desde", "hasta", "estado", "sin_categoria", "min", "max"];
+const FILTER_PARAMS = ["cuenta", "buscar", "tipo", "categoria", "grupo", "desde", "hasta", "estado", "sin_categoria", "min", "max", "marca"];
 
 function applyFilters(params: URLSearchParams, f: TxUrlFilters) {
   for (const name of FILTER_PARAMS) params.delete(name);
@@ -72,6 +76,7 @@ function applyFilters(params: URLSearchParams, f: TxUrlFilters) {
   if (f.uncategorized) params.set("sin_categoria", "1");
   if (f.minAmount !== undefined) params.set("min", String(f.minAmount));
   if (f.maxAmount !== undefined) params.set("max", String(f.maxAmount));
+  if (f.flag) params.set("marca", flagToSlug(f.flag));
 }
 
 /** Enlace a Transacciones ya filtrado (para gráficos, rankings, presupuesto…). */

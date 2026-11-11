@@ -3,6 +3,7 @@ import { decodeCsv, detectDelimiter, findHeaderIndex, guessMapping, parseBankCsv
 import { findRuleFor, loadRules } from "../services/category-rules.service.js";
 import { todayIso } from "../utils/dates.js";
 import { Router } from "express";
+import { normalizeFlag } from "../utils/flags.js";
 import { db } from "../db/index.js";
 import { accounts, categoryGroups, categories, transactions } from "../db/schema.js";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
@@ -207,7 +208,7 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
         payee: row.payee || null,
         memo: row.memo || null,
         cleared: row.cleared,
-        flag: row.flag || null,
+        flag: normalizeFlag(row.flag),
         importedFrom: "ynab",
         importBatchId: batchId,
         ...fields,

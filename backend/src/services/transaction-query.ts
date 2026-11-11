@@ -1,4 +1,5 @@
-import { and, eq, gte, ilike, isNull, lte, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, ilike, isNotNull, isNull, lte, sql, type SQL } from "drizzle-orm";
+import { FLAG_VALUES } from "../utils/flags.js";
 import { z } from "zod";
 import { categories, transactions } from "../db/schema.js";
 import { escapeLike } from "./payee-suggestions.service.js";
@@ -24,6 +25,8 @@ export const transactionFilterFields = {
   uncategorized: z.enum(["true"]).optional(),
   minAmount: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
   maxAmount: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+  // Marca de color, o «any» para los que tienen alguna.
+  flag: z.enum([...FLAG_VALUES, "any"]).optional(),
 };
 
 export const amountRangeValid = (d: { minAmount?: number; maxAmount?: number }) =>
@@ -60,6 +63,8 @@ export function buildBaseConditions(userId: number, f: TransactionFilterInput): 
   if (f.minAmount !== undefined) conditions.push(gte(transactions.amount, f.minAmount));
   if (f.maxAmount !== undefined) conditions.push(lte(transactions.amount, f.maxAmount));
   if (f.payee) conditions.push(ilike(transactions.payee, `%${escapeLike(f.payee)}%`));
+  if (f.flag === "any") conditions.push(isNotNull(transactions.flag));
+  else if (f.flag) conditions.push(eq(transactions.flag, f.flag));
   if (f.search) {
     const pattern = `%${escapeLike(f.search)}%`;
     // Beneficiario, nota o nombre de la categoría del movimiento.

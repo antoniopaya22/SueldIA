@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { flagSchema } from "../utils/flags.js";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getSubscriptionSuggestions } from "../services/subscriptions.service.js";
@@ -37,7 +38,7 @@ const recurringTransactionSchema = z
     endDate: isoDateSchema.nullish(),
     payee: z.string().max(200).nullish(),
     memo: z.string().max(500).nullish(),
-    flag: z.string().max(100).nullish(),
+    flag: flagSchema,
     autoSettle: z.boolean().default(false),
   })
   .refine(

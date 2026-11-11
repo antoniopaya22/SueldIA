@@ -1,5 +1,8 @@
 import { useState } from "react";
-import { CheckCircle2, Circle, Sparkles, Tag, Trash2, X } from "lucide-react";
+import { Ban, CheckCircle2, Circle, Flag, Sparkles, Tag, Trash2, X } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { FLAGS } from "@/lib/flags";
+import { cn } from "cn";
 import type { CategoryGroup } from "../../../lib/api";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -19,12 +22,14 @@ interface Props {
   onSuggest: () => void;
   onCategorize: (categoryId: number | null, rememberPayee: boolean) => void;
   onSetCleared: (cleared: boolean) => void;
+  /** Marca de color (null = quitarla). */
+  onSetFlag: (flag: string | null) => void;
   onDelete: () => void;
   onClear: () => void;
 }
 
 /** Barra flotante con las acciones sobre los movimientos seleccionados. */
-export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onCategorize, onSetCleared, onDelete, onClear }: Props) {
+export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onCategorize, onSetCleared, onSetFlag, onDelete, onClear }: Props) {
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [categoryId, setCategoryId] = useState<number | "">("");
   const [remember, setRemember] = useState(false);
@@ -74,6 +79,22 @@ export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onC
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => onSetCleared(false)} className="gap-1.5" aria-label="Marcar como pendientes" title="Marcar como pendientes">
           <Circle className="size-4" /> <span className="hidden sm:inline">Pendiente</span>
         </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="sm" disabled={busy} className="gap-1.5" aria-label="Marca de color" title="Marca de color" />}>
+            <Flag className="size-4" /> <span className="hidden sm:inline">Marcar</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="center" side="top">
+            {FLAGS.map((f) => (
+              <DropdownMenuItem key={f.value} onClick={() => onSetFlag(f.value)} className="gap-2">
+                <span className={cn("size-2.5 rounded-full", f.dot)} /> {f.label}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onSetFlag(null)} className="gap-2">
+              <Ban className="size-3.5" /> Quitar la marca
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button variant="ghost" size="sm" disabled={busy} onClick={onDelete} className="gap-1.5 text-destructive hover:text-destructive" aria-label="Eliminar" title="Eliminar">
           <Trash2 className="size-4" /> <span className="hidden sm:inline">Eliminar</span>
         </Button>

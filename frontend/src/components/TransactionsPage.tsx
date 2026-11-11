@@ -62,6 +62,7 @@ import { SubscriptionSuggestions } from "./finance-manage/transactions/Subscript
 import { TransactionTable, type SortDir, type SortField } from "./finance-manage/transactions/TransactionTable";
 import { AccountOrderDialog } from "./finance-manage/AccountOrderDialog";
 import { cn } from "cn";
+import { FLAGS, flagMeta, type FlagValue } from "@/lib/flags";
 import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 
 const PAGE_SIZE = 50;
@@ -208,6 +209,9 @@ function TransactionsView() {
     } else if (vars.action === "set-cleared") {
       const groups = groupIdsBy(before.map((t) => ({ id: t.id, value: t.cleared })));
       for (const [cleared, ids] of groups) await batchTransactions({ action: "set-cleared", ids, cleared });
+    } else if (vars.action === "set-flag") {
+      const groups = groupIdsBy(before.map((t) => ({ id: t.id, value: t.flag ?? null })));
+      for (const [flag, ids] of groups) await batchTransactions({ action: "set-flag", ids, flag });
     }
   };
 
@@ -225,6 +229,7 @@ function TransactionsView() {
       const done =
         vars.action === "delete" ? (n === 1 ? "eliminado" : "eliminados")
         : vars.action === "set-category" ? (vars.categoryId === null ? "sin categoría" : n === 1 ? "categorizado" : "categorizados")
+        : vars.action === "set-flag" ? (vars.flag ? (n === 1 ? "marcado" : "marcados") : "sin marca")
         : vars.cleared ? (n === 1 ? "liquidado" : "liquidados") : (n === 1 ? "pasado a pendiente" : "pasados a pendiente");
       toast.success(`${n} ${noun} ${done}`, {
         duration: 8000,
@@ -355,12 +360,12 @@ function TransactionsView() {
 
   const activeFilterCount = [
     filterType, filterCategoryId, urlFilters.groupId, filterFrom || filterTo, filterCleared, searchQuery,
-    urlFilters.uncategorized, urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined,
+    urlFilters.uncategorized, urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined, urlFilters.flag,
   ].filter(Boolean).length;
   // Filtros que en móvil quedan plegados tras "Filtros" (búsqueda y tipo siempre están a la vista).
   const foldedFilterCount = [
     filterCategoryId, urlFilters.groupId, filterFrom || filterTo, filterCleared, urlFilters.uncategorized,
-    urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined,
+    urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined, urlFilters.flag,
   ].filter(Boolean).length;
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
@@ -666,6 +671,27 @@ function TransactionsView() {
                   </SelectContent>
                 </Select>
                 <Select
+                  value={urlFilters.flag ?? NONE}
+                  onValueChange={(v) => updateFilters({ flag: !v || v === NONE ? undefined : (v as FlagValue | "any") })}
+                >
+                  <SelectTrigger className="w-full sm:w-40" aria-label="Filtrar por marca">
+                    <SelectValue>
+                      {(v: string) => (v === NONE ? "Cualquier marca" : v === "any" ? "Con marca" : (
+                        <span className="flex items-center gap-2"><span className={cn("size-2.5 rounded-full", flagMeta(v)?.dot)} />{flagMeta(v)?.label}</span>
+                      ))}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>Cualquier marca</SelectItem>
+                    <SelectItem value="any">Con alguna marca</SelectItem>
+                    {FLAGS.map((f) => (
+                      <SelectItem key={f.value} value={f.value}>
+                        <span className="flex items-center gap-2"><span className={cn("size-2.5 rounded-full", f.dot)} />{f.label}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
                   value={`${sortBy}:${sortDir}`}
                   onValueChange={(v) => {
                     const opt = SORT_OPTIONS.find((o) => o.value === v);
@@ -894,6 +920,7 @@ function TransactionsView() {
             }
           }}
           onSetCleared={(cleared) => batchMut.mutate({ action: "set-cleared", ids: [...selectedIds], cleared })}
+          onSetFlag={(flag) => batchMut.mutate({ action: "set-flag", ids: [...selectedIds], flag })}
           onDelete={() => setBulkDeleteOpen(true)}
           onClear={() => setSelectedIds(new Set())}
         />

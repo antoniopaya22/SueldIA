@@ -815,6 +815,7 @@ export interface TransactionFilters {
   uncategorized?: boolean;
   minAmount?: number;
   maxAmount?: number;
+  flag?: "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "any";
   sortBy?: "date" | "payee" | "category" | "amount" | "type";
   sortDir?: "asc" | "desc";
   page?: number;
@@ -835,6 +836,7 @@ export const getTransactions = (filters: TransactionFilters = {}) => {
   if (filters.uncategorized) params.set("uncategorized", "true");
   if (filters.minAmount !== undefined) params.set("minAmount", String(filters.minAmount));
   if (filters.maxAmount !== undefined) params.set("maxAmount", String(filters.maxAmount));
+  if (filters.flag) params.set("flag", filters.flag);
   if (filters.sortBy) params.set("sortBy", filters.sortBy);
   if (filters.sortDir) params.set("sortDir", filters.sortDir);
   params.set("page", String(filters.page ?? 1));
@@ -858,6 +860,7 @@ export type TransactionsPage = Paginated<Transaction> & { summary: TransactionsS
 export type TransactionBatch =
   | { action: "set-category"; ids: number[]; categoryId: number | null }
   | { action: "set-cleared"; ids: number[]; cleared: boolean }
+  | { action: "set-flag"; ids: number[]; flag: string | null }
   | { action: "delete"; ids: number[] };
 
 /** Categorizar, liquidar o borrar varios movimientos. `skipped` = los que no se podían tocar (traspasos, recurrentes…). */
@@ -1017,6 +1020,7 @@ export const exportTransactions = async (filters: Omit<TransactionFilters, "sort
   if (filters.uncategorized) params.set("uncategorized", "true");
   if (filters.minAmount !== undefined) params.set("minAmount", String(filters.minAmount));
   if (filters.maxAmount !== undefined) params.set("maxAmount", String(filters.maxAmount));
+  if (filters.flag) params.set("flag", filters.flag);
   const fmt = filters.format ?? "csv";
   params.set("format", fmt);
 
