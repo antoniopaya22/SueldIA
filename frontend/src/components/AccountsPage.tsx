@@ -209,7 +209,7 @@ function AccountCard({
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold text-foreground">{account.name}</h3>
           <p className="text-xs text-muted-foreground">
-            {meta.label} · {account.currency}
+            {meta.label}
             {account.archived && <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium">Archivada</span>}
           </p>
         </div>

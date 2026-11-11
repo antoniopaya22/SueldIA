@@ -15,7 +15,10 @@ accountsRouter.param("id", validateIdParam);
 const accountSchema = z.object({
   name: z.string().min(1, "El nombre es obligatorio").max(100),
   type: z.enum(["bank", "credit_card", "cash", "investment", "other"]).optional(),
-  currency: z.string().max(10).optional(),
+  // Todo se suma y se muestra en euros: no hay conversión entre divisas, así
+  // que no se admite otra (antes se guardaba cualquier texto y la tarjeta lo
+  // mostraba, como si existiera).
+  currency: z.literal("EUR").optional(),
   initialBalance: moneySchema.optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   icon: z.string().max(50).nullish(),
