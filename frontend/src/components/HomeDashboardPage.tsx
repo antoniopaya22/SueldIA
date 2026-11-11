@@ -5,7 +5,7 @@ import {
 } from "recharts";
 import {
   ArrowDownRight, ArrowRight, ArrowUpRight, ArrowLeftRight, CreditCard, Download, FileText,
-  Landmark, PiggyBank, Plus, Receipt, TrendingUp, Upload, Users, Wallet, Banknote, CircleDollarSign,
+  Landmark, PiggyBank, Plus, Receipt, TrendingUp, HandCoins, House, Upload, Users, Wallet, Banknote, CircleDollarSign,
   AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
@@ -14,7 +14,7 @@ import {
   type Transaction, type Account,
 } from "../lib/api";
 import { Providers } from "./Providers";
-import { formatCurrency, formatCompact, formatMonthLabel, formatPct } from "../lib/format";
+import { formatCurrency, formatCompact, formatMonthLabel, formatPct, plural } from "../lib/format";
 import { ChartTooltip } from "./ui/ChartTooltip";
 import { EmptyState } from "./ui/EmptyState";
 import {
@@ -24,6 +24,10 @@ import {
 } from "./app";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
+import { irpfAmount } from "../lib/payslip-concepts";
+import { getTodayIsoDate } from "./finance-manage/transactions/shared";
+import { AttentionCard } from "./home/AttentionCard";
+import { PaySankeyCard } from "./home/PaySankeyCard";
 
 // ─── Helpers ────────────────────────────────────────────────────
 const MONTHS_FULL = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
@@ -45,6 +49,8 @@ function shortDate(d: string) {
   return new Date(d + "T00:00:00").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
 }
 
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 function pctDelta(current: number, previous: number | undefined, label: string, invert = false): StatDelta | undefined {
   if (previous == null || previous === 0) return undefined;
   const change = ((current - previous) / Math.abs(previous)) * 100;
@@ -59,6 +65,8 @@ const ACCOUNT_ICONS: Record<Account["type"], LucideIcon> = {
   credit_card: CreditCard,
   cash: Banknote,
   investment: TrendingUp,
+  loan: HandCoins,
+  mortgage: House,
   other: Wallet,
 };
 
@@ -159,7 +167,7 @@ function LatestPayslipCard({ payslipId, previousNet }: { payslipId: number; prev
   const gross = payslip.grossSalary ?? 0;
   const net = payslip.netSalary ?? 0;
   const deductions = payslip.concepts.filter((c) => c.category === "deduccion");
-  const irpf = deductions.filter((c) => c.name.toLowerCase().includes("irpf")).reduce((s, c) => s + c.amount, 0);
+  const irpf = irpfAmount(deductions);
   const other = Math.max(gross - net - irpf, 0);
   const segments = [
     { label: "Neto", value: net, className: "bg-primary-500 dark:bg-primary" },
@@ -234,9 +242,13 @@ function HomeDashboardView() {
   const { data: finance, isLoading: loadingFinance, error: financeError, refetch: refetchFinance } = useQuery({ queryKey: ["finance-summary"], queryFn: getFinanceSummary });
   const { data: trends = [] } = useQuery({ queryKey: ["finance-trends"], queryFn: () => getFinanceTrends() });
   const { data: accounts = [] } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
+  const today = useMemo(getTodayIsoDate, []);
   const { data: txData } = useQuery({
-    queryKey: ["transactions", { limit: 10, page: 1 }],
-    queryFn: () => getTransactions({ limit: 10, page: 1 }),
+    // Hasta hoy: las ocurrencias futuras de las recurrentes ya están generadas
+    // y, ordenadas por fecha, ocupaban todos los puestos — la lista salía vacía
+    // habiendo movimientos (o enseñaba como "recientes" gastos de la semana que viene).
+    queryKey: ["transactions", { limit: 10, page: 1, to: today }],
+    queryFn: () => getTransactions({ limit: 10, page: 1, to: today }),
   });
   const { data: latestPayslips } = useQuery({
     queryKey: ["payslips", { latest: true }],
@@ -247,9 +259,12 @@ function HomeDashboardView() {
   const latest = latestPayslips?.data[0];
 
   const derived = useMemo(() => {
-    const activeTrends = trends.filter((t) => t.income > 0 || t.expenses > 0);
-    const lastTwo = activeTrends.slice(-2);
-    const prevMonth = lastTwo.length === 2 ? lastTwo[0] : undefined;
+    // El mes anterior por fecha, no "el penúltimo con actividad": si este mes
+    // aún no tenía movimientos, se comparaba con el de hace dos meses.
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevKey = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+    const prevMonth = trends.find((t) => t.month === prevKey);
 
     let netSeries: number[] = [];
     let previousNet: number | undefined;
@@ -270,7 +285,22 @@ function HomeDashboardView() {
       return trends.map((t) => (acc += t.savings));
     })();
 
-    return { prevMonth, netSeries, previousNet, irpfRate, cashflow, balanceSeries };
+    // Ahorro real: lo cobrado en nómina (neto, todos los perfiles) menos lo
+    // gastado, en los últimos 12 meses completos con nómina. Une los dos
+    // módulos, que hasta ahora no se cruzaban en ningún sitio.
+    const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const netByMonth = new Map<string, number>();
+    for (const series of Object.values(payroll?.evolution ?? {})) {
+      for (const e of series) if (e.net && e.month < currentKey) netByMonth.set(e.month, (netByMonth.get(e.month) ?? 0) + e.net);
+    }
+    const savingsMonths = trends.filter((t) => t.month < currentKey && netByMonth.has(t.month)).slice(-12);
+    const salary = savingsMonths.reduce((s, t) => s + (netByMonth.get(t.month) ?? 0), 0);
+    const spent = savingsMonths.reduce((s, t) => s + t.expenses, 0);
+    const realSavings = savingsMonths.length >= 2 && salary > 0
+      ? { months: savingsMonths.length, salary, spent, saved: salary - spent, rate: ((salary - spent) / salary) * 100 }
+      : null;
+
+    return { prevMonth, netSeries, previousNet, irpfRate, cashflow, balanceSeries, realSavings };
   }, [trends, payroll, latest, finance]);
 
   if (loadingPayroll || loadingFinance) return <HomeSkeleton />;
@@ -295,6 +325,7 @@ function HomeDashboardView() {
 
   const recentTx = (txData?.data ?? []).filter((t) => !t.scheduledFor).slice(0, 8);
   const monthName = MONTHS_FULL[new Date().getMonth()];
+  const prevMonthName = MONTHS_FULL[(new Date().getMonth() + 11) % 12];
 
   return (
     <div>
@@ -311,6 +342,8 @@ function HomeDashboardView() {
         }
       />
 
+      <AttentionCard hasFinance={hasFinance} hasPayroll={hasPayroll} />
+
       <StatGrid>
         {hasFinance && finance && (
           <>
@@ -326,13 +359,15 @@ function HomeDashboardView() {
               label={`Ingresos de ${monthName}`}
               value={formatCurrency(finance.monthIncome)}
               icon={ArrowUpRight}
-              delta={pctDelta(finance.monthIncome, derived.prevMonth?.income, "vs. mes anterior")}
+              // El mes en curso está a medias: un % frente a un mes entero engaña.
+              // Se da la cifra del mes anterior como referencia.
+              hint={derived.prevMonth ? `${capitalize(prevMonthName)}: ${formatCurrency(derived.prevMonth.income)}` : undefined}
             />
             <StatCard
               label={`Gastos de ${monthName}`}
               value={formatCurrency(finance.monthExpenses)}
               icon={ArrowDownRight}
-              delta={pctDelta(finance.monthExpenses, derived.prevMonth?.expenses, "vs. mes anterior", true)}
+              hint={derived.prevMonth ? `${capitalize(prevMonthName)}: ${formatCurrency(derived.prevMonth.expenses)}` : undefined}
             />
           </>
         )}
@@ -348,7 +383,7 @@ function HomeDashboardView() {
         )}
         {!hasFinance && hasPayroll && kpis && (
           <>
-            <StatCard label="Neto medio" value={formatCurrency(kpis.avgNet)} icon={PiggyBank} hint={`${kpis.totalPayslips} nóminas`} />
+            <StatCard label="Neto medio" value={formatCurrency(kpis.avgNet)} icon={PiggyBank} hint={plural(kpis.totalPayslips, "nómina", "nóminas")} />
             <StatCard
               label="Te llega del bruto"
               value={kpis.avgGross > 0 ? formatPct((kpis.avgNet / kpis.avgGross) * 100) : "—"}
@@ -377,7 +412,7 @@ function HomeDashboardView() {
             }
           >
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={derived.cashflow} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={3}>
+              <ComposedChart accessibilityLayer data={derived.cashflow} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={3}>
                 <CartesianGrid {...chartGrid} />
                 <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={16} />
                 <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />
@@ -391,7 +426,7 @@ function HomeDashboardView() {
         ) : (
           <ChartCard className="lg:col-span-2" title="Evolución del neto" description="Tu salario neto mes a mes" action={<CardLink href="/app/payroll">Dashboard</CardLink>} height={260}>
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={derived.netSeries.map((v, i) => ({ i, net: v }))} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+              <ComposedChart accessibilityLayer data={derived.netSeries.map((v, i) => ({ i, net: v }))} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
                 <CartesianGrid {...chartGrid} />
                 <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />
                 <Tooltip content={<ChartTooltip />} />
@@ -429,6 +464,25 @@ function HomeDashboardView() {
         </SectionCard>
 
         <div className="flex flex-col gap-6">
+          {derived.realSavings && (
+            <SectionCard
+              title="Ahorro sobre tu sueldo"
+              description={`Últimos ${plural(derived.realSavings.months, "mes", "meses")} con nómina`}
+            >
+              <p className={cn("text-2xl font-semibold tabular-nums", derived.realSavings.saved < 0 ? "text-red-600 dark:text-red-400" : "text-foreground")}>
+                {formatCurrency(derived.realSavings.saved)}
+              </p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {derived.realSavings.saved >= 0
+                  ? `Guardas el ${formatPct(derived.realSavings.rate)} de lo que cobras en nómina.`
+                  : "Gastas más de lo que cobras en nómina."}
+              </p>
+              <dl className="mt-4 space-y-1.5 text-sm">
+                <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Cobrado en nómina (neto)</dt><dd className="tabular-nums text-foreground">{formatCurrency(derived.realSavings.salary)}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Gastado</dt><dd className="tabular-nums text-foreground">{formatCurrency(derived.realSavings.spent)}</dd></div>
+              </dl>
+            </SectionCard>
+          )}
           <SectionCard title="Cuentas" action={<CardLink href="/app/accounts">Gestionar</CardLink>} flush>
             {accounts.length > 0 ? (
               <ul className="divide-y divide-border">
@@ -471,6 +525,7 @@ function HomeDashboardView() {
           </SectionCard>
         </div>
       </div>
+      {hasFinance && hasPayroll && <PaySankeyCard />}
     </div>
   );
 }

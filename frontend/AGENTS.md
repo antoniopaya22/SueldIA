@@ -90,10 +90,14 @@ export async function uploadPayslips(profileId, files): Promise<Payslip[]>
 
 Reglas:
 - **Nunca** hacer `fetch()` directo en componentes — siempre a través de `api.ts`
-- El token es el `access_token` de la sesión de Supabase (`getAuthToken()`, async) — se inyecta automáticamente en headers; no hay nada en `localStorage` propio
-- Error 401 → `clearAuth()` (signOut de Supabase) + `window.location.href = "/login"`
+- El token es el `access_token` de la sesión de Supabase (`getAuthToken()`, async; `lib/supabase.ts` crea solo el cliente de `@supabase/auth-js`, no `supabase-js` entero) — se inyecta automáticamente en headers; no hay nada en `localStorage` propio
+- Error 401 → `clearAuth()` (signOut de Supabase) + `/login?next=…`; los errores son `ApiError` con mensaje en español
 - Formato: `lib/format.ts` (`formatCurrency` agrupa siempre miles, `formatPct` → "77,7 %", `formatCompact` → "2,1k €", `formatMonthLabel` → "Sep 26"). No usar `toFixed` para mostrar porcentajes.
 - Funciones de upload y export usan `fetch` directo (no JSON body)
+
+## Ver los datos de otra persona (solo lectura)
+
+`lib/view-as.ts` guarda en `localStorage` a quién se está viendo; `api.ts` manda `X-View-As` en todas las peticiones (también las de `fetch` directo) y, si el backend responde `view_as_revoked`, vuelve a los datos propios. `app/ViewAsBanner.tsx` lo avisa arriba de cada página. Se entra y se sale desde Ajustes → Compartir (`settings/SharingSection.tsx`), que también acepta `?invitacion=<código>`.
 
 ## Auth Flow
 
@@ -103,7 +107,9 @@ Login con Google vía **Supabase Auth** (`src/lib/supabase.ts`) — no hay login
 2. Login → `loginWithGoogle()` llama a `supabase.auth.signInWithOAuth({provider: "google"})`, que redirige a Google y vuelve a `/login`; la sesión se recoge sola vía `onAuthStateChange`.
 3. Logout → `supabase.auth.signOut()` → redirect a `/` (la landing, no `/login` — cerrar sesión a propósito no debe llevar de vuelta al formulario de entrar).
 4. `api.ts` pide el `access_token` vigente a Supabase en cada petición (`getAuthToken()`, async) — el refresco de sesión lo gestiona el propio cliente de Supabase, no hay que hacer nada manual.
-5. Cualquier 401 en API → `signOut()` + redirect `/login` (cubre toda página bajo `/app`, no hace falta un guard por página).
+5. Cualquier 401 en API → un único `signOut()` + redirect `/login?next=<ruta actual>` (aunque lleguen varios 401 a la vez).
+6. Sin sesión en `/app/*`, `AuthProvider` redirige a `/login?next=…` nada más montar. Tras el login se vuelve a `next`, validado con `safeNextPath` (`lib/safe-next.ts`: solo rutas de `/app`).
+7. Errores: `request()` lanza `ApiError` (`status`, mensaje siempre en español; `status: 0` = sin conexión). Mostrar `e.message` es seguro. React Query solo reintenta errores de red o 5xx.
 
 ## Estilos y Design Tokens
 
@@ -115,7 +121,7 @@ Tailwind v4 (config vía `@theme`/`@config` en `src/styles/global.css`, no solo 
 - **Tipografía de la app**: Geist Variable. `font-mono` dentro de `.app-root` se remapea a Geist con cifras tabulares (para importes); en código nuevo usar `tabular-nums` directamente. Acento editorial opcional: clase `font-serif-accent` (Instrument Serif itálica), solo en títulos y con moderación.
 - Componentes reutilizables en `@/components/ui/`: `Button`, `Card`, `Input`, `Label`, `Badge`, `Select`, `Table`, `Tabs`, `DropdownMenu`, `Dialog`, `AlertDialog`, `Avatar`, `Separator`, `Tooltip`, `Popover`, `Checkbox`, `Switch`, `Textarea`, `Sonner` (toasts). Base UI usa la prop `render` para polimorfismo (no `asChild` de Radix); para un link con pinta de botón, usar `buttonVariants({...})` sobre una `<a>` en vez de envolver `<Button>`.
 - Clases de componente heredadas en `global.css` (`.card`, `.btn-primary/secondary/danger/ghost`, `.input`, `.badge`, `.skeleton`) siguen existiendo para las páginas de la app ya construidas — están redefinidas sobre los tokens de shadcn, no reescribir cada página para usar los componentes de `ui/` salvo que se toque esa página de todos modos.
-- **Fuentes**: `font-sans` es Geist Variable (`--font-sans` en `global.css`, texto general y marca/shadcn); dentro de `.app-root` `font-mono` también se remapea a Geist (cifras tabulares en importes). Fira Sans/Fira Code se cargan desde Google Fonts en `global.css:1` pero no se usan en ningún sitio — pendiente de quitar (ver auditoría de rendimiento).
+- **Fuentes**: `font-sans` es Geist Variable (`--font-sans` en `global.css`, texto general y marca/shadcn); dentro de `.app-root` `font-mono` también se remapea a Geist (cifras tabulares en importes). No se carga ninguna fuente de Google Fonts (la CSP tampoco lo permitiría).
 - **Dark mode**: estrategia `class`. Preferencia en `localStorage.theme` (`light`/`dark`; sin clave = sistema). Única fuente de verdad: hook `useTheme()` (`src/hooks/use-theme.ts`) — `{ preference, resolved, setPreference }`; sincroniza entre islas. El script inline de `Layout.astro`/`login.astro` aplica el tema antes de pintar.
 
 ## Layout
@@ -149,7 +155,38 @@ Patrón visual: bruto en navy (línea discontinua), neto en verde (área/sólido
 
 ## PWA
 
-La app es instalable: `public/manifest.webmanifest` (nombre, colores, iconos en `public/icons/`, atajos a Nueva transacción / Subir nómina / Analítica), enlazado desde `Layout.astro`, `MarketingLayout.astro` y `login.astro`. `public/sw.js` es un service worker **mínimo**: solo guarda `public/offline.html` y la muestra si una navegación falla sin red. **No cachea nada de `/api` ni de las páginas de la app** (son datos financieros); no añadir caché de datos sin decidirlo explícitamente. Si cambias `offline.html`, sube la versión de `CACHE` en `sw.js`.
+La app es instalable: `public/manifest.webmanifest` (nombre, colores, iconos en `public/icons/`, atajos a Nueva transacción / Subir nómina / Analítica), enlazado desde `Layout.astro`, `MarketingLayout.astro` y `login.astro`. `public/sw.js` es un service worker **mínimo**: solo guarda `public/offline.html` y la muestra si una navegación falla sin red. **No cachea nada de `/api` ni de las páginas de la app** (son datos financieros); no añadir caché de datos sin decidirlo explícitamente. Si cambias `offline.html`, sube la versión de `CACHE` en `sw.js`. También recibe los avisos push de las alertas (`push` / `notificationclick`, abre la URL que manda el backend); la suscripción de cada dispositivo la gestiona `lib/push.ts` desde Ajustes → Avisos.
+- **Compartir con SueldIA** (Web Share Target, `share_target` del manifest): el móvil manda los PDF por POST a `/share-target`; `sw.js` los deja un instante en la caché `sueldia-share` y abre `/app/upload?compartido=1`, que los recoge y la vacía.
+- **Versión nueva**: `scripts/csp.mjs` escribe `dist/build.json` y `<meta name="sueldia-build">` en cada página; `lib/version-check.ts` los compara al volver a la pestaña y AppShell propone recargar.
+- **Instalar**: `lib/install-prompt.ts` guarda `beforeinstallprompt`; Ajustes → «App y avisos» lo ofrece (o explica cómo en iPhone).
+
+## Navegación (ClientRouter)
+
+`Layout.astro` usa el `ClientRouter` de Astro: entre páginas de `/app` no hay recarga completa, el JS y la caché de React Query (`appQueryClient`, singleton de módulo) sobreviven, y las islas se desmontan y vuelven a montar.
+- `history.replaceState` / `pushState`: pasar siempre `window.history.state` como primer argumento, nunca `null` (si no, Atrás deja de funcionar).
+- Avisar de cambios sin guardar con `useLeaveGuard` (`hooks/use-leave-guard.ts`): `beforeunload` solo no basta, una navegación interna no lo dispara.
+- Lo que dependa de `<html>` (clase `dark`) se reaplica en `astro:after-swap` (ver el script de tema de `Layout.astro`).
+
+## OCR en el navegador (nóminas escaneadas)
+
+Un PDF sin texto (escaneo o foto) se lee en el propio navegador: `lib/ocr.ts` (cargado a demanda) pinta cada página con `pdfjs-dist` y la pasa por `tesseract.js` (WebAssembly, español). Solo el texto va al backend (`POST /payslips/:id/ocr-text`); el PDF no sale del dispositivo. `components/payroll/OcrButton.tsx` lo ofrece en la subida (con el fichero recién elegido) y en el detalle (pidiendo el PDF otra vez: no se guarda).
+- El worker, los núcleos WASM y el idioma se sirven desde `/ocr/` (nunca desde un CDN): `scripts/copy-ocr-assets.mjs` los copia de `node_modules` a `public/ocr/` en cada `dev`/`build` (carpeta en `.gitignore`).
+- Los `.mjs` deben servirse como JavaScript (el worker de pdfjs es un módulo): si un servidor los manda como `application/octet-stream`, el OCR falla.
+
+## Seguridad (CSP)
+
+`npm run build` = `astro build` + `scripts/csp.mjs`, que añade a cada HTML una `Content-Security-Policy` con el hash de cada `<script>` en línea. Consecuencias:
+- **Nada de manejadores en línea** (`onclick="…"`, `onload="…"`): el script de CSP hace fallar el build si encuentra uno. Usar `addEventListener`.
+- Scripts y recursos de terceros: solo los dominios de `connect-src`/`img-src` del script (Supabase, avatares de Google). Añadir uno nuevo es una decisión explícita.
+- Cabeceras que no admite una `<meta>` (`frame-ancestors`, HSTS, `Permissions-Policy`…) están en `vercel.json` → `headers`.
+
+## Glosario (textos visibles)
+
+- **movimiento**: cada apunte (gasto, ingreso, parte de un traspaso). La sección se llama «Transacciones» y la acción global «Nueva transacción» (etiquetas de navegación ya asentadas); en frases, avisos y recuentos, «movimiento».
+- **traspaso**: dinero entre dos cuentas propias (no «transferencia», «mover entre cuentas»).
+- Estados: **liquidado** (ya en el banco), **pendiente** (aún no), **programado** (fecha futura).
+- **beneficiario**: a quién se paga; en ingresos, «pagador/origen».
+- Plurales con `plural(n, "cuenta", "cuentas")` de `lib/format.ts`, nunca `${n} cuentas`.
 
 ## Reglas Críticas
 

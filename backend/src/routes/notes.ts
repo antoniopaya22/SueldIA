@@ -5,6 +5,7 @@ import { eq, and, desc, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { userOwnsPayslip } from "../utils/ownership.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const notesRouter = Router();
 notesRouter.param("id", validateIdParam);
@@ -45,9 +46,35 @@ notesRouter.post("/", async (req, res, next) => {
     if (!(await userOwnsPayslip(userId, parsed.data.payslipId))) {
       return res.status(404).json({ error: "Nómina no encontrada" });
     }
+    await assertUnderLimit(payslipNotes, payslipNotes.payslipId, parsed.data.payslipId, USER_LIMITS.notesPerPayslip, "notas en esta nómina");
 
     const [note] = await db.insert(payslipNotes).values(parsed.data).returning();
     res.status(201).json(note);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Editar una nota
+notesRouter.patch("/:id", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = noteSchema.pick({ content: true }).safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
+    }
+    const ownedPayslipIds = db
+      .select({ id: payslips.id })
+      .from(payslips)
+      .innerJoin(profiles, eq(payslips.profileId, profiles.id))
+      .where(eq(profiles.userId, userId));
+    const [note] = await db
+      .update(payslipNotes)
+      .set({ content: parsed.data.content })
+      .where(and(eq(payslipNotes.id, Number(req.params.id)), inArray(payslipNotes.payslipId, ownedPayslipIds)))
+      .returning();
+    if (!note) return res.status(404).json({ error: "Nota no encontrada" });
+    res.json(note);
   } catch (err) {
     next(err);
   }

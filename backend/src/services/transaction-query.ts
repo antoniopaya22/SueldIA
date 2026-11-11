@@ -1,13 +1,15 @@
-import { and, eq, gte, ilike, isNull, lte, sql, type SQL } from "drizzle-orm";
+import { and, eq, gte, ilike, isNotNull, isNull, lte, sql, type SQL } from "drizzle-orm";
+import { FLAG_VALUES } from "../utils/flags.js";
 import { z } from "zod";
 import { categories, transactions } from "../db/schema.js";
 import { escapeLike } from "./payee-suggestions.service.js";
+import { isoDateSchema } from "../utils/dates.js";
 
 // Filtros de movimientos compartidos por el listado (GET /transactions) y la
 // exportación: un solo sitio que define qué significa cada filtro, para que
 // "exportar con los filtros actuales" exporte exactamente lo que se ve.
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const isoDate = isoDateSchema;
 
 export const transactionFilterFields = {
   accountId: z.coerce.number().int().positive().optional(),
@@ -21,8 +23,10 @@ export const transactionFilterFields = {
   search: z.string().optional(),
   // Movimientos de gasto/ingreso sin categoría (los traspasos nunca tienen).
   uncategorized: z.enum(["true"]).optional(),
-  minAmount: z.coerce.number().nonnegative().optional(),
-  maxAmount: z.coerce.number().nonnegative().optional(),
+  minAmount: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+  maxAmount: z.coerce.number().finite().nonnegative().max(1_000_000_000).optional(),
+  // Marca de color, o «any» para los que tienen alguna.
+  flag: z.enum([...FLAG_VALUES, "any"]).optional(),
 };
 
 export const amountRangeValid = (d: { minAmount?: number; maxAmount?: number }) =>
@@ -59,6 +63,8 @@ export function buildBaseConditions(userId: number, f: TransactionFilterInput): 
   if (f.minAmount !== undefined) conditions.push(gte(transactions.amount, f.minAmount));
   if (f.maxAmount !== undefined) conditions.push(lte(transactions.amount, f.maxAmount));
   if (f.payee) conditions.push(ilike(transactions.payee, `%${escapeLike(f.payee)}%`));
+  if (f.flag === "any") conditions.push(isNotNull(transactions.flag));
+  else if (f.flag) conditions.push(eq(transactions.flag, f.flag));
   if (f.search) {
     const pattern = `%${escapeLike(f.search)}%`;
     // Beneficiario, nota o nombre de la categoría del movimiento.

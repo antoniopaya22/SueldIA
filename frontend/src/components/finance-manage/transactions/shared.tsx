@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import {
-  ArrowDownRight, ArrowUpRight, ArrowLeftRight, Wallet, Landmark, CreditCard, Banknote, TrendingUp,
+  ArrowDownRight, ArrowUpRight, ArrowLeftRight, Wallet, Landmark, CreditCard, Banknote, TrendingUp, HandCoins, House,
   Check, ChevronDown, X, type LucideIcon,
 } from "lucide-react";
 import type { Account, CategoryGroup, RecurringCadence } from "../../../lib/api";
@@ -11,6 +11,9 @@ import {
 } from "@/components/ui/select";
 import { cn } from "cn";
 import { darkBoost } from "../../../lib/color";
+import { normalizeSearch } from "../../../lib/text";
+import { todayIso } from "../../../lib/dates";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 
 export type TxType = "expense" | "income" | "transfer";
 
@@ -34,7 +37,7 @@ export const TYPE_META: Record<TxType, { label: string; plural: string; icon: Lu
     selected: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   },
   transfer: {
-    label: "Transferencia",
+    label: "Traspaso",
     plural: "Traspasos",
     icon: ArrowLeftRight,
     tile: "bg-muted text-muted-foreground",
@@ -48,16 +51,16 @@ export const ACCOUNT_ICONS: Record<Account["type"], LucideIcon> = {
   credit_card: CreditCard,
   cash: Banknote,
   investment: TrendingUp,
+  loan: HandCoins,
+  mortgage: House,
   other: Wallet,
 };
 
 export const CADENCE_LABELS: Record<RecurringCadence, string> = { weekly: "Semanal", monthly: "Mensual", yearly: "Anual" };
 
 // ─── Fechas ─────────────────────────────────────────────────────
-export function getTodayIsoDate(): string {
-  const value = new Date();
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
-}
+/** Hoy en hora local ("YYYY-MM-DD"). Alias de lib/dates para no tocar a quien ya lo importa de aquí. */
+export const getTodayIsoDate = (): string => todayIso();
 
 export function getYesterdayIsoDate(reference = new Date()): string {
   const y = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate() - 1);
@@ -173,7 +176,7 @@ interface CategoryOptionGroup {
   items: CategoryOption[];
 }
 
-const normalizeText = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const normalizeText = normalizeSearch;
 
 /**
  * Selector de categoría con búsqueda (por nombre de categoría o de grupo, sin
@@ -276,6 +279,7 @@ export function TypeToggle<T extends TxType>({
   types: readonly T[];
   disabled?: T[];
 }) {
+  const keys = radioGroupKeys(types, value, onChange, (t) => disabled.includes(t));
   return (
     <div role="radiogroup" aria-label="Tipo de movimiento" className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${types.length}, minmax(0, 1fr))` }}>
       {types.map((t) => {
@@ -289,6 +293,8 @@ export function TypeToggle<T extends TxType>({
             role="radio"
             aria-checked={selected}
             disabled={isDisabled}
+            tabIndex={keys.tabIndex(t)}
+            onKeyDown={keys.onKeyDown}
             onClick={() => onChange(t)}
             className={cn(
               "flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-40",

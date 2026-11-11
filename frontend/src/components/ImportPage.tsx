@@ -1,12 +1,19 @@
 import { useState, useCallback } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { formatCurrency, plural } from "../lib/format";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDropzone } from "react-dropzone";
 import {
   Upload, FileSpreadsheet, CheckCircle2, AlertCircle, Loader2, ArrowRight, AlertTriangle,
   Eye, X, Landmark, Tags, Receipt, CalendarRange, Check, RotateCcw,
 } from "lucide-react";
-import { importYnab, type ImportResult } from "../lib/api";
+import { getImportBatches, importYnab, undoImportBatch, type ImportPreviewRow, type ImportResult } from "../lib/api";
+import { ConfirmModal } from "./ui/ConfirmModal";
+import { PreviewTable } from "./import/PreviewTable";
+import { BankImport } from "./import/BankImport";
+import { Segmented } from "./app";
+import { useUrlEnumParam } from "../lib/url-state";
 import { Providers } from "./Providers";
+import { invalidateFinance } from "../lib/finance-cache";
 import { toast } from "sonner";
 import { PageHeader, SectionCard } from "./app";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -59,8 +66,13 @@ function Stepper({ step }: { step: Step }) {
 function SummaryTiles({ summary }: { summary: ImportResult["summary"] }) {
   const tiles = [
     { label: "Cuentas", value: summary.accounts, icon: Landmark, hint: summary.accounts === 1 ? "cuenta" : "cuentas" },
-    { label: "Categorías", value: summary.categoryGroups + summary.categories, icon: Tags, hint: `${summary.categoryGroups} grupos · ${summary.categories} categorías` },
-    { label: "Transacciones", value: summary.transactions, icon: Receipt, hint: "movimientos" },
+    { label: "Categorías", value: summary.categoryGroups + summary.categories, icon: Tags, hint: `${plural(summary.categoryGroups, "grupo", "grupos")} · ${plural(summary.categories, "categoría", "categorías")}` },
+    {
+      label: "Movimientos nuevos",
+      value: summary.transactions,
+      icon: Receipt,
+      hint: summary.duplicates ? `+ ${plural(summary.duplicates, "ya existente", "ya existentes")}` : "se crearán",
+    },
   ];
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -105,7 +117,33 @@ function DuplicatesNote({ count, done }: { count: number; done: boolean }) {
   );
 }
 
-function ImportView() {
+/** Importaciones anteriores, con «Deshacer». */
+function PastImports({ onUndo }: { onUndo: (batchId: string) => void }) {
+  const { data } = useQuery({ queryKey: ["import-batches"], queryFn: getImportBatches });
+  const batches = data?.data ?? [];
+  if (batches.length === 0) return null;
+  return (
+    <SectionCard title="Importaciones anteriores" flush>
+      <ul className="divide-y divide-border">
+        {batches.map((b) => (
+          <li key={b.batchId} className="flex items-center justify-between gap-3 px-5 py-3 text-sm">
+            <div className="min-w-0">
+              <p className="font-medium text-foreground">{plural(b.count, "movimiento", "movimientos")}</p>
+              <p className="text-xs text-muted-foreground">
+                {new Date(b.importedAt).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })} · {formatRangeDate(b.from)} → {formatRangeDate(b.to)}
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => onUndo(b.batchId)} className="shrink-0 text-muted-foreground hover:text-destructive">
+              Deshacer
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </SectionCard>
+  );
+}
+
+function YnabImport({ setUndoTarget }: { setUndoTarget: (id: string | null) => void }) {
   const queryClient = useQueryClient();
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<ImportResult | null>(null);
@@ -131,10 +169,9 @@ function ImportView() {
       setPreview(null);
       setFile(null);
       toast.success("Importación completada correctamente");
-      queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["categories"] });
-      queryClient.invalidateQueries({ queryKey: ["transactions"] });
-      queryClient.invalidateQueries({ queryKey: ["finance-analytics"] });
+      invalidateFinance(queryClient);
+      queryClient.invalidateQueries({ queryKey: ["import-batches"] });
     },
     onError: (err: Error) => {
       setError(err.message);
@@ -186,12 +223,6 @@ function ImportView() {
 
   return (
     <div>
-      <PageHeader
-        title="Importar"
-        accent="desde YNAB."
-        description="Trae tus cuentas, categorías y transacciones a partir del CSV que exporta YNAB. Puedes revisar el resultado antes de confirmar."
-      />
-
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <SectionCard>
           <Stepper step={step} />
@@ -237,7 +268,8 @@ function ImportView() {
 
                 {file && (
                   <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                    <Button variant="outline" onClick={handleImport} disabled={busy} className="gap-1.5">
+                    {/* Secundario: lo recomendable es revisar antes. */}
+                    <Button variant="ghost" onClick={handleImport} disabled={busy} className="gap-1.5 text-muted-foreground">
                       {importMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
                       {importMut.isPending ? "Importando…" : "Importar sin revisar"}
                     </Button>
@@ -261,6 +293,18 @@ function ImportView() {
                 </div>
                 <SummaryTiles summary={preview.summary} />
                 <DuplicatesNote count={preview.summary.duplicates ?? 0} done={false} />
+                {(preview.newAccounts?.length ?? 0) > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    {preview.newAccounts!.length === 1 ? "Se creará una cuenta nueva" : `Se crearán ${preview.newAccounts!.length} cuentas nuevas`}:{" "}
+                    <span className="font-medium text-foreground">{preview.newAccounts!.join(", ")}</span>. Si ya tienes alguna con otro nombre, renómbrala antes para que se use la tuya.
+                  </p>
+                )}
+                {(preview.summary.skippedZero ?? 0) > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    {plural(preview.summary.skippedZero!, "fila tiene", "filas tienen")} importe 0 y no se importará{preview.summary.skippedZero === 1 ? "" : "n"}.
+                  </p>
+                )}
+                {preview.sample && preview.sample.length > 0 && <PreviewTable rows={preview.sample} />}
                 <div className="flex flex-col-reverse gap-2 border-t border-border pt-5 sm:flex-row sm:justify-between">
                   <Button variant="ghost" onClick={reset} disabled={busy} className="gap-1.5 text-muted-foreground">
                     <RotateCcw className="size-4" /> Elegir otro archivo
@@ -287,6 +331,14 @@ function ImportView() {
                 </div>
                 <SummaryTiles summary={result.summary} />
                 <DuplicatesNote count={result.summary.duplicates ?? 0} done />
+                {result.batchId && (
+                  <p className="text-sm text-muted-foreground">
+                    ¿No era lo que esperabas?{" "}
+                    <button type="button" onClick={() => setUndoTarget(result.batchId!)} className="font-medium text-foreground underline underline-offset-2">
+                      Deshacer esta importación
+                    </button>
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-2 border-t border-border pt-5">
                   <a href="/app/transactions" className={cn(buttonVariants(), "gap-1.5")}>
                     Ver transacciones <ArrowRight className="size-4" />
@@ -330,15 +382,93 @@ function ImportView() {
               ))}
             </ol>
           </SectionCard>
+          <PastImports onUndo={setUndoTarget} />
           <SectionCard title="Qué se importa">
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li>Las cuentas y categorías que no existan se crean automáticamente.</li>
               <li>Los movimientos que ya tengas se omiten: puedes reimportar sin duplicar.</li>
+              <li>Cada importación se puede deshacer entera desde esta página.</li>
               <li>El archivo no se guarda: solo se leen sus movimientos.</li>
             </ul>
           </SectionCard>
         </aside>
       </div>
+    </div>
+  );
+}
+
+type Origin = "banco" | "ynab";
+
+function ImportView() {
+  const queryClient = useQueryClient();
+  const [origin, setOrigin] = useUrlEnumParam<Origin>("origen", ["banco", "ynab"], "banco");
+  const [undoTarget, setUndoTarget] = useState<string | null>(null);
+  const undoMut = useMutation({
+    mutationFn: undoImportBatch,
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["import-batches"] });
+      invalidateFinance(queryClient);
+      toast.success(`Importación deshecha: ${plural(res.deleted, "movimiento eliminado", "movimientos eliminados")}`);
+      setUndoTarget(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  return (
+    <div>
+      <PageHeader
+        title="Importar"
+        accent="movimientos."
+        description="Desde el extracto de tu banco (CSV) o desde YNAB. Siempre puedes revisar antes de confirmar y deshacer después."
+      >
+        <Segmented
+          aria-label="Origen de los datos"
+          value={origin}
+          onChange={(v) => setOrigin(v)}
+          options={[
+            { value: "banco", label: "Extracto del banco" },
+            { value: "ynab", label: "YNAB" },
+          ]}
+        />
+      </PageHeader>
+
+      {origin === "banco" ? (
+        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <SectionCard>
+            <BankImport onImported={() => undefined} />
+          </SectionCard>
+          <aside className="space-y-4">
+            <SectionCard title="Cómo conseguir el extracto">
+              <ol className="list-decimal space-y-2 pl-4 text-sm text-muted-foreground">
+                <li>Entra en la web o la app de tu banco.</li>
+                <li>Abre los movimientos de la cuenta y elige el periodo.</li>
+                <li>Descárgalos en CSV (o Excel guardado como CSV).</li>
+                <li>Súbelo aquí: las columnas se proponen solas y se recuerdan para la próxima vez.</li>
+              </ol>
+            </SectionCard>
+            <PastImports onUndo={setUndoTarget} />
+            <SectionCard title="Qué se hace">
+              <ul className="space-y-2 text-sm text-muted-foreground">
+                <li>Lo que ya tengas en esa cuenta (misma fecha, importe y concepto) se omite.</li>
+                <li>Tus reglas de categorización se aplican al importar.</li>
+                <li>El archivo no se guarda: solo se leen sus movimientos.</li>
+              </ul>
+            </SectionCard>
+          </aside>
+        </div>
+      ) : (
+        <YnabImport setUndoTarget={setUndoTarget} />
+      )}
+
+      <ConfirmModal
+        open={!!undoTarget}
+        title="Deshacer importación"
+        message="Se eliminarán los movimientos de esa importación (también los que hayas editado después). Las cuentas y categorías que se crearon se mantienen."
+        confirmLabel={undoMut.isPending ? "Deshaciendo…" : "Deshacer importación"}
+        variant="danger"
+        onConfirm={() => undoTarget && undoMut.mutate(undoTarget)}
+        onCancel={() => setUndoTarget(null)}
+      />
     </div>
   );
 }

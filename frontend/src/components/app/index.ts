@@ -5,3 +5,5 @@ export { Sparkline } from "./Sparkline";
 export { Segmented, type SegmentedOption } from "./Segmented";
 export { PageHeaderSkeleton, StatCardSkeleton, ChartCardSkeleton, ListCardSkeleton } from "./skeletons";
 export * from "./chart-theme";
+export { DecimalInput } from "./DecimalInput";
+export { MonthSwitcher } from "./MonthSwitcher";

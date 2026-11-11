@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { flagSchema } from "../utils/flags.js";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getSubscriptionSuggestions } from "../services/subscriptions.service.js";
 import { validateIdParam } from "../middleware/params.js";
@@ -8,7 +9,9 @@ import {
   accounts,
   categories,
   categoryGroups,
+  recurringSkips,
   recurringTransactions,
+  transactions,
 } from "../db/schema.js";
 import {
   countPendingOccurrencesByRule,
@@ -16,8 +19,12 @@ import {
   getNextOccurrenceDate,
   getRecurringSyncThroughDate,
   getTodayIsoDate,
+  listOccurrenceDates,
   syncRecurringTransactions,
 } from "../services/recurring-transactions.service.js";
+import { isoDateSchema } from "../utils/dates.js";
+import { positiveMoneySchema } from "../utils/validation.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const recurringTransactionsRouter = Router();
 recurringTransactionsRouter.param("id", validateIdParam);
@@ -26,16 +33,25 @@ const recurringTransactionSchema = z
   .object({
     accountId: z.number().int().positive("Cuenta requerida"),
     categoryId: z.number().int().positive().nullish(),
-    type: z.enum(["expense", "income"]),
-    amount: z.number().positive("Importe debe ser positivo"),
+    type: z.enum(["expense", "income", "transfer"]),
+    // Traspasos: la cuenta que recibe.
+    targetAccountId: z.number().int().positive().nullish(),
+    amount: positiveMoneySchema("Importe debe ser positivo"),
     cadence: z.enum(["weekly", "monthly", "yearly"]),
     intervalCount: z.number().int().min(1).max(12).default(1),
-    startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato YYYY-MM-DD"),
-    endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato YYYY-MM-DD").nullish(),
+    startDate: isoDateSchema,
+    endDate: isoDateSchema.nullish(),
     payee: z.string().max(200).nullish(),
     memo: z.string().max(500).nullish(),
-    flag: z.string().max(100).nullish(),
+    flag: flagSchema,
     autoSettle: z.boolean().default(false),
+    // Solo al crear con una fecha de inicio pasada: false = no generar las
+    // ocurrencias anteriores a hoy («desde hoy»). Por compatibilidad, true.
+    backfill: z.boolean().default(true),
+  })
+  .refine((v) => v.type !== "transfer" || (v.targetAccountId != null && v.targetAccountId !== v.accountId), {
+    message: "Elige la cuenta que recibe el traspaso (distinta de la de origen)",
+    path: ["targetAccountId"],
   })
   .refine(
     (value) => !value.endDate || value.endDate >= value.startDate,
@@ -75,6 +91,7 @@ recurringTransactionsRouter.get("/", async (req, res, next) => {
         categoryName: sql<string>`coalesce(${categories.name}, '')`,
         groupName: sql<string>`coalesce(${categoryGroups.name}, '')`,
         type: recurringTransactions.type,
+        targetAccountId: recurringTransactions.targetAccountId,
         amount: recurringTransactions.amount,
         cadence: recurringTransactions.cadence,
         intervalCount: recurringTransactions.intervalCount,
@@ -132,6 +149,7 @@ recurringTransactionsRouter.get("/suggestions", async (req, res, next) => {
 recurringTransactionsRouter.post("/", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    await assertUnderLimit(recurringTransactions, recurringTransactions.userId, userId, USER_LIMITS.recurring, "programaciones recurrentes");
     const parsed = recurringTransactionSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({
@@ -155,28 +173,85 @@ recurringTransactionsRouter.post("/", async (req, res, next) => {
       }
     }
 
-    const [created] = await db
-      .insert(recurringTransactions)
-      .values({
-        userId,
-        accountId: parsed.data.accountId,
-        categoryId: parsed.data.categoryId ?? null,
-        type: parsed.data.type,
-        amount: parsed.data.amount,
-        cadence: parsed.data.cadence,
-        intervalCount: parsed.data.intervalCount,
-        startDate: parsed.data.startDate,
-        endDate: parsed.data.endDate ?? null,
-        payee: parsed.data.payee ?? null,
-        memo: parsed.data.memo ?? null,
-        flag: parsed.data.flag ?? null,
-        autoSettle: parsed.data.autoSettle,
-      })
-      .returning();
+    const isTransfer = parsed.data.type === "transfer";
+    if (isTransfer) {
+      const [target] = await db
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(and(eq(accounts.id, parsed.data.targetAccountId!), eq(accounts.userId, userId)));
+      if (!target) return res.status(404).json({ error: "Cuenta de destino no encontrada" });
+    }
 
-    await syncRecurringTransactions(userId, getRecurringSyncThroughDate());
+    // Crear la regla y generar sus ocurrencias es una sola unidad: si la
+    // generación falla, no debe quedar guardada una regla activa a medias
+    // (que luego el cron diario volvería a intentar cada día).
+    const created = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(recurringTransactions)
+        .values({
+          userId,
+          accountId: parsed.data.accountId,
+          // Un traspaso no tiene categoría; un gasto o ingreso no tiene cuenta de destino.
+          categoryId: isTransfer ? null : parsed.data.categoryId ?? null,
+          targetAccountId: isTransfer ? parsed.data.targetAccountId! : null,
+          type: parsed.data.type,
+          amount: parsed.data.amount,
+          cadence: parsed.data.cadence,
+          intervalCount: parsed.data.intervalCount,
+          startDate: parsed.data.startDate,
+          endDate: parsed.data.endDate ?? null,
+          payee: parsed.data.payee ?? null,
+          memo: parsed.data.memo ?? null,
+          flag: parsed.data.flag ?? null,
+          autoSettle: parsed.data.autoSettle,
+        })
+        .returning();
+
+      if (!parsed.data.backfill) {
+        const today = getTodayIsoDate();
+        const past = listOccurrenceDates(
+          { startDate: created.startDate, endDate: created.endDate, cadence: created.cadence, intervalCount: created.intervalCount },
+          today,
+        ).filter((d) => d < today);
+        if (past.length) {
+          await tx.insert(recurringSkips).values(past.map((scheduledFor) => ({ recurringTransactionId: created.id, scheduledFor }))).onConflictDoNothing();
+        }
+      }
+      await syncRecurringTransactions(userId, getRecurringSyncThroughDate(), tx);
+      return created;
+    });
 
     res.status(201).json(created);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// «Esta vez no»: salta una ocurrencia pendiente (se borra y no se vuelve a
+// generar). Para cambiarle la fecha basta con editar el movimiento: conserva
+// su fecha prevista y la regla no lo duplica.
+const skipSchema = z.object({ transactionId: z.number().int().positive().max(2_147_483_647) });
+
+recurringTransactionsRouter.post("/skip-occurrence", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = skipSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
+    const [tx] = await db
+      .select({ id: transactions.id, ruleId: transactions.recurringTransactionId, scheduledFor: transactions.scheduledFor, cleared: transactions.cleared, transferId: transactions.transferId })
+      .from(transactions)
+      .where(and(eq(transactions.id, parsed.data.transactionId), eq(transactions.userId, userId)));
+    if (!tx || tx.ruleId == null || tx.scheduledFor == null) {
+      return res.status(404).json({ error: "Ese movimiento no es una ocurrencia de un pago recurrente" });
+    }
+    if (tx.cleared) return res.status(409).json({ error: "Ya está liquidado: si no ocurrió, márcalo como pendiente primero" });
+    await db.transaction(async (dbTx) => {
+      await dbTx.insert(recurringSkips).values({ recurringTransactionId: tx.ruleId!, scheduledFor: tx.scheduledFor! }).onConflictDoNothing();
+      // Con la otra pata si es un traspaso.
+      const ids = tx.transferId ? [tx.id, tx.transferId] : [tx.id];
+      await dbTx.delete(transactions).where(and(inArray(transactions.id, ids), eq(transactions.userId, userId)));
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -217,6 +292,15 @@ recurringTransactionsRouter.put("/:id", async (req, res, next) => {
       }
     }
 
+    const isTransfer = parsed.data.type === "transfer";
+    if (isTransfer) {
+      const [target] = await db
+        .select({ id: accounts.id })
+        .from(accounts)
+        .where(and(eq(accounts.id, parsed.data.targetAccountId!), eq(accounts.userId, userId)));
+      if (!target) return res.status(404).json({ error: "Cuenta de destino no encontrada" });
+    }
+
     // Cambiar la regla y regenerar sus ocurrencias futuras es una sola
     // unidad: a medias, se quedarían ocurrencias pendientes que ya no
     // corresponden a la regla nueva.
@@ -225,7 +309,9 @@ recurringTransactionsRouter.put("/:id", async (req, res, next) => {
         .update(recurringTransactions)
         .set({
           accountId: parsed.data.accountId,
-          categoryId: parsed.data.categoryId ?? null,
+          // Un traspaso no tiene categoría; un gasto o ingreso no tiene cuenta de destino.
+          categoryId: isTransfer ? null : parsed.data.categoryId ?? null,
+          targetAccountId: isTransfer ? parsed.data.targetAccountId! : null,
           type: parsed.data.type,
           amount: parsed.data.amount,
           cadence: parsed.data.cadence,

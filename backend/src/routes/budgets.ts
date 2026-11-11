@@ -3,10 +3,12 @@ import { z } from "zod";
 import {
   autoAssign, categoryBelongsToUser, deleteTarget, getBudgetSummary, moveBetweenCategories, upsertBudget, upsertTarget,
 } from "../services/budgets.service.js";
+import { monthKeySchema } from "../utils/dates.js";
+import { moneySchema } from "../utils/validation.js";
 
 export const budgetsRouter = Router();
 
-const monthSchema = z.string().regex(/^\d{4}-\d{2}$/, "Formato YYYY-MM");
+const monthSchema = monthKeySchema;
 
 // Resumen del mes: para presupuestar, y asignado/actividad/disponible por categoría.
 budgetsRouter.get("/", async (req, res, next) => {
@@ -27,7 +29,7 @@ budgetsRouter.get("/", async (req, res, next) => {
 const upsertSchema = z.object({
   categoryId: z.number().int().positive(),
   month: monthSchema,
-  assigned: z.number(),
+  assigned: moneySchema,
 });
 
 // Asignar (o reasignar) un importe a una categoría en un mes — upsert.

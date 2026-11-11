@@ -74,7 +74,7 @@ const csvFilter = (
   if (allowed) {
     cb(null, true);
   } else {
-    cb(new AppError(400, "Solo se permiten archivos CSV o TSV exportados desde YNAB"));
+    cb(new AppError(400, "Solo se permiten archivos CSV, TSV o TXT"));
   }
 };
 
@@ -84,5 +84,18 @@ const csvFilter = (
 export const uploadCsv = multer({
   storage: multer.memoryStorage(),
   fileFilter: csvFilter,
+  limits: { fileSize: MAX_UPLOAD_SIZE },
+});
+
+// ─── Copia de seguridad (restaurar «Exportar todos mis datos») ──
+// La app la manda comprimida con gzip (cabe de sobra en los 4 MB de Vercel);
+// también se acepta el .json tal cual si es pequeño.
+export const uploadBackup = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, cb) => {
+    const name = file.originalname.toLowerCase();
+    if (name.endsWith(".json") || name.endsWith(".gz")) cb(null, true);
+    else cb(new AppError(400, "Sube el fichero .json de «Exportar todos mis datos»"));
+  },
   limits: { fileSize: MAX_UPLOAD_SIZE },
 });

@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { getDashboard, getProfiles, type DashboardData } from "../lib/api";
 import { Providers } from "./Providers";
-import { formatCurrency, formatCompact, formatMonthLabel, formatPct } from "../lib/format";
+import { formatCurrency, formatCompact, formatMonthLabel, formatPct, plural } from "../lib/format";
 import { ChartTooltip } from "./ui/ChartTooltip";
 import { ProfileSelector } from "./ui/ProfileSelector";
 import { EmptyState } from "./ui/EmptyState";
@@ -31,8 +31,10 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { cn } from "cn";
-
-const DEFAULT_RANGE_FROM = "2021-11";
+import { isIrpfConcept } from "../lib/payslip-concepts";
+import { setUrlParams, useUrlParam } from "../lib/url-state";
+import { LoadDemoButton } from "./app/DemoData";
+import { HouseholdCard } from "./payroll/HouseholdCard";
 
 type ConceptBreakdownItem = DashboardData["conceptBreakdown"][number];
 type ConceptSortColumn = "name" | "category" | "average" | "total" | "count";
@@ -178,11 +180,21 @@ function DashboardView() {
     queryFn: getProfiles,
   });
 
-  const [selectedProfiles, setSelectedProfiles] = useState<number[]>([]);
+  // Selección en la URL (?perfiles=1,2&desde=2025-01&hasta=2025-12&anio=2025):
+  // se comparte, sobrevive a una recarga y a volver desde otra página. Antes el
+  // rango arrancaba en una fecha fija ("2021-11") que no tenía que ver con el usuario.
+  const [profilesParam, setProfilesParam] = useUrlParam("perfiles");
+  const selectedProfiles = useMemo(
+    () => profilesParam.split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0),
+    [profilesParam],
+  );
+  const setSelectedProfiles = (ids: number[]) => setProfilesParam(ids.join(",") || null);
   const [chartType, setChartType] = useState<"area" | "line">("area");
-  const [selectedYear, setSelectedYear] = useState<number | null>(null);
-  const [rangeFrom, setRangeFrom] = useState(DEFAULT_RANGE_FROM);
-  const [rangeTo, setRangeTo] = useState("");
+  const [yearParam, setYearParam] = useUrlParam("anio");
+  const selectedYear = /^\d{4}$/.test(yearParam) ? Number(yearParam) : null;
+  const setSelectedYear = (y: number | null) => setYearParam(y);
+  const [rangeFrom] = useUrlParam("desde");
+  const [rangeTo] = useUrlParam("hasta");
   const [conceptSort, setConceptSort] = useState<{ column: ConceptSortColumn; direction: SortDirection }>({
     column: "total",
     direction: "desc",
@@ -226,20 +238,14 @@ function DashboardView() {
     else refetchDashboard();
   };
 
-  const handleRangeFromChange = (value: string) => {
-    setRangeFrom(value);
-    setRangeTo((current) => (!current || !value || current >= value ? current : value));
-  };
+  // Si el nuevo extremo cruza el otro, el otro se ajusta a él.
+  const handleRangeFromChange = (value: string) =>
+    setUrlParams({ desde: value, hasta: !rangeTo || !value || rangeTo >= value ? rangeTo : value });
 
-  const handleRangeToChange = (value: string) => {
-    setRangeTo(value);
-    setRangeFrom((current) => (!current || !value || current <= value ? current : value));
-  };
+  const handleRangeToChange = (value: string) =>
+    setUrlParams({ hasta: value, desde: !rangeFrom || !value || rangeFrom <= value ? rangeFrom : value });
 
-  const clearDateRange = () => {
-    setRangeFrom("");
-    setRangeTo("");
-  };
+  const clearDateRange = () => setUrlParams({ desde: null, hasta: null });
 
   const activeRangeLabel = availableMonths.length > 0
     ? `${formatMonthLabel(selectedRangeFrom || availableMonths[0])} – ${formatMonthLabel(selectedRangeTo || availableMonths[availableMonths.length - 1])}`
@@ -318,7 +324,9 @@ function DashboardView() {
       actionLabel="Subir nóminas"
       actionHref="/app/upload"
       actionIcon={FileText}
-    />
+    >
+      <LoadDemoButton />
+    </EmptyState>
   );
 
   if (loadError && !isLoading) {
@@ -430,7 +438,7 @@ function DashboardView() {
           hint={
             data.kpis.extrasCount > 0
               ? `${data.kpis.totalPayslips} nóminas · ${data.kpis.extrasCount} ${data.kpis.extrasCount === 1 ? "paga extra" : "pagas extra"}`
-              : `${data.kpis.totalPayslips} nóminas`
+              : plural(data.kpis.totalPayslips, "nómina", "nóminas")
           }
         />
       </StatGrid>
@@ -441,6 +449,10 @@ function DashboardView() {
         title="Evolución salarial"
         description={multiProfile ? "Bruto (discontinuo) y neto por perfil" : "Bruto y neto mes a mes"}
         height={320}
+        exportTable={() => ({
+          headers: ["Mes", ...profileNames.flatMap((n) => multiProfile ? [`${n} · bruto`, `${n} · neto`] : ["Bruto", "Neto"])],
+          rows: evolutionData.map((p) => [String(p.monthLabel), ...profileNames.flatMap((n) => [p[`${n}_bruto`] as number | null, p[`${n}_neto`] as number | null])]),
+        })}
         action={
           <Segmented
             aria-label="Tipo de gráfico"
@@ -466,7 +478,7 @@ function DashboardView() {
       >
         <ResponsiveContainer width="100%" height="100%">
           {chartType === "area" ? (
-            <AreaChart data={evolutionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart accessibilityLayer data={evolutionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <defs>
                 {profileNames.map((name, i) => (
                   <linearGradient key={name} id={`gradNeto${i}`} x1="0" y1="0" x2="0" y2="1">
@@ -487,7 +499,7 @@ function DashboardView() {
               ))}
             </AreaChart>
           ) : (
-            <LineChart data={evolutionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <LineChart accessibilityLayer data={evolutionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid {...chartGrid} />
               <XAxis dataKey="monthLabel" {...chartAxis} interval="preserveStartEnd" minTickGap={24} />
               <YAxis {...chartAxis} tickFormatter={formatCompact} width={56} domain={evolutionDomain} />
@@ -503,6 +515,8 @@ function DashboardView() {
         </ResponsiveContainer>
       </ChartCard>
 
+      {data.household?.length > 0 && <HouseholdCard className="mt-6" household={data.household} />}
+
       {/* Del bruto al neto + resumen */}
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <ChartCard
@@ -510,6 +524,7 @@ function DashboardView() {
           title="Del bruto al neto"
           description="Lo que cobras y lo que se queda por el camino, cada mes"
           height={260}
+          exportTable={() => ({ headers: ["Mes", "Bruto", "Neto", "Deducciones"], rows: evolutionData.map((p) => [String(p.monthLabel), p.totalBruto as number, p.totalNeto as number, p.totalDeducciones as number]) })}
           legend={
             <div className="flex gap-5 text-xs text-muted-foreground">
               <LegendKey color={chartColors.primary} label="Neto" />
@@ -518,7 +533,7 @@ function DashboardView() {
           }
         >
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={evolutionData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+            <ComposedChart accessibilityLayer data={evolutionData} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
               <CartesianGrid {...chartGrid} />
               <XAxis dataKey="monthLabel" {...chartAxis} interval="preserveStartEnd" minTickGap={24} />
               <YAxis {...chartAxis} tickFormatter={formatCompact} width={56} />
@@ -558,7 +573,7 @@ function DashboardView() {
             <div className="flex flex-col items-center gap-6 sm:flex-row">
               <div className="relative size-44 shrink-0">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
+                  <PieChart accessibilityLayer>
                     <Pie data={devengos} dataKey="average" nameKey="name" innerRadius="68%" outerRadius="100%" paddingAngle={2} strokeWidth={0}>
                       {devengos.map((_, i) => <Cell key={i} fill={chartPalette[i % chartPalette.length]} />)}
                     </Pie>
@@ -591,7 +606,7 @@ function DashboardView() {
             <ul className="space-y-3.5">
               {deducciones.map((c) => {
                 const max = deducciones[0]?.average || 1;
-                const isIrpf = c.name.toLowerCase().includes("irpf");
+                const isIrpf = isIrpfConcept({ name: c.name, category: "deduccion" });
                 return (
                   <li key={c.name}>
                     <div className="flex items-center justify-between text-sm">
@@ -616,6 +631,7 @@ function DashboardView() {
             title="IRPF"
             description="Retención mensual y tipo efectivo"
             height={240}
+            exportTable={() => ({ headers: ["Mes", "IRPF", "Tipo efectivo (%)"], rows: irpfData.map((e) => [e.monthLabel, e.amount, e.rate]) })}
             legend={
               <div className="flex gap-5 text-xs text-muted-foreground">
                 <LegendKey color={chartColors.tax} label="Importe" />
@@ -624,7 +640,7 @@ function DashboardView() {
             }
           >
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={irpfData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+              <ComposedChart accessibilityLayer data={irpfData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
                 <CartesianGrid {...chartGrid} />
                 <XAxis dataKey="monthLabel" {...chartAxis} interval="preserveStartEnd" minTickGap={24} />
                 <YAxis yAxisId="left" {...chartAxis} tickFormatter={formatCompact} width={52} />
@@ -636,9 +652,14 @@ function DashboardView() {
             </ResponsiveContainer>
           </ChartCard>
 
-          <ChartCard title="Retención neta" description="Porcentaje del bruto que te llega" height={240}>
+          <ChartCard
+            title="Retención neta"
+            description="Porcentaje del bruto que te llega"
+            height={240}
+            exportTable={() => ({ headers: ["Mes", "Neto sobre bruto (%)"], rows: retentionData.map((e) => [e.monthLabel, e.retentionRate]) })}
+          >
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={retentionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <AreaChart accessibilityLayer data={retentionData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gradRetention" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={chartColors.primary} stopOpacity={0.25} />
@@ -723,7 +744,7 @@ function DashboardView() {
 
       {/* Conceptos */}
       {data.conceptBreakdown.length > 0 && (
-        <SectionCard className="mt-10" title="Todos los conceptos" description={`${data.conceptBreakdown.length} conceptos detectados en el periodo`} flush>
+        <SectionCard className="mt-10" title="Todos los conceptos" description={`${plural(data.conceptBreakdown.length, "concepto detectado", "conceptos detectados")} en el periodo`} flush>
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">

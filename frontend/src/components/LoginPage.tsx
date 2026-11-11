@@ -2,15 +2,34 @@ import { useState, useEffect } from "react";
 import { useAuth } from "./AuthProvider";
 import { toast } from "sonner";
 import { Button } from "./ui/button";
+import { safeNextPath } from "../lib/safe-next";
 
 export default function LoginPage() {
-  const { loginWithGoogle, user, loading } = useAuth();
+  const { loginWithGoogle, user, loading, userError, retryUser } = useAuth();
   const [submitting, setSubmitting] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
 
-  // Si ya hay sesión (p.ej. al volver del redirect de Google), entra directo.
+  // Si ya hay sesión (p.ej. al volver del redirect de Google), entra directo
+  // a la página que se quería abrir (?next=, solo rutas de /app).
   useEffect(() => {
-    if (!loading && user) window.location.href = "/app";
+    if (!loading && user) {
+      window.location.href = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+    }
   }, [loading, user]);
+
+  // Google/Supabase devuelven los errores en la URL (?error=… o #error=…):
+  // antes no se mostraba nada y parecía que el botón no hacía nada.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const hash = new URLSearchParams(window.location.hash.slice(1));
+    const code = params.get("error") ?? hash.get("error");
+    if (!code) return;
+    setOauthError(
+      code === "access_denied"
+        ? "Has cancelado el acceso con Google. Vuelve a intentarlo cuando quieras."
+        : "No se pudo completar el inicio de sesión con Google. Inténtalo de nuevo.",
+    );
+  }, []);
 
   const handleGoogleLogin = async () => {
     setSubmitting(true);
@@ -24,6 +43,14 @@ export default function LoginPage() {
 
   return (
     <>
+      {(oauthError || userError) && (
+        <div role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive">
+          {oauthError ?? "Has iniciado sesión, pero no hemos podido cargar tu cuenta. Comprueba tu conexión."}
+          {!oauthError && userError && (
+            <button type="button" onClick={retryUser} className="ml-1 font-medium underline underline-offset-2">Reintentar</button>
+          )}
+        </div>
+      )}
       <Button
         type="button"
         variant="outline"

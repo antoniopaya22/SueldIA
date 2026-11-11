@@ -13,6 +13,10 @@ export interface ParsedPayslip {
   netSalary: number | null;
   concepts: ParsedConcept[];
   rawText: string;
+  /** Formato con el que se leyó (id de `formats/`); lo pone `matchConcepts`. */
+  format?: string;
+  /** Milisegundos de extracción y análisis (solo al subir el PDF). */
+  parseMs?: number;
 }
 
 // ─── Number parsing ─────────────────────────────────────────────
@@ -222,11 +226,13 @@ function stripBoxDrawingChars(text: string): string {
 
 type PayslipFormat = "type1" | "type2";
 
-/** Detect whether the PDF text corresponds to a private-company (type1) or public-sector (type2) payslip */
+/** Cabecera típica de las notificaciones de retribuciones de la Administración (type2). */
+export function looksLikePublicSectorPayslip(text: string): boolean {
+  return /NOTIFICACION\s+DE\s+RETRIBUCIONES/i.test(text) || /NOMINA\s+MENSUAL\s*,/i.test(text);
+}
+
 function detectFormat(text: string): PayslipFormat {
-  if (/NOTIFICACION\s+DE\s+RETRIBUCIONES/i.test(text)) return "type2";
-  if (/NOMINA\s+MENSUAL\s*,/i.test(text)) return "type2";
-  return "type1";
+  return looksLikePublicSectorPayslip(text) ? "type2" : "type1";
 }
 
 // ─── Type 2 deduction name matching ─────────────────────────────
@@ -563,18 +569,12 @@ export function detectPayslipType(rawText: string): "ordinal" | "extra" {
   return "ordinal";
 }
 
-// ─── Main parser (dispatcher) ───────────────────────────────────
-
-export function matchConcepts(rawText: string): ParsedPayslip {
-  const format = detectFormat(rawText);
-  return format === "type2"
-    ? matchConceptsType2(rawText)
-    : matchConceptsType1(rawText);
-}
+// El reparto entre formatos (qué analizador se usa para cada texto) está en
+// formats/index.ts (`matchConcepts`); aquí quedan los dos analizadores.
 
 // ─── Type 1 parser (private company) ────────────────────────────
 
-function matchConceptsType1(rawText: string): ParsedPayslip {
+export function matchConceptsType1(rawText: string): ParsedPayslip {
   // Step 1: Rejoin numbers split across line breaks and strip OCR pipe chars (table borders)
   const text = rejoinSplitNumbers(rawText.replace(/\r\n/g, "\n")).replace(/\|/g, " ");
   const lines = text.split("\n");
@@ -966,7 +966,7 @@ function extractType2SummaryTotals(
   return { grossSalary: null, totalDeductions: null };
 }
 
-function matchConceptsType2(rawText: string): ParsedPayslip {
+export function matchConceptsType2(rawText: string): ParsedPayslip {
   const lines = rawText.replace(/\r\n/g, "\n").split("\n");
   const concepts: ParsedConcept[] = [];
   let grossSalary: number | null = null;

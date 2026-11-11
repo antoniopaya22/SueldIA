@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { switchViewAs, viewAsHeader } from "./view-as";
 
 const BASE = "/api";
 
@@ -12,6 +13,42 @@ export async function getAuthToken(): Promise<string | null> {
 
 export async function clearAuth() {
   await supabase.auth.signOut();
+}
+
+// ─── Errores ────────────────────────────────────────────────────
+/** Error de la API con el código HTTP (0 = sin conexión) y un mensaje siempre en español. */
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public details?: Record<string, string[]>) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** Mensaje legible a partir de la respuesta: el del servidor si lo trae, si no uno según el código. */
+export function apiErrorMessage(status: number, body: unknown): string {
+  const error = (body as { error?: unknown } | null)?.error;
+  if (typeof error === "string" && error.trim()) return error;
+  if (status === 0) return "No hay conexión con el servidor. Comprueba tu conexión e inténtalo de nuevo.";
+  if (status === 401) return "Tu sesión ha caducado. Vuelve a iniciar sesión.";
+  if (status === 403) return "No tienes permiso para hacer esto.";
+  if (status === 404) return "No se encontró lo que buscabas.";
+  if (status === 409) return "No se puede hacer: entra en conflicto con otros datos.";
+  if (status === 413) return "El archivo o la petición es demasiado grande.";
+  if (status === 429) return "Demasiadas peticiones seguidas. Espera un momento y vuelve a intentarlo.";
+  if (status >= 500) return "Error del servidor. Inténtalo de nuevo en unos segundos.";
+  return "No se pudo completar la acción.";
+}
+
+// Varias peticiones en vuelo pueden recibir 401 a la vez: una sola salida.
+let signingOut: Promise<void> | null = null;
+async function handleUnauthorized() {
+  if (!signingOut) {
+    signingOut = clearAuth().finally(() => {
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/login?next=${next}`;
+    });
+  }
+  return signingOut;
 }
 
 // ─── HTTP Client ────────────────────────────────────────────────
@@ -28,20 +65,36 @@ async function request<T>(
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+  Object.assign(headers, viewAsHeader());
 
-  const res = await fetch(`${BASE}${path}`, {
-    ...options,
-    headers,
-  });
+  // Escrituras con keepalive: si la pestaña se cierra justo después (p. ej.
+  // un borrado con «Deshacer» que se confirma al salir), la petición llega
+  // igualmente. El navegador lo limita a cuerpos de 64 KB.
+  const method = (options?.method ?? "GET").toUpperCase();
+  const bodySize = typeof options?.body === "string" ? options.body.length : 0;
+  const keepalive = options?.keepalive ?? (method !== "GET" && bodySize < 60_000);
+
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...options,
+      keepalive,
+      headers,
+    });
+  } catch (err) {
+    // Cancelada por React Query (cambio de filtro…): se propaga tal cual.
+    if (err instanceof DOMException && err.name === "AbortError") throw err;
+    throw new ApiError(0, apiErrorMessage(0, null));
+  }
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    if (res.status === 401) {
-      await clearAuth();
-      window.location.href = "/login";
-    }
-    throw new Error(body.error ?? (res.status === 401 ? "No autorizado" : `HTTP ${res.status}`));
+    const body = await res.json().catch(() => null);
+    if (res.status === 401) void handleUnauthorized();
+    // Quien compartía sus datos te ha quitado el acceso: de vuelta a los tuyos.
+    if (res.status === 403 && (body as { code?: string } | null)?.code === "view_as_revoked") switchViewAs(null);
+    throw new ApiError(res.status, apiErrorMessage(res.status, body), (body as { details?: Record<string, string[]> } | null)?.details);
   }
+  if (res.status === 204) return undefined as T;
   return res.json();
 }
 
@@ -73,7 +126,7 @@ export const updateUserProfile = (data: { name: string }) =>
 // debe hacer clearAuth() y redirigir después. (No confundir con
 // deleteAccount, que borra una cuenta bancaria del módulo de finanzas.)
 export const deleteMyAccount = () =>
-  request<{ ok: boolean }>("/auth/me", { method: "DELETE" });
+  request<{ ok: boolean; identityDeleted?: boolean }>("/auth/me", { method: "DELETE" });
 
 // Exporta todos los datos de la cuenta como un único JSON (derecho de
 // portabilidad RGPD) y dispara la descarga en el navegador.
@@ -81,6 +134,7 @@ export const exportAllData = async () => {
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const res = await fetch(`${BASE}/export/all`, { headers });
   if (!res.ok) throw new Error("No se pudo exportar los datos");
@@ -100,18 +154,27 @@ export interface Profile {
   name: string;
   color: string;
   createdAt: string;
+  /** 12 o 14 pagas al año (null = sin indicar). */
+  paymentsPerYear: 12 | 14 | null;
+  /** % de jornada (100 = completa; null = sin indicar). */
+  workdayPercent: number | null;
+  employer: string | null;
+  /** Comunidad autónoma, código INE (ver lib/regions.ts). */
+  region: string | null;
 }
+
+export type ProfileInput = Pick<Profile, "name" | "color"> & Partial<Pick<Profile, "paymentsPerYear" | "workdayPercent" | "employer" | "region">>;
 
 export const getProfiles = () =>
   request<Paginated<Profile>>("/profiles").then((r) => r.data);
 
-export const createProfile = (data: { name: string; color?: string }) =>
+export const createProfile = (data: ProfileInput) =>
   request<Profile>("/profiles", {
     method: "POST",
     body: JSON.stringify(data),
   });
 
-export const updateProfile = (id: number, data: { name: string; color?: string }) =>
+export const updateProfile = (id: number, data: ProfileInput) =>
   request<Profile>(`/profiles/${id}`, {
     method: "PUT",
     body: JSON.stringify(data),
@@ -128,6 +191,8 @@ export interface PayslipConcept {
   name: string;
   amount: number;
   isPercentage: boolean;
+  /** Tipo semántico: irpf, ss_contingencias, ss_desempleo, ss_formacion, ss_mei, ss_otros, salario_base, complemento, paga_extra, horas_extra, especie, dieta, otros. */
+  kind?: string | null;
 }
 
 export interface Payslip {
@@ -141,12 +206,18 @@ export interface Payslip {
   netSalary: number | null;
   parsingStatus: string;
   payslipType: "ordinal" | "extra";
+  /** true si se corrigió a mano: el reprocesado masivo no la toca. */
+  manuallyEdited?: boolean;
   createdAt: string;
   rawText?: string | null;
   concepts?: PayslipConcept[];
+  /** Solo en la lista (GET /payslips). */
+  tags?: Tag[];
   /** Solo presente en la respuesta de /payslips/upload: id de otra nómina ya
    *  existente con el mismo perfil, periodo y tipo, o null si no hay ninguna. */
   duplicateOfId?: number | null;
+  /** Solo en /payslips/upload: el mismo PDF ya estaba subido en este perfil y no se ha guardado otra vez. */
+  alreadyUploaded?: boolean;
   /** Solo presente en el detalle (GET /payslips/:id). */
   linkedTransaction?: PayslipLinkCandidate | null;
   warnings?: PayslipWarning[];
@@ -175,6 +246,7 @@ export interface PayslipFilters {
   search?: string;
   status?: string;
   type?: "ordinal" | "extra";
+  tagId?: number;
   sortBy?: PayslipSortField;
   sortDir?: ApiSortDirection;
   page?: number;
@@ -188,12 +260,17 @@ export const getPayslips = (filters: PayslipFilters = {}) => {
   if (filters.search) params.set("search", filters.search);
   if (filters.status) params.set("status", filters.status);
   if (filters.type) params.set("type", filters.type);
+  if (filters.tagId) params.set("tagId", String(filters.tagId));
   if (filters.sortBy) params.set("sortBy", filters.sortBy);
   if (filters.sortDir) params.set("sortDir", filters.sortDir);
   params.set("page", String(filters.page ?? 1));
   params.set("limit", String(filters.limit ?? 20));
   return request<Paginated<Payslip>>(`/payslips?${params}`);
 };
+
+/** Texto leído con OCR en el navegador (nómina escaneada, sin texto). */
+export const submitOcrText = (id: number, text: string) =>
+  request<Payslip & { concepts: PayslipConcept[] }>(`/payslips/${id}/ocr-text`, { method: "POST", body: JSON.stringify({ text }) });
 
 export const getPayslip = (id: number) =>
   request<Payslip & { concepts: PayslipConcept[] }>(`/payslips/${id}`);
@@ -217,6 +294,7 @@ export const uploadPayslips = async (profileId: number, files: File[], payslipTy
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const res = await fetch(`${BASE}/payslips/upload`, {
     method: "POST",
@@ -243,11 +321,12 @@ export const updatePayslipConcepts = (
       amount: number;
       isPercentage?: boolean;
     }>;
-    grossSalary?: number;
-    netSalary?: number;
+    /** null = vacío (desconocido), no 0. */
+    grossSalary?: number | null;
+    netSalary?: number | null;
     periodMonth?: number;
     periodYear?: number;
-    company?: string;
+    company?: string | null;
   }
 ) =>
   request<{ ok: boolean }>(`/payslips/${id}/concepts`, {
@@ -262,6 +341,14 @@ export const reprocessPayslip = (id: number) =>
 
 export const deletePayslip = (id: number) =>
   request<{ ok: boolean }>(`/payslips/${id}`, { method: "DELETE" });
+
+/** Dar por buena una nómina «para revisar» sin editarla (requiere periodo). */
+export const markPayslipReviewed = (id: number) =>
+  request<Payslip>(`/payslips/${id}/reviewed`, { method: "PATCH" });
+
+/** Mover una nómina a otro perfil del usuario. */
+export const movePayslipToProfile = (id: number, profileId: number) =>
+  request<Payslip>(`/payslips/${id}/profile`, { method: "PATCH", body: JSON.stringify({ profileId }) });
 
 export const updatePayslipType = (id: number, type: "ordinal" | "extra") =>
   request<Payslip>(`/payslips/${id}/type`, {
@@ -310,7 +397,29 @@ export interface DashboardData {
   annualSummaries: AnnualSummary[];
   irpfEvolution: Array<{ month: string; amount: number; rate: number }>;
   monthlySavings: Array<{ month: string; gross: number; net: number; deductions: number; retentionRate: number }>;
+  /** Vista de hogar: vacía con menos de dos perfiles con nóminas. */
+  household: HouseholdYear[];
   profiles: Array<{ id: number; name: string; color: string }>;
+}
+
+export interface HouseholdYear {
+  year: number;
+  totalGross: number;
+  totalNet: number;
+  totalIrpf: number;
+  projectedAnnualNet: number;
+  members: Array<{
+    profileId: number;
+    name: string;
+    color: string;
+    payslips: number;
+    totalGross: number;
+    totalNet: number;
+    totalIrpf: number;
+    avgMonthlyNet: number;
+    projectedAnnualNet: number;
+    shareOfNet: number;
+  }>;
 }
 
 export const getDashboard = (profileIds?: number[], from?: string, to?: string) => {
@@ -356,16 +465,17 @@ export const getAnalytics = (profileId: number) =>
   request<AnalyticsData>(`/analytics?profileId=${profileId}`);
 
 // ─── Export ─────────────────────────────────────────────────────
-export const exportData = async (profileId: number, year?: number, format: "csv" | "json" = "csv") => {
+export const exportData = async (profileId: number, year?: number, format: "csv" | "json" | "xlsx" = "csv") => {
   const params = new URLSearchParams({ profileId: String(profileId), format });
   if (year) params.set("year", String(year));
 
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const res = await fetch(`${BASE}/export?${params}`, { headers });
-  if (!res.ok) throw new Error("Export failed");
+  if (!res.ok) throw new ApiError(res.status, "No se pudo exportar. Inténtalo de nuevo.");
 
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -396,6 +506,9 @@ export const createNote = (payslipId: number, content: string) =>
 export const deleteNote = (id: number) =>
   request<{ ok: boolean }>(`/notes/${id}`, { method: "DELETE" });
 
+export const updateNote = (id: number, content: string) =>
+  request<Note>(`/notes/${id}`, { method: "PATCH", body: JSON.stringify({ content }) });
+
 // ─── Tags ───────────────────────────────────────────────────────
 export interface Tag {
   id: number;
@@ -413,6 +526,43 @@ export const createTag = (name: string, color: string) =>
 
 export const deleteTag = (id: number) =>
   request<{ ok: boolean }>(`/tags/${id}`, { method: "DELETE" });
+
+export const updateTag = (id: number, data: { name?: string; color?: string }) =>
+  request<Tag>(`/tags/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+
+// ─── Nóminas en lote y reprocesado ──────────────────────────────
+export type PayslipBatchAction =
+  | { action: "delete"; ids: number[] }
+  | { action: "set-type"; ids: number[]; type: "ordinal" | "extra" }
+  | { action: "add-tag" | "remove-tag"; ids: number[]; tagId: number };
+
+export const batchPayslips = (input: PayslipBatchAction) =>
+  request<{ ok: boolean; affected: number }>("/payslips/batch", { method: "POST", body: JSON.stringify(input) });
+
+export interface ReparseSnapshot {
+  grossSalary: number | null;
+  netSalary: number | null;
+  periodMonth: number | null;
+  periodYear: number | null;
+  concepts: number;
+  status: string;
+}
+export interface ReparsePreview {
+  changes: Array<{ id: number; fileName: string; before: ReparseSnapshot; after: ReparseSnapshot }>;
+  unchanged: number;
+  /** Corregidas a mano: no se tocan. */
+  skippedEdited: number;
+}
+
+/** Qué cambiaría al reprocesar (todas, o las de `ids`), sin cambiar nada. */
+export const previewReparse = (ids?: number[]) =>
+  request<ReparsePreview>("/payslips/reparse?dryRun=true", { method: "POST", body: JSON.stringify(ids ? { ids } : {}) });
+
+export const reparsePayslips = (ids?: number[]) =>
+  request<{ ok: boolean; reparsed: number; errors: number; skippedEdited: number }>("/payslips/reparse", {
+    method: "POST",
+    body: JSON.stringify(ids ? { ids } : {}),
+  });
 
 export const getPayslipTags = (payslipId: number) =>
   request<Tag[]>(`/tags/payslip/${payslipId}`);
@@ -453,8 +603,9 @@ export const moveBudget = (month: string, fromCategoryId: number, toCategoryId: 
 
 // ─── Alerts ─────────────────────────────────────────────────────
 export type AlertRuleType =
-  | "salary_drop" | "missing_payslip" | "concept_change" | "custom_threshold"
-  | "category_overspent" | "low_balance" | "overdue_pending";
+  | "salary_drop" | "missing_payslip" | "concept_change" | "custom_threshold" | "irpf_change"
+  | "category_overspent" | "low_balance" | "overdue_pending"
+  | "low_balance_forecast" | "subscription_price_increase" | "duplicate_charge" | "unusual_category_spend";
 
 // Formas de `config` por tipo de regla — deben reflejar
 // backend/src/services/alerts.service.ts (alertConfigSchemas).
@@ -471,6 +622,11 @@ export interface ConceptChangeConfig {
   conceptName: string;
   thresholdPercent?: number;
 }
+export interface IrpfChangeConfig {
+  profileId?: number;
+  /** Puntos porcentuales de cambio del tipo efectivo (por defecto 2). */
+  thresholdPoints?: number;
+}
 export interface CustomThresholdConfig {
   profileId?: number;
   metric: "net" | "gross";
@@ -480,7 +636,13 @@ export interface CustomThresholdConfig {
 // Alertas de finanzas (backend/src/services/finance-alerts.service.ts)
 export interface CategoryOverspentConfig {
   categoryId?: number;
+  /** Aviso previo al llegar a este % del presupuesto. */
+  warnAtPercent?: number;
 }
+export interface LowBalanceForecastConfig { threshold?: number; days?: number }
+export interface SubscriptionPriceIncreaseConfig { thresholdPercent?: number }
+export interface DuplicateChargeConfig { windowDays?: number; minAmount?: number }
+export interface UnusualCategorySpendConfig { categoryId?: number; factor?: number; minDifference?: number }
 export interface LowBalanceConfig {
   accountId?: number;
   threshold: number;
@@ -493,9 +655,14 @@ export type AlertRuleConfig =
   | MissingPayslipConfig
   | ConceptChangeConfig
   | CustomThresholdConfig
+  | IrpfChangeConfig
   | CategoryOverspentConfig
   | LowBalanceConfig
-  | OverduePendingConfig;
+  | OverduePendingConfig
+  | LowBalanceForecastConfig
+  | SubscriptionPriceIncreaseConfig
+  | DuplicateChargeConfig
+  | UnusualCategorySpendConfig;
 
 export interface AlertRule {
   id: number;
@@ -513,6 +680,8 @@ export interface AlertHistoryItem {
   severity: "info" | "warning" | "critical";
   message: string;
   read: boolean;
+  /** Nómina que lo provocó (alertas de nóminas); null en las de finanzas. */
+  payslipId?: number | null;
   createdAt: string;
 }
 
@@ -553,7 +722,7 @@ export const markAllAlertsRead = () =>
 export interface Account {
   id: number;
   name: string;
-  type: "bank" | "credit_card" | "cash" | "investment" | "other";
+  type: "bank" | "credit_card" | "cash" | "investment" | "loan" | "mortgage" | "other";
   currency: string;
   initialBalance: number;
   color: string;
@@ -568,8 +737,20 @@ export interface Account {
   unclearedCount: number;
   /** Liquidado + sin liquidar. */
   workingBalance: number;
+  /** Última conciliación con el extracto del banco. */
+  lastReconciledAt?: string | null;
+  lastReconciledBalance?: number | null;
+  /** Última valoración (inversiones): el saldo ya la incluye. */
+  valuation: { date: string; value: number } | null;
+  /** Préstamo o hipoteca: importe, TIN anual (%), plazo en meses y primera cuota. */
+  loanPrincipal: number | null;
+  loanRate: number | null;
+  loanTermMonths: number | null;
+  loanStartDate: string | null;
   createdAt: string;
 }
+
+export type LoanFields = Partial<Pick<Account, "loanPrincipal" | "loanRate" | "loanTermMonths" | "loanStartDate">>;
 
 export const getAccounts = () =>
   request<{ data: Account[] }>("/accounts").then((r) => r.data);
@@ -585,12 +766,41 @@ export const createAccount = (data: {
   initialBalance?: number;
   color?: string;
   icon?: string | null;
-}) => request<Account>("/accounts", { method: "POST", body: JSON.stringify(data) });
+} & LoanFields) => request<Account>("/accounts", { method: "POST", body: JSON.stringify(data) });
 
 export const updateAccount = (
   id: number,
-  data: { name: string; type?: string; color?: string; initialBalance?: number; icon?: string | null },
+  data: { name: string; type?: string; color?: string; initialBalance?: number; icon?: string | null } & LoanFields,
 ) => request<Account>(`/accounts/${id}`, { method: "PUT", body: JSON.stringify(data) });
+
+export interface AmortizationRow { n: number; date: string; payment: number; interest: number; principal: number; remaining: number }
+export interface Amortization {
+  payment: number;
+  totalInterest: number;
+  position: {
+    paidCount: number;
+    remainingCount: number;
+    interestPaid: number;
+    interestRemaining: number;
+    theoreticalRemaining: number;
+    nextPayment: AmortizationRow | null;
+    endDate: string;
+  };
+  rows: AmortizationRow[];
+}
+
+export const getAmortization = (accountId: number) => request<Amortization>(`/accounts/${accountId}/amortization`);
+
+export interface AccountValuation { id: number; date: string; value: number }
+
+export const getValuations = (accountId: number) =>
+  request<{ data: AccountValuation[] }>(`/accounts/${accountId}/valuations`).then((r) => r.data);
+
+export const addValuation = (accountId: number, data: { value: number; date?: string }) =>
+  request<AccountValuation>(`/accounts/${accountId}/valuations`, { method: "POST", body: JSON.stringify(data) });
+
+export const deleteValuation = (accountId: number, valuationId: number) =>
+  request<{ ok: boolean }>(`/accounts/${accountId}/valuations/${valuationId}`, { method: "DELETE" });
 
 export const deleteAccount = (id: number) =>
   request<{ ok: boolean }>(`/accounts/${id}`, { method: "DELETE" });
@@ -625,8 +835,23 @@ export const createCategoryGroup = (data: { name: string; icon?: string | null }
 export const updateCategoryGroup = (id: number, data: { name: string; icon?: string | null }) =>
   request<CategoryGroup>(`/categories/groups/${id}`, { method: "PUT", body: JSON.stringify(data) });
 
-export const deleteCategoryGroup = (id: number) =>
-  request<{ ok: boolean }>(`/categories/groups/${id}`, { method: "DELETE" });
+/** Lo que se vería afectado al borrar una categoría o un grupo. */
+export interface CategoryUsage {
+  transactions: number;
+  recurring: number;
+  budgetMonths: number;
+  rules: number;
+  targets: number;
+  /** Solo para grupos: número de categorías que contiene. */
+  categories?: number;
+}
+
+export const getCategoryGroupUsage = (id: number) => request<CategoryUsage>(`/categories/groups/${id}/usage`);
+export const getCategoryUsage = (id: number) => request<CategoryUsage>(`/categories/${id}/usage`);
+
+/** Con `reassignTo`, mueve antes movimientos, recurrentes, reglas y presupuesto a esa categoría. */
+export const deleteCategoryGroup = (id: number, reassignTo?: number) =>
+  request<{ ok: boolean }>(`/categories/groups/${id}${reassignTo ? `?reassignTo=${reassignTo}` : ""}`, { method: "DELETE" });
 
 export const createCategory = (data: { groupId: number; name: string }) =>
   request<Category>("/categories", { method: "POST", body: JSON.stringify(data) });
@@ -634,8 +859,8 @@ export const createCategory = (data: { groupId: number; name: string }) =>
 export const updateCategory = (id: number, data: { name?: string; groupId?: number }) =>
   request<Category>(`/categories/${id}`, { method: "PUT", body: JSON.stringify(data) });
 
-export const deleteCategory = (id: number) =>
-  request<{ ok: boolean }>(`/categories/${id}`, { method: "DELETE" });
+export const deleteCategory = (id: number, reassignTo?: number) =>
+  request<{ ok: boolean }>(`/categories/${id}${reassignTo ? `?reassignTo=${reassignTo}` : ""}`, { method: "DELETE" });
 
 // ─── Transactions ───────────────────────────────────────────────
 export interface Transaction {
@@ -653,6 +878,8 @@ export interface Transaction {
   payee: string | null;
   memo: string | null;
   cleared: boolean;
+  /** Liquidado y comprobado contra el extracto del banco. */
+  reconciled?: boolean;
   transferId: number | null;
   targetAccountId: number | null;
   targetAccountName: string;
@@ -679,6 +906,7 @@ export interface TransactionFilters {
   uncategorized?: boolean;
   minAmount?: number;
   maxAmount?: number;
+  flag?: "red" | "orange" | "yellow" | "green" | "blue" | "purple" | "any";
   sortBy?: "date" | "payee" | "category" | "amount" | "type";
   sortDir?: "asc" | "desc";
   page?: number;
@@ -699,6 +927,7 @@ export const getTransactions = (filters: TransactionFilters = {}) => {
   if (filters.uncategorized) params.set("uncategorized", "true");
   if (filters.minAmount !== undefined) params.set("minAmount", String(filters.minAmount));
   if (filters.maxAmount !== undefined) params.set("maxAmount", String(filters.maxAmount));
+  if (filters.flag) params.set("flag", filters.flag);
   if (filters.sortBy) params.set("sortBy", filters.sortBy);
   if (filters.sortDir) params.set("sortDir", filters.sortDir);
   params.set("page", String(filters.page ?? 1));
@@ -722,6 +951,7 @@ export type TransactionsPage = Paginated<Transaction> & { summary: TransactionsS
 export type TransactionBatch =
   | { action: "set-category"; ids: number[]; categoryId: number | null }
   | { action: "set-cleared"; ids: number[]; cleared: boolean }
+  | { action: "set-flag"; ids: number[]; flag: string | null }
   | { action: "delete"; ids: number[] };
 
 /** Categorizar, liquidar o borrar varios movimientos. `skipped` = los que no se podían tocar (traspasos, recurrentes…). */
@@ -778,8 +1008,9 @@ export const updateTransaction = (
 export const deleteTransaction = (id: number) =>
   request<{ ok: boolean }>(`/transactions/${id}`, { method: "DELETE" });
 
-export const toggleCleared = (id: number) =>
-  request<Transaction>(`/transactions/${id}/clear`, { method: "PATCH" });
+// Con el valor explícito, un reintento de red no deshace el cambio.
+export const setCleared = (id: number, cleared: boolean) =>
+  request<Transaction>(`/transactions/${id}/clear`, { method: "PATCH", body: JSON.stringify({ cleared }) });
 
 // ─── Recurring Transactions ────────────────────────────────────
 export type RecurringCadence = "weekly" | "monthly" | "yearly";
@@ -791,7 +1022,9 @@ export interface RecurringTransaction {
   categoryId: number | null;
   categoryName: string;
   groupName: string;
-  type: "expense" | "income";
+  type: "expense" | "income" | "transfer";
+  /** Traspasos: la cuenta que recibe. */
+  targetAccountId?: number | null;
   amount: number;
   cadence: RecurringCadence;
   intervalCount: number;
@@ -811,13 +1044,18 @@ export interface RecurringTransaction {
   overdueCount: number;
 }
 
+/** «Esta vez no»: borra esa ocurrencia pendiente y la regla no la vuelve a generar. */
+export const skipRecurringOccurrence = (transactionId: number) =>
+  request<{ ok: boolean }>("/recurring-transactions/skip-occurrence", { method: "POST", body: JSON.stringify({ transactionId }) });
+
 export const getRecurringTransactions = () =>
   request<{ data: RecurringTransaction[] }>("/recurring-transactions").then((response) => response.data);
 
 export const createRecurringTransaction = (data: {
   accountId: number;
   categoryId?: number | null;
-  type: "expense" | "income";
+  type: "expense" | "income" | "transfer";
+  targetAccountId?: number | null;
   amount: number;
   cadence: RecurringCadence;
   intervalCount?: number;
@@ -827,6 +1065,8 @@ export const createRecurringTransaction = (data: {
   memo?: string | null;
   flag?: string | null;
   autoSettle?: boolean;
+  /** Con inicio pasado: false = no crear los movimientos anteriores a hoy. */
+  backfill?: boolean;
 }) =>
   request<RecurringTransaction>("/recurring-transactions", {
     method: "POST",
@@ -849,7 +1089,8 @@ export const updateRecurringTransaction = (
   data: {
     accountId: number;
     categoryId?: number | null;
-    type: "expense" | "income";
+    type: "expense" | "income" | "transfer";
+    targetAccountId?: number | null;
     amount: number;
     cadence: RecurringCadence;
     intervalCount?: number;
@@ -866,7 +1107,7 @@ export const updateRecurringTransaction = (
     body: JSON.stringify(data),
   });
 
-export const exportTransactions = async (filters: Omit<TransactionFilters, "sortBy" | "sortDir" | "page" | "limit"> & { format?: "csv" | "json" } = {}) => {
+export const exportTransactions = async (filters: Omit<TransactionFilters, "sortBy" | "sortDir" | "page" | "limit"> & { format?: "csv" | "json" | "xlsx" } = {}) => {
   const params = new URLSearchParams();
   if (filters.accountId) params.set("accountId", String(filters.accountId));
   if (filters.categoryId) params.set("categoryId", String(filters.categoryId));
@@ -880,15 +1121,17 @@ export const exportTransactions = async (filters: Omit<TransactionFilters, "sort
   if (filters.uncategorized) params.set("uncategorized", "true");
   if (filters.minAmount !== undefined) params.set("minAmount", String(filters.minAmount));
   if (filters.maxAmount !== undefined) params.set("maxAmount", String(filters.maxAmount));
+  if (filters.flag) params.set("flag", filters.flag);
   const fmt = filters.format ?? "csv";
   params.set("format", fmt);
 
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const res = await fetch(`${BASE}/export/transactions?${params}`, { headers });
-  if (!res.ok) throw new Error("Error al exportar transacciones");
+  if (!res.ok) throw new ApiError(res.status, "No se pudieron exportar los movimientos. Inténtalo de nuevo.");
 
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
@@ -1077,18 +1320,48 @@ export const getFinanceAnalytics = (filters?: FinanceAnalyticsFilters) => {
 };
 
 // ─── Import ─────────────────────────────────────────────────────
+export interface ImportPreviewRow {
+  date: string;
+  account: string;
+  payee: string;
+  category: string;
+  /** Con signo: positivo entra, negativo sale. */
+  amount: number;
+  status: "new" | "duplicate" | "skipped";
+}
+
 export interface ImportResult {
   ok: boolean;
   dryRun?: boolean;
+  /** Solo en la importación real: identificador para deshacerla. */
+  batchId?: string;
   summary: {
     accounts: number;
     categoryGroups: number;
     categories: number;
+    /** Movimientos nuevos (los que se crean). */
     transactions: number;
     duplicates?: number;
+    /** Filas con importe 0, que no se importan. */
+    skippedZero?: number;
     dateRange: { from: string; to: string };
   };
+  /** Solo en la vista previa. */
+  newAccounts?: string[];
+  sample?: ImportPreviewRow[];
 }
+
+export interface ImportBatch {
+  batchId: string;
+  importedAt: string;
+  count: number;
+  from: string;
+  to: string;
+}
+
+export const getImportBatches = () => request<{ data: ImportBatch[] }>("/import/batches");
+export const undoImportBatch = (batchId: string) =>
+  request<{ ok: boolean; deleted: number }>(`/import/batches/${batchId}`, { method: "DELETE" });
 
 export const importYnab = async (file: File, dryRun = false): Promise<ImportResult> => {
   const formData = new FormData();
@@ -1097,6 +1370,7 @@ export const importYnab = async (file: File, dryRun = false): Promise<ImportResu
   const token = await getAuthToken();
   const headers: Record<string, string> = {};
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  Object.assign(headers, viewAsHeader());
 
   const url = dryRun ? `${BASE}/import/ynab?dryRun=true` : `${BASE}/import/ynab`;
   const res = await fetch(url, {
@@ -1163,6 +1437,9 @@ export interface BalanceHistory {
   accounts: Array<{ id: number; name: string; color: string; type: string; archived: boolean; series: number[] }>;
   /** Suma de las cuentas no archivadas. */
   total: number[];
+  /** Patrimonio: saldos positivos (lo que tienes) y negativos (lo que debes), por mes. */
+  assets: number[];
+  liabilities: number[];
 }
 
 export const getBalanceHistory = (months = 12) => request<BalanceHistory>(`/finance/balance-history?months=${months}`);
@@ -1185,13 +1462,31 @@ export interface Forecast {
   endOfMonth: { date: string; balance: number };
   lowest: { date: string; balance: number };
   firstNegative: string | null;
+  /** null = todas las cuentas. */
+  accountId: number | null;
+  /** «Si gasto lo presupuestado» (solo si se pidió y sin cuenta). */
+  scenario: {
+    points: Array<{ date: string; balance: number }>;
+    endOfMonth: { date: string; balance: number };
+    lowest: { date: string; balance: number };
+    firstNegative: string | null;
+    remainingByMonth: Array<{ month: string; amount: number }>;
+  } | null;
 }
 
-export const getForecast = (days = 90) => request<Forecast>(`/finance/forecast?days=${days}`);
+export const getForecast = (days = 90, opts: { accountId?: number | null; budget?: boolean } = {}) => {
+  const params = new URLSearchParams({ days: String(days) });
+  if (opts.accountId) params.set("accountId", String(opts.accountId));
+  if (opts.budget) params.set("budget", "true");
+  return request<Forecast>(`/finance/forecast?${params}`);
+};
 
 export interface SubscriptionSuggestion {
   payee: string;
+  cadence: "weekly" | "monthly" | "yearly";
   amount: number;
+  /** Lo que supone al mes. */
+  monthlyAmount: number;
   occurrences: number;
   lastDate: string;
   nextDate: string;
@@ -1210,13 +1505,45 @@ export interface CategoryRule {
   categoryId: number;
   categoryName: string;
   groupName: string;
+  /** Dónde buscar el texto. */
+  matchField: "payee" | "memo" | "any";
+  transactionType: "expense" | "income" | null;
+  minAmount: number | null;
+  maxAmount: number | null;
+  accountId: number | null;
   createdAt: string;
 }
 
+export type CategoryRuleInput = Pick<CategoryRule, "match" | "categoryId"> &
+  Partial<Pick<CategoryRule, "matchField" | "transactionType" | "minAmount" | "maxAmount" | "accountId">>;
+
 export const getCategoryRules = () => request<{ data: CategoryRule[] }>("/category-rules").then((r) => r.data);
 
-export const createCategoryRule = (data: { match: string; categoryId: number }) =>
+export const createCategoryRule = (data: CategoryRuleInput) =>
   request<{ id: number }>("/category-rules", { method: "POST", body: JSON.stringify(data) });
+
+export const updateCategoryRule = (id: number, data: CategoryRuleInput) =>
+  request<{ id: number }>(`/category-rules/${id}`, { method: "PUT", body: JSON.stringify(data) });
+
+export const previewCategoryRule = (data: CategoryRuleInput) =>
+  request<{ matched: number; uncategorized: number; sample: Array<{ id: number; date: string; payee: string | null; amount: number; type: string }> }>(
+    "/category-rules/preview",
+    { method: "POST", body: JSON.stringify(data) },
+  );
+
+// ─── Beneficiarios ──────────────────────────────────────────────
+export interface PayeeSummary {
+  payee: string;
+  count: number;
+  expense: number;
+  income: number;
+  lastDate: string;
+}
+
+export const getPayeeSummary = () => request<{ data: PayeeSummary[] }>("/transactions/payees/summary").then((r) => r.data);
+
+export const renamePayees = (from: string[], to: string) =>
+  request<{ ok: boolean; updated: number }>("/transactions/payees/rename", { method: "POST", body: JSON.stringify({ from, to }) });
 
 export const deleteCategoryRule = (id: number) =>
   request<{ ok: boolean }>(`/category-rules/${id}`, { method: "DELETE" });
@@ -1267,6 +1594,10 @@ export interface CategoryGroupBudget {
 export interface BudgetSummary {
   month: string;
   readyToAssign: number;
+  /** De dónde sale «Para presupuestar»: ingresos + saldos iniciales − asignado (todo hasta este mes). */
+  readyBreakdown: { income: number; initialBalances: number; assigned: number };
+  /** Gasto del mes sin categoría (en negativo). */
+  uncategorizedActivity: number;
   /** Lo que falta asignar este mes para cumplir todos los objetivos. */
   targetsShortfall: number;
   groups: CategoryGroupBudget[];
@@ -1345,3 +1676,265 @@ export interface AmountDistribution {
 
 export const getAmountDistribution = (filters?: FinanceAnalyticsFilters) =>
   request<AmountDistribution>(`/finance/amounts?${filterParams(filters)}`);
+
+// ─── Conciliación ───────────────────────────────────────────────
+export const getAccountClearedBalance = (accountId: number) =>
+  request<{ clearedBalance: number }>(`/accounts/${accountId}/reconcile`);
+
+/** Concilia la cuenta con el saldo del banco. Si no cuadra y no se pide ajuste, lanza ApiError 409. */
+export const reconcileAccount = (accountId: number, statementBalance: number, createAdjustment: boolean) =>
+  request<{ ok: true; difference: number; adjustmentId: number | null; reconciledCount: number }>(
+    `/accounts/${accountId}/reconcile`,
+    { method: "POST", body: JSON.stringify({ statementBalance, createAdjustment }) },
+  );
+
+// ─── Importar extracto bancario (CSV) ───────────────────────────
+export interface BankCsvMapping {
+  delimiter: ";" | "," | "\t" | "|";
+  hasHeader: boolean;
+  dateColumn: number;
+  dateFormat: "DD/MM/YYYY" | "YYYY-MM-DD" | "MM/DD/YYYY";
+  payeeColumn: number;
+  memoColumn?: number | null;
+  amountColumn?: number | null;
+  debitColumn?: number | null;
+  creditColumn?: number | null;
+  decimal: "comma" | "dot";
+}
+
+export interface BankCsvInspect {
+  delimiter: BankCsvMapping["delimiter"];
+  headerIndex: number;
+  header: string[];
+  sample: string[][];
+  totalLines: number;
+  mapping: BankCsvMapping;
+}
+
+export interface BankCsvResult {
+  ok: boolean;
+  dryRun?: boolean;
+  batchId?: string;
+  summary: { transactions: number; duplicates: number; errors: number; categorized?: number };
+  errors?: Array<{ line: number; reason: string }>;
+  sample?: ImportPreviewRow[];
+}
+
+/** POST multipart con el mismo tratamiento de errores que request(). */
+async function postForm<T>(path: string, form: FormData): Promise<T> {
+  const token = await getAuthToken();
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, { method: "POST", body: form, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...viewAsHeader() } });
+  } catch {
+    throw new ApiError(0, apiErrorMessage(0, null));
+  }
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    if (res.status === 401) void handleUnauthorized();
+    // Quien compartía sus datos te ha quitado el acceso: de vuelta a los tuyos.
+    if (res.status === 403 && (body as { code?: string } | null)?.code === "view_as_revoked") switchViewAs(null);
+    throw new ApiError(res.status, apiErrorMessage(res.status, body));
+  }
+  return res.json();
+}
+
+export const inspectBankCsv = (file: File) => {
+  const form = new FormData();
+  form.append("file", file);
+  return postForm<BankCsvInspect>("/import/csv/inspect", form);
+};
+
+export const importBankCsv = (file: File, accountId: number, headerIndex: number, mapping: BankCsvMapping, dryRun: boolean) => {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("accountId", String(accountId));
+  form.append("headerIndex", String(headerIndex));
+  form.append("mapping", JSON.stringify(mapping));
+  return postForm<BankCsvResult>(`/import/csv${dryRun ? "?dryRun=true" : ""}`, form);
+};
+
+// ─── Objetivos de ahorro ────────────────────────────────────────
+export interface SavingsGoal {
+  id: number;
+  name: string;
+  targetAmount: number;
+  targetDate: string | null;
+  accountId: number | null;
+  accountName: string | null;
+  savedAmount: number;
+  color: string;
+  archived: boolean;
+  progress: {
+    saved: number;
+    remaining: number;
+    percent: number;
+    monthsLeft: number | null;
+    monthlyNeeded: number | null;
+    status: "done" | "on-track" | "no-date" | "overdue";
+  };
+}
+export type SavingsGoalInput = Partial<Pick<SavingsGoal, "name" | "targetAmount" | "targetDate" | "accountId" | "savedAmount" | "color" | "archived">>;
+
+export const getSavingsGoals = () => request<{ data: SavingsGoal[] }>("/savings-goals").then((r) => r.data);
+export const createSavingsGoal = (data: SavingsGoalInput) =>
+  request<SavingsGoal>("/savings-goals", { method: "POST", body: JSON.stringify(data) });
+export const updateSavingsGoal = (id: number, data: SavingsGoalInput) =>
+  request<SavingsGoal>(`/savings-goals/${id}`, { method: "PATCH", body: JSON.stringify(data) });
+export const deleteSavingsGoal = (id: number) => request<{ ok: boolean }>(`/savings-goals/${id}`, { method: "DELETE" });
+
+// ─── Informe anual ──────────────────────────────────────────────
+export interface YearTotals { income: number; expense: number; net: number; savingsRate: number | null }
+export interface YearReport {
+  year: number;
+  partial: boolean;
+  throughMonth: number;
+  totals: YearTotals;
+  previousTotals: YearTotals;
+  months: Array<{ month: string } & YearTotals>;
+  bestMonth: { month: string; net: number } | null;
+  worstMonth: { month: string; net: number } | null;
+  categories: Array<{ categoryId: number | null; name: string; groupName: string; spent: number; previous: number; diffPct: number | null }>;
+  topPayees: Array<{ payee: string; spent: number; count: number }>;
+  biggestExpenses: Array<{ id: number; date: string; payee: string; amount: number; categoryName: string }>;
+}
+export const getYearReport = (year: number) => request<YearReport>(`/finance/report/year?year=${year}`);
+
+// ─── Datos de ejemplo ───────────────────────────────────────────
+export const getDemoStatus = () => request<{ loaded: boolean }>("/demo");
+export const loadDemoData = () => request<{ loaded: boolean }>("/demo", { method: "POST" });
+export const removeDemoData = () => request<{ loaded: boolean; removed: boolean }>("/demo", { method: "DELETE" });
+
+// ─── Notificaciones push ────────────────────────────────────────
+export const getPushKey = () => request<{ publicKey: string }>("/push/key");
+export const savePushSubscription = (sub: PushSubscriptionJSON) =>
+  request<{ ok: boolean }>("/push/subscriptions", { method: "POST", body: JSON.stringify(sub) });
+export const deletePushSubscription = (endpoint: string) =>
+  request<{ ok: boolean }>("/push/subscriptions", { method: "DELETE", body: JSON.stringify({ endpoint }) });
+export const sendTestPush = () => request<{ sent: number }>("/push/test", { method: "POST" });
+
+// ─── Restaurar una copia («Exportar todos mis datos») ───────────
+export interface BackupCounts {
+  profiles: number;
+  payslips: number;
+  accounts: number;
+  categories: number;
+  transactions: number;
+  recurringTransactions: number;
+  budgets: number;
+  categoryRules: number;
+  alertRules: number;
+}
+export interface BackupPreview {
+  exportedAt: string | null;
+  backup: BackupCounts;
+  current: BackupCounts;
+}
+
+/** Vercel no admite peticiones de más de 4,5 MB: la copia va comprimida (un JSON baja ~10 veces). */
+const MAX_BACKUP_UPLOAD = 4 * 1024 * 1024;
+
+async function backupForm(file: File): Promise<FormData> {
+  let blob: Blob = file;
+  let name = file.name;
+  if (typeof CompressionStream !== "undefined" && !name.toLowerCase().endsWith(".gz")) {
+    blob = await new Response(file.stream().pipeThrough(new CompressionStream("gzip"))).blob();
+    name += ".gz";
+  }
+  if (blob.size > MAX_BACKUP_UPLOAD) {
+    throw new ApiError(413, "La copia es demasiado grande para subirla (más de 4 MB comprimida).");
+  }
+  const form = new FormData();
+  form.append("file", blob, name);
+  return form;
+}
+
+export const previewBackup = async (file: File) => postForm<BackupPreview>("/import/backup?dryRun=true", await backupForm(file));
+
+/** Sustituye TODOS los datos de la cuenta por los de la copia. */
+export const restoreBackup = async (file: File) =>
+  postForm<{ restored: BackupCounts }>("/import/backup?replace=true", await backupForm(file));
+
+// ─── Comparar nóminas y resumen para la Renta ───────────────────
+export interface ConceptDiff {
+  name: string;
+  category: "devengo" | "deduccion" | "otros";
+  current: number | null;
+  other: number | null;
+  change: number | null;
+}
+
+export interface PayslipComparison {
+  id: number;
+  periodYear: number;
+  periodMonth: number;
+  grossSalary: number | null;
+  netSalary: number | null;
+  concepts: ConceptDiff[];
+}
+
+export interface PayslipCompareResponse {
+  previous: PayslipComparison | null;
+  lastYear: PayslipComparison | null;
+  prevId: number | null;
+  nextId: number | null;
+}
+
+export const getPayslipComparison = (id: number) => request<PayslipCompareResponse>(`/payslips/${id}/compare`);
+
+export interface TaxSummary {
+  year: number;
+  payslips: number;
+  grossTotal: number;
+  irpfWithheld: number;
+  socialSecurity: number;
+  netTotal: number;
+  inKind: number;
+  effectiveIrpfRate: number | null;
+  missingMonths: number[];
+  /** Estimación aproximada de la Renta (null con menos de 3 meses). */
+  estimate: {
+    paramsYear: number;
+    complete: boolean;
+    projectedGross: number;
+    projectedWithheld: number;
+    estimatedTax: number;
+    estimatedRate: number;
+    difference: number;
+    verdict: "short" | "long" | "ok";
+  } | null;
+}
+
+export const getTaxSummary = (profileId: number, year: number) =>
+  request<TaxSummary>(`/payslips/tax-summary?profileId=${profileId}&year=${year}`);
+
+// ─── Registro de actividad ──────────────────────────────────────
+export interface ActivityEntry {
+  id: number;
+  entity: string;
+  entityId: number | null;
+  summary: string;
+  createdAt: string;
+}
+
+export const getActivity = (before?: number, limit = 30) =>
+  request<{ data: ActivityEntry[]; nextBefore: number | null }>(`/activity?limit=${limit}${before ? `&before=${before}` : ""}`);
+
+// ─── Compartir en solo lectura ──────────────────────────────────
+export interface SharePerson { userId: number; name: string | null; email: string; since: string }
+export interface SharingState {
+  /** Quienes te dejan ver sus datos. */
+  sharedWithMe: SharePerson[];
+  /** Quienes pueden ver los tuyos. */
+  myViewers: SharePerson[];
+  invites: Array<{ id: number; expiresAt: string; createdAt: string }>;
+}
+
+export const getSharing = () => request<SharingState>("/sharing");
+export const createShareInvite = () =>
+  request<{ id: number; token: string; expiresAt: string }>("/sharing/invites", { method: "POST" });
+export const deleteShareInvite = (id: number) => request<{ ok: boolean }>(`/sharing/invites/${id}`, { method: "DELETE" });
+export const acceptShareInvite = (token: string) =>
+  request<{ owner: { id: number; name: string } }>("/sharing/accept", { method: "POST", body: JSON.stringify({ token }) });
+export const removeShareViewer = (userId: number) => request<{ ok: boolean }>(`/sharing/viewers/${userId}`, { method: "DELETE" });
+export const leaveShare = (ownerUserId: number) => request<{ ok: boolean }>(`/sharing/owners/${ownerUserId}`, { method: "DELETE" });

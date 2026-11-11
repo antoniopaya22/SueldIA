@@ -24,14 +24,18 @@ Buscar en `backend/src/`:
 
 - **Async/Await**: handlers sin `try/catch` o sin `await` en llamadas async
 - **Error propagation**: handlers que no llaman `next(err)` en el catch
-- **Null/undefined**: acceso a propiedades sin verificar existencia (`.get()` puede retornar undefined)
+- **Null/undefined**: acceso a propiedades sin verificar existencia (`const [row] = await db.select()...` deja `row` como `undefined` si no hay filas)
+- **Drizzle síncrono**: restos de la API de SQLite (`.get()`, `.all()`, `.run()`) o queries sin `await` — con `postgres-js` todo es asíncrono
 - **Validación faltante**: endpoints que aceptan input sin validar con Zod
-- **SQL queries**: uso de `sql` template con interpolación insegura de variables
+- **SQL queries**: uso de `sql.raw()` o interpolación insegura de variables; `count(*)` sin `::int` (llega como string); `like` donde debería ser `ilike`
+- **Ownership**: queries (sobre todo `update`/`delete`) que no filtran por `userId` del usuario autenticado, o ids del body sin verificar que son suyos
+- **Fechas e importes**: regex sueltas o `new Date().toISOString()` para "hoy" en vez de `isoDateSchema`/`monthKeySchema`/`todayIso()`; importes con `z.number()` sin `moneySchema` (acepta `Infinity`); columnas de dinero `numeric` en vez de `doublePrecision`
 - **Race conditions**: operaciones async que asumen estado no cambia entre reads
-- **File operations**: acceso a archivos sin verificar existencia o sin manejo de errores
+- **Parser de PDFs**: PDFs que no abren o devuelven texto vacío sin acabar en status `error`/`review`; regex del `concept-matcher` que fallan con decimales/miles en formato español
 - **Type coercion**: comparaciones y operaciones con tipos mixtos (string vs number)
 - **Missing status codes**: respuestas sin código de estado explícito
-- **Memory leaks**: event listeners o workers no limpiados
+- **Serverless**: trabajo lanzado tras responder (`res.json()` y luego `await`), que en Vercel puede no terminar nunca
+- **Memory leaks**: event listeners, cachés en memoria sin límite o timers no limpiados
 
 ### 3. Frontend — Bugs Comunes
 Buscar en `frontend/src/`:
@@ -42,13 +46,16 @@ Buscar en `frontend/src/`:
 - **Uncontrolled inputs**: forms sin estado controlado
 - **Memory leaks**: subscriptions o timers sin cleanup en useEffect
 - **Key props**: listas renderizadas sin `key` o con index como key
-- **Auth token**: operaciones que deberían verificar auth pero no lo hacen
+- **Auth token**: `fetch()` fuera de `lib/api.ts` que no adjunta el token de Supabase (`await getAuthToken()`) o no maneja el 401
+- **Enlaces internos**: rutas sin el prefijo `/app/...`
+- **CSP**: manejadores en línea (`onclick="…"`) en `.astro`/HTML, que rompen el build
 - **Type mismatches**: datos de API usados sin verificar el tipo
 
 ### 4. Cross-cutting
 - **Inconsistencias API**: frontend espera un shape diferente al que devuelve el backend
 - **Environment leaks**: variables de entorno o secretos hardcodeados
 - **Import paths**: imports incorrectos (falta extensión `.js` en backend)
+- **Cobertura de autorización**: rutas con id que no están en `backend/src/routes/authorization.test.ts`
 
 ## Formato del Reporte
 

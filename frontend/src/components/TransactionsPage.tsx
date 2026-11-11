@@ -3,36 +3,33 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Receipt, Plus, Search, ArrowLeftRight, Repeat, Download, ChevronLeft, ChevronRight,
   MoreHorizontal, Tag, TrendingUp, TrendingDown, Scale, ListChecks, X, CalendarRange,
-  AlertTriangle, PiggyBank, Wallet, SlidersHorizontal, CheckCheck, Clock, ArrowUpDown,
+  AlertTriangle, PiggyBank, Wallet, SlidersHorizontal, CheckCheck, Clock, ArrowUpDown, FileSpreadsheet, FileText,
 } from "lucide-react";
 import {
   applyCategorySuggestions,
   batchTransactions,
   createCategoryRule,
-  createRecurringTransaction,
-  deleteRecurringTransaction,
   deleteTransaction,
   exportTransactions,
   getAccounts,
   getCategories,
   getRecurringTransactions,
   getSubscriptionSuggestions,
-  type SubscriptionSuggestion,
   getTransactions,
-  setRecurringTransactionActive,
-  toggleCleared,
+  setCleared,
   splitTransaction,
   unsplitTransaction,
-  updateRecurringTransaction,
   updateTransaction,
-  type RecurringTransaction,
   type Transaction,
   type TransactionFilters,
+  skipRecurringOccurrence,
 } from "../lib/api";
 import { Providers } from "./Providers";
 import { toast } from "sonner";
-import { formatCurrency } from "../lib/format";
+import { formatCurrency, plural } from "../lib/format";
 import { invalidateFinance } from "../lib/finance-cache";
+import { deferWithUndo, groupIdsBy } from "../lib/undo";
+import { setUrlParams, useUrlEnumParam, useUrlParam } from "../lib/url-state";
 import { useTransactionFilters } from "../hooks/use-transaction-filters";
 import { PERIOD_LABELS, activePeriod, periodRange, type PeriodKey } from "../lib/transaction-filters";
 import { EmptyState } from "./ui/EmptyState";
@@ -51,13 +48,11 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { darkBoost } from "../lib/color";
-import {
-  CategorySelect, FilterChip, NONE, getNextMonthlyOccurrence, getTodayIsoDate, type TxType,
-} from "./finance-manage/transactions/shared";
+import { CategorySelect, FilterChip, NONE, formatDateShort, getTodayIsoDate, type TxType } from "./finance-manage/transactions/shared";
 import type { TxForm } from "./finance-manage/transactions/TransactionDialog";
 import { TransactionFormDialog } from "./finance-manage/transactions/TransactionFormDialog";
 import { useQuickCategory } from "./finance-manage/transactions/useQuickCategory";
-import { RecurringDialog, type RecurringForm } from "./finance-manage/transactions/RecurringDialog";
+import { monthlyEquivalent, useRecurringEditor } from "./finance-manage/transactions/use-recurring-editor";
 import { SettleDialog } from "./finance-manage/transactions/SettleDialog";
 import { SplitDialog } from "./finance-manage/transactions/SplitDialog";
 import { AmountRangeFilter } from "./finance-manage/transactions/AmountRangeFilter";
@@ -68,6 +63,8 @@ import { SubscriptionSuggestions } from "./finance-manage/transactions/Subscript
 import { TransactionTable, type SortDir, type SortField } from "./finance-manage/transactions/TransactionTable";
 import { AccountOrderDialog } from "./finance-manage/AccountOrderDialog";
 import { cn } from "cn";
+import { FLAGS, flagMeta, type FlagValue } from "@/lib/flags";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 
 const PAGE_SIZE = 50;
 
@@ -82,25 +79,18 @@ const SORT_OPTIONS: { value: string; label: string; field: SortField; dir: SortD
 
 const CLEARED_LABELS: Record<string, string> = { [NONE]: "Cualquier estado", true: "Liquidadas", false: "Pendientes" };
 
-function emptyRecurringForm(today: string, accountId: number | null): RecurringForm {
-  return {
-    type: "expense", accountId: accountId ?? "", categoryId: "", amount: "", cadence: "monthly",
-    intervalCount: 1, startDate: today, endDate: "", payee: "", memo: "", autoSettle: false,
-  };
-}
-
-// Importe mensual equivalente de una regla (para el compromiso mensual).
-function monthlyEquivalent(rule: RecurringTransaction) {
-  const perYear = rule.cadence === "weekly" ? 52 : rule.cadence === "yearly" ? 1 : 12;
-  return (rule.amount * perYear) / 12 / Math.max(1, rule.intervalCount);
-}
+const SORT_FIELDS: readonly SortField[] = ["date", "payee", "category", "amount", "type"];
 
 function TransactionsView() {
   const queryClient = useQueryClient();
   const today = getTodayIsoDate();
 
   // ─── Filtros y vista ─────────────────────────────────────────
-  const [tab, setTab] = useState<"movements" | "recurring">("movements");
+  // Pestaña, orden y página en la URL (?vista=recurrentes, ?orden=importe-asc…):
+  // un enlace puede llevar directo a Recurrentes y una recarga no los pierde.
+  const [vista, setVista] = useUrlEnumParam("vista", ["movimientos", "recurrentes"] as const, "movimientos");
+  const tab: "movements" | "recurring" = vista === "recurrentes" ? "recurring" : "movements";
+  const setTab = (t: "movements" | "recurring") => setVista(t === "recurring" ? "recurrentes" : "movimientos");
   // Los filtros viven en la URL (?cuenta=…&categoria=…): compartibles, recargables y enlazables desde gráficos.
   const { filters: urlFilters, update: updateFilters, clear: clearFilters, page, setPage } = useTransactionFilters();
   const selectedAccountId = urlFilters.accountId ?? null;
@@ -110,8 +100,21 @@ function TransactionsView() {
   const filterFrom = urlFilters.from ?? "";
   const filterTo = urlFilters.to ?? "";
   const filterCleared = urlFilters.cleared ?? "";
-  const [sortBy, setSortBy] = useState<SortField>("date");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [sortParam] = useUrlParam("orden", "date-desc");
+  const [sortByRaw, sortDirRaw] = sortParam.split("-");
+  const sortBy: SortField = (SORT_FIELDS as readonly string[]).includes(sortByRaw) ? (sortByRaw as SortField) : "date";
+  const sortDir: SortDir = sortDirRaw === "asc" ? "asc" : "desc";
+  const setSort = (field: SortField, dir: SortDir) =>
+    setUrlParams({ orden: field === "date" && dir === "desc" ? null : `${field}-${dir}`, pagina: null });
+
+  // Búsqueda con retardo: antes cada tecla lanzaba una petición y reescribía la URL.
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  useEffect(() => setSearchInput(searchQuery), [searchQuery]);
+  useEffect(() => {
+    if (searchInput === searchQuery) return;
+    const t = setTimeout(() => updateFilters({ search: searchInput.trim() || undefined }), 300);
+    return () => clearTimeout(t);
+  }, [searchInput, searchQuery, updateFilters]);
 
   // Modo selección: actuar sobre varios movimientos a la vez (categorizar, liquidar, borrar).
   const [selectionMode, setSelectionMode] = useState(false);
@@ -124,13 +127,8 @@ function TransactionsView() {
   const [txDialogOpen, setTxDialogOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [txInitial, setTxInitial] = useState<Partial<TxForm> | undefined>(undefined);
-  const [recurringDialogOpen, setRecurringDialogOpen] = useState(false);
-  const [editingRecurringId, setEditingRecurringId] = useState<number | null>(null);
-  const [recurringForm, setRecurringForm] = useState<RecurringForm>(() => emptyRecurringForm(today, null));
-  const [deleteTxTarget, setDeleteTxTarget] = useState<Transaction | null>(null);
   const [settleTarget, setSettleTarget] = useState<Transaction | null>(null);
   const [splitTarget, setSplitTarget] = useState<Transaction | null>(null);
-  const [deleteRecurringTarget, setDeleteRecurringTarget] = useState<RecurringTransaction | null>(null);
 
   const filters: TransactionFilters = useMemo(
     () => ({ ...urlFilters, sortBy, sortDir, page, limit: PAGE_SIZE }),
@@ -169,21 +167,61 @@ function TransactionsView() {
 
   const closeTxDialog = () => setTxDialogOpen(false);
 
-  const closeRecurringDialog = () => {
-    setRecurringDialogOpen(false);
-    setEditingRecurringId(null);
-    setRecurringForm(emptyRecurringForm(today, selectedAccountId));
+  // Quita de la lista (al momento) los movimientos indicados y lo que se borra
+  // con ellos: la otra pata de un traspaso y las partes de un gasto dividido.
+  const hideTransactions = (ids: number[]) => {
+    const rows = txData?.data ?? [];
+    const hidden = new Set(ids);
+    for (const t of rows) {
+      if (!hidden.has(t.id)) continue;
+      if (t.transferId) hidden.add(t.transferId);
+      if (t.splitGroupId) for (const o of rows) if (o.splitGroupId === t.splitGroupId) hidden.add(o.id);
+    }
+    queryClient.setQueriesData<Awaited<ReturnType<typeof getTransactions>>>({ queryKey: ["transactions"] }, (old) =>
+      old && Array.isArray(old.data) ? { ...old, data: old.data.filter((t) => !hidden.has(t.id)), total: Math.max(0, old.total - (old.data.length - old.data.filter((t) => !hidden.has(t.id)).length)) } : old,
+    );
   };
 
-  const deleteMut = useMutation({
-    mutationFn: deleteTransaction,
-    onSuccess: () => { invalidateTx(); toast.success("Transacción eliminada"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
+  // Borrar con «Deshacer» en vez de confirmación: desaparece al momento y la
+  // petición sale a los pocos segundos si no se deshace.
+  const deleteWithUndo = (ids: number[], message: string, commit: () => Promise<unknown>) => {
+    hideTransactions(ids);
+    setSelectedIds(new Set());
+    deferWithUndo({
+      message,
+      commit,
+      onUndo: invalidateTx,
+      onCommitted: invalidateTx,
+      onError: (e) => { toast.error(e.message); invalidateTx(); },
+    });
+  };
+
+  // Para deshacer categorizar/liquidar en lote: el valor que tenía cada
+  // movimiento antes (la selección es de la página visible, así que está en caché).
+  const previousValues = (ids: number[]) => {
+    const byId = new Map((txData?.data ?? []).map((t) => [t.id, t]));
+    return ids.map((id) => byId.get(id)).filter((t): t is NonNullable<typeof t> => !!t);
+  };
+
+  const undoBatch = async (vars: Parameters<typeof batchTransactions>[0], before: ReturnType<typeof previousValues>) => {
+    if (vars.action === "set-category") {
+      const groups = groupIdsBy(before.filter((t) => t.type !== "transfer").map((t) => ({ id: t.id, value: t.categoryId })));
+      for (const [categoryId, ids] of groups) await batchTransactions({ action: "set-category", ids, categoryId });
+    } else if (vars.action === "set-cleared") {
+      const groups = groupIdsBy(before.map((t) => ({ id: t.id, value: t.cleared })));
+      for (const [cleared, ids] of groups) await batchTransactions({ action: "set-cleared", ids, cleared });
+    } else if (vars.action === "set-flag") {
+      const groups = groupIdsBy(before.map((t) => ({ id: t.id, value: t.flag ?? null })));
+      for (const [flag, ids] of groups) await batchTransactions({ action: "set-flag", ids, flag });
+    }
+  };
 
   const batchMut = useMutation({
-    mutationFn: batchTransactions,
-    onSuccess: (res, vars) => {
+    mutationFn: (vars: Parameters<typeof batchTransactions>[0]) => {
+      const before = previousValues(vars.ids);
+      return batchTransactions(vars).then((res) => ({ res, before }));
+    },
+    onSuccess: ({ res, before }, vars) => {
       invalidateTx();
       setSelectedIds(new Set());
       setBulkDeleteOpen(false);
@@ -192,8 +230,22 @@ function TransactionsView() {
       const done =
         vars.action === "delete" ? (n === 1 ? "eliminado" : "eliminados")
         : vars.action === "set-category" ? (vars.categoryId === null ? "sin categoría" : n === 1 ? "categorizado" : "categorizados")
+        : vars.action === "set-flag" ? (vars.flag ? (n === 1 ? "marcado" : "marcados") : "sin marca")
         : vars.cleared ? (n === 1 ? "liquidado" : "liquidados") : (n === 1 ? "pasado a pendiente" : "pasados a pendiente");
-      toast.success(`${n} ${noun} ${done}`);
+      toast.success(`${n} ${noun} ${done}`, {
+        duration: 8000,
+        action: n > 0 && vars.action !== "delete"
+          ? {
+              label: "Deshacer",
+              onClick: () => {
+                undoBatch(vars, before).then(
+                  () => { invalidateTx(); toast.success("Cambio deshecho"); },
+                  (e: Error) => toast.error(e.message),
+                );
+              },
+            }
+          : undefined,
+      });
       if (res.skipped > 0) {
         toast.info(`${res.skipped} ${res.skipped === 1 ? "omitido" : "omitidos"}: traspasos o pagos recurrentes que esa acción no admite`);
       }
@@ -247,7 +299,7 @@ function TransactionsView() {
   });
 
   const clearMut = useMutation({
-    mutationFn: toggleCleared,
+    mutationFn: ({ id, cleared }: { id: number; cleared: boolean }) => setCleared(id, cleared),
     onSuccess: () => {
       invalidateTx();
       queryClient.invalidateQueries({ queryKey: ["recurring-transactions"] });
@@ -255,39 +307,11 @@ function TransactionsView() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const invalidateRecurring = () => {
-    queryClient.invalidateQueries({ queryKey: ["recurring-suggestions"] });
-    queryClient.invalidateQueries({ queryKey: ["transactions"] });
-    queryClient.invalidateQueries({ queryKey: ["recurring-transactions"] });
-  };
-
-  const createRecurringMut = useMutation({
-    mutationFn: createRecurringTransaction,
-    onSuccess: () => { invalidateRecurring(); closeRecurringDialog(); toast.success("Pago recurrente programado"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const updateRecurringMut = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Parameters<typeof updateRecurringTransaction>[1] }) => updateRecurringTransaction(id, data),
-    onSuccess: () => { invalidateRecurring(); closeRecurringDialog(); toast.success("Pago recurrente actualizado"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const toggleRecurringActiveMut = useMutation({
-    mutationFn: ({ id, active }: { id: number; active: boolean }) => setRecurringTransactionActive(id, active),
-    onSuccess: (_, v) => { invalidateRecurring(); toast.success(v.active ? "Pago recurrente reactivado" : "Pago recurrente pausado"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const deleteRecurringMut = useMutation({
-    mutationFn: deleteRecurringTransaction,
-    onSuccess: () => { invalidateRecurring(); toast.success("Pago recurrente eliminado"); },
-    onError: (e: Error) => toast.error(e.message),
-  });
+  const recurring = useRecurringEditor({ today, selectedAccountId, accounts: activeAccounts, categoryGroups });
 
   // Alta rápida de categoría desde el menú "⋯" (el formulario de transacción tiene la suya).
   const quickCategory = useQuickCategory(categoryGroups, (category) => {
-    if (recurringDialogOpen) setRecurringForm((f) => ({ ...f, categoryId: category.id }));
+    if (recurring.isOpen) recurring.setCategory(category.id);
   });
 
   // ─── Acciones ────────────────────────────────────────────────
@@ -312,25 +336,9 @@ function TransactionsView() {
     setTxDialogOpen(true);
   };
 
-  // El buscador ⌘K enlaza aquí con ?buscar=<texto>: de un solo uso, se
-  // consume y se quita de la URL para que un refresco no lo repita. (La
-  // acción "Nueva transacción" ya no pasa por aquí: la gestiona el shell.)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    let changed = false;
-    if (params.has("buscar")) {
-      params.delete("buscar");
-      changed = true;
-    }
-    if (!changed) return;
-    const query = params.toString();
-    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const openEditForm = (tx: Transaction) => {
     if (tx.type === "transfer" && tx.transferDirection === "inflow") {
-      toast.info("Edita la transferencia desde el movimiento de salida");
+      toast.info("Edita el traspaso desde su movimiento de salida");
       return;
     }
     setEditingTransaction(tx);
@@ -340,106 +348,25 @@ function TransactionsView() {
 
   const openCreateRecurring = () => {
     setTab("recurring");
-    setEditingRecurringId(null);
-    setRecurringForm(emptyRecurringForm(today, selectedAccountId));
-    setRecurringDialogOpen(true);
-  };
-
-  const openEditRecurring = (rule: RecurringTransaction) => {
-    setEditingRecurringId(rule.id);
-    setRecurringForm({
-      type: rule.type,
-      accountId: rule.accountId,
-      categoryId: rule.categoryId ?? "",
-      amount: rule.amount.toFixed(2),
-      cadence: rule.cadence,
-      intervalCount: rule.intervalCount,
-      startDate: rule.startDate,
-      endDate: rule.endDate ?? "",
-      payee: rule.payee ?? "",
-      memo: rule.memo ?? "",
-      autoSettle: rule.autoSettle,
-    });
-    setRecurringDialogOpen(true);
-  };
-
-  // Una suscripción detectada se programa con lo que ya sabemos de ella; el usuario revisa y confirma.
-  const openRecurringFromSuggestion = (s: SubscriptionSuggestion) => {
-    setEditingRecurringId(null);
-    setRecurringForm({
-      type: "expense",
-      accountId: s.accountId,
-      categoryId: s.categoryId ?? "",
-      amount: s.amount.toFixed(2),
-      cadence: "monthly",
-      intervalCount: 1,
-      startDate: s.nextDate,
-      endDate: "",
-      payee: s.payee,
-      memo: "",
-      autoSettle: false,
-    });
-    setRecurringDialogOpen(true);
-  };
-
-  const openRecurringFromTransaction = (tx: Transaction) => {
-    if (tx.type === "transfer" || tx.recurringTransactionId) return;
-    setEditingRecurringId(null);
-    setRecurringForm({
-      type: tx.type === "income" ? "income" : "expense",
-      accountId: tx.accountId,
-      categoryId: tx.categoryId ?? "",
-      amount: tx.amount.toFixed(2),
-      cadence: "monthly",
-      intervalCount: 1,
-      startDate: getNextMonthlyOccurrence(tx.date, today),
-      endDate: "",
-      payee: tx.payee ?? "",
-      memo: tx.memo ?? "",
-      autoSettle: false,
-    });
-    setRecurringDialogOpen(true);
-  };
-
-  const handleRecurringSubmit = () => {
-    const accountId = recurringForm.accountId || selectedAccountId;
-    if (!accountId || !recurringForm.amount) {
-      toast.error("Selecciona una cuenta e importe");
-      return;
-    }
-    const payload = {
-      accountId: Number(accountId),
-      categoryId: recurringForm.categoryId ? Number(recurringForm.categoryId) : null,
-      type: recurringForm.type,
-      amount: Number(recurringForm.amount),
-      cadence: recurringForm.cadence,
-      intervalCount: recurringForm.intervalCount,
-      startDate: recurringForm.startDate,
-      endDate: recurringForm.endDate || null,
-      payee: recurringForm.payee || null,
-      memo: recurringForm.memo || null,
-      autoSettle: recurringForm.autoSettle,
-    };
-    if (editingRecurringId) updateRecurringMut.mutate({ id: editingRecurringId, data: payload });
-    else createRecurringMut.mutate(payload);
+    recurring.openCreate();
   };
 
   const toggleSort = (field: SortField) => {
-    if (sortBy === field) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortBy(field); setSortDir(field === "date" ? "desc" : "asc"); }
-    setPage(1);
+    if (sortBy === field) setSort(field, sortDir === "asc" ? "desc" : "asc");
+    else setSort(field, field === "date" ? "desc" : "asc");
   };
 
-  const handleExport = () => exportTransactions(urlFilters);
+  const handleExport = (format: "xlsx" | "csv") =>
+    exportTransactions({ ...urlFilters, format }).catch((e: Error) => toast.error(e.message));
 
   const activeFilterCount = [
     filterType, filterCategoryId, urlFilters.groupId, filterFrom || filterTo, filterCleared, searchQuery,
-    urlFilters.uncategorized, urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined,
+    urlFilters.uncategorized, urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined, urlFilters.flag,
   ].filter(Boolean).length;
   // Filtros que en móvil quedan plegados tras "Filtros" (búsqueda y tipo siempre están a la vista).
   const foldedFilterCount = [
     filterCategoryId, urlFilters.groupId, filterFrom || filterTo, filterCleared, urlFilters.uncategorized,
-    urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined,
+    urlFilters.minAmount !== undefined || urlFilters.maxAmount !== undefined, urlFilters.flag,
   ].filter(Boolean).length;
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [orderOpen, setOrderOpen] = useState(false);
@@ -490,6 +417,8 @@ function TransactionsView() {
 
   const totalBalance = activeAccounts.reduce((s, a) => s + a.balance, 0);
 
+  const accountKeys = radioGroupKeys([null, ...activeAccounts.map((a) => a.id)], selectedAccountId, (id) => updateFilters({ accountId: id ?? undefined }));
+
   return (
     <div>
       <PageHeader
@@ -497,16 +426,27 @@ function TransactionsView() {
         description="Todos tus movimientos: filtra, revisa y marca como liquidados. Los pagos recurrentes se programan aquí."
         actions={
           <>
-            <Button variant="outline" onClick={handleExport} className="gap-1.5" title="Exportar a CSV con los filtros actuales">
-              <Download className="size-4" /> <span className="hidden sm:inline">Exportar</span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="outline" className="gap-1.5" title="Exportar con los filtros actuales" />}>
+                <Download className="size-4" /> <span className="hidden sm:inline">Exportar</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuItem onClick={() => handleExport("xlsx")} className="gap-2">
+                  <FileSpreadsheet className="size-4" /> Excel (.xlsx)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleExport("csv")} className="gap-2">
+                  <FileText className="size-4" /> CSV
+                </DropdownMenuItem>
+                <p className="px-2 pt-1 pb-1.5 text-xs text-muted-foreground">Con los filtros que tienes aplicados.</p>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <DropdownMenu>
               <DropdownMenuTrigger render={<Button variant="outline" size="icon" aria-label="Más acciones" />}>
                 <MoreHorizontal className="size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-56">
                 <DropdownMenuItem onClick={() => openCreateForm("transfer")} disabled={!canCreateTransfers} className="gap-2">
-                  <ArrowLeftRight className="size-4" /> Mover entre cuentas
+                  <ArrowLeftRight className="size-4" /> Nuevo traspaso
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={openCreateRecurring} className="gap-2">
                   <Repeat className="size-4" /> Programar recurrente
@@ -535,6 +475,8 @@ function TransactionsView() {
                     type="button"
                     role="radio"
                     aria-checked={selected}
+                    tabIndex={accountKeys.tabIndex(a.id)}
+                    onKeyDown={accountKeys.onKeyDown}
                     onClick={() => updateFilters({ accountId: a.id ?? undefined })}
                     className={cn(
                       "flex min-w-36 cursor-pointer flex-col items-start rounded-xl border px-3.5 py-2.5 text-left outline-none transition-all focus-visible:ring-2 focus-visible:ring-ring/50",
@@ -602,7 +544,7 @@ function TransactionsView() {
                 hint="Lo que ya refleja el banco"
               />
               <StatCard
-                label="Sin liquidar"
+                label="Pendiente"
                 value={
                   <span className={selectedAccount.unclearedBalance < 0 ? "text-red-600 dark:text-red-400" : undefined}>
                     {selectedAccount.unclearedBalance > 0 ? "+" : ""}{formatCurrency(selectedAccount.unclearedBalance)}
@@ -632,10 +574,10 @@ function TransactionsView() {
               hint={summary && summary.income > 0 ? `Ahorras el ${Math.round((summary.net / summary.income) * 100)} % de lo que ingresas` : "Ingresos menos gastos"}
             />
             <StatCard
-              label="Por liquidar"
+              label="Pendientes"
               value={filterCleared === "true" ? 0 : summary?.pending ?? "—"}
               icon={ListChecks}
-              hint={activeFilterCount ? `De ${totalCount} con los filtros actuales` : `De ${totalCount} movimientos`}
+              hint={activeFilterCount ? `De ${totalCount} con los filtros actuales` : `De ${plural(totalCount, "movimiento", "movimientos")}`}
             />
           </StatGrid>
           )}
@@ -667,9 +609,10 @@ function TransactionsView() {
                 <div className="relative flex-1">
                   <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
                   <Input
-                    value={searchQuery}
-                    onChange={(e) => updateFilters({ search: e.target.value || undefined })}
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
                     placeholder="Buscar por beneficiario o nota"
+                    data-page-search
                     aria-label="Buscar transacciones"
                     className="pl-8"
                   />
@@ -730,10 +673,31 @@ function TransactionsView() {
                   </SelectContent>
                 </Select>
                 <Select
+                  value={urlFilters.flag ?? NONE}
+                  onValueChange={(v) => updateFilters({ flag: !v || v === NONE ? undefined : (v as FlagValue | "any") })}
+                >
+                  <SelectTrigger className="w-full sm:w-40" aria-label="Filtrar por marca">
+                    <SelectValue>
+                      {(v: string) => (v === NONE ? "Cualquier marca" : v === "any" ? "Con marca" : (
+                        <span className="flex items-center gap-2"><span className={cn("size-2.5 rounded-full", flagMeta(v)?.dot)} />{flagMeta(v)?.label}</span>
+                      ))}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>Cualquier marca</SelectItem>
+                    <SelectItem value="any">Con alguna marca</SelectItem>
+                    {FLAGS.map((f) => (
+                      <SelectItem key={f.value} value={f.value}>
+                        <span className="flex items-center gap-2"><span className={cn("size-2.5 rounded-full", f.dot)} />{f.label}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
                   value={`${sortBy}:${sortDir}`}
                   onValueChange={(v) => {
                     const opt = SORT_OPTIONS.find((o) => o.value === v);
-                    if (opt) { setSortBy(opt.field); setSortDir(opt.dir); setPage(1); }
+                    if (opt) setSort(opt.field, opt.dir);
                   }}
                 >
                   <SelectTrigger className="w-full sm:w-44" aria-label="Ordenar">
@@ -845,8 +809,9 @@ function TransactionsView() {
                   onSort={toggleSort}
                   today={today}
                   onEdit={openEditForm}
-                  onToggleCleared={(tx) => clearMut.mutate(tx.id)}
-                  onSchedule={openRecurringFromTransaction}
+                  onToggleCleared={(tx) => clearMut.mutate({ id: tx.id, cleared: !tx.cleared })}
+                  onSchedule={recurring.openFromTransaction}
+                  onSkip={(tx) => deleteWithUndo([tx.id], `Saltado: ${tx.payee || "pago recurrente"} del ${formatDateShort(tx.date)}`, () => skipRecurringOccurrence(tx.id))}
                   onDuplicate={openDuplicateForm}
                   onSettle={setSettleTarget}
                   onSplit={setSplitTarget}
@@ -856,7 +821,13 @@ function TransactionsView() {
                     onToggle: (id) => setSelectedIds((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; }),
                     onToggleAll: (ids, select) => setSelectedIds((cur) => { const next = new Set(cur); for (const id of ids) { if (select) next.add(id); else next.delete(id); } return next; }),
                   } : undefined}
-                  onDelete={setDeleteTxTarget}
+                  onDelete={(tx) => (tx.reconciled && !window.confirm("Este movimiento está conciliado con el banco: borrarlo descuadrará la conciliación. ¿Borrarlo igualmente?")) ? undefined : deleteWithUndo(
+                    [tx.id],
+                    tx.splitGroupId ? "Gasto dividido eliminado (todas sus partes)"
+                      : tx.type === "transfer" ? "Traspaso eliminado (las dos partes)"
+                      : "Movimiento eliminado",
+                    () => deleteTransaction(tx.id),
+                  )}
                 />
               )}
             </div>
@@ -869,11 +840,11 @@ function TransactionsView() {
                 </span>
                 {totalPages > 1 && (
                   <div className="flex items-center gap-1.5">
-                    <Button variant="outline" size="icon-sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} aria-label="Página anterior">
+                    <Button variant="outline" size="icon-sm" onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1} aria-label="Página anterior">
                       <ChevronLeft className="size-4" />
                     </Button>
                     <span className="px-1 tabular-nums">Página {page} de {totalPages}</span>
-                    <Button variant="outline" size="icon-sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} aria-label="Página siguiente">
+                    <Button variant="outline" size="icon-sm" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page >= totalPages} aria-label="Página siguiente">
                       <ChevronRight className="size-4" />
                     </Button>
                   </div>
@@ -891,7 +862,7 @@ function TransactionsView() {
             <StatCard label="Vencidas" value={recurringStats.overdue} icon={ListChecks} hint={recurringStats.overdue > 0 ? "Ya han llegado a su fecha: por liquidar" : "Nada vencido por liquidar"} />
           </StatGrid>
 
-          <SubscriptionSuggestions suggestions={subscriptionSuggestions} onSchedule={openRecurringFromSuggestion} />
+          <SubscriptionSuggestions suggestions={subscriptionSuggestions} onSchedule={recurring.openFromSuggestion} />
 
           <SectionCard
             className="mt-6"
@@ -902,11 +873,12 @@ function TransactionsView() {
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {visibleRecurringRules.map((rule) => (
                   <RecurringRuleCard
+                    accountName={(id) => accounts.find((acc) => acc.id === id)?.name}
                     key={rule.id}
                     rule={rule}
-                    onEdit={() => openEditRecurring(rule)}
-                    onToggleActive={() => toggleRecurringActiveMut.mutate({ id: rule.id, active: !rule.active })}
-                    onDelete={() => setDeleteRecurringTarget(rule)}
+                    onEdit={() => recurring.openEdit(rule)}
+                    onToggleActive={() => recurring.toggleActive(rule)}
+                    onDelete={() => recurring.askDelete(rule)}
                   />
                 ))}
               </div>
@@ -932,17 +904,7 @@ function TransactionsView() {
         defaultAccountId={selectedAccountId}
       />
 
-      <RecurringDialog
-        open={recurringDialogOpen}
-        editing={!!editingRecurringId}
-        form={recurringForm}
-        setForm={setRecurringForm}
-        accounts={activeAccounts}
-        groups={categoryGroups}
-        pending={createRecurringMut.isPending || updateRecurringMut.isPending}
-        onClose={closeRecurringDialog}
-        onSubmit={handleRecurringSubmit}
-      />
+      {recurring.dialogs}
 
       {quickCategory.dialog}
 
@@ -962,6 +924,7 @@ function TransactionsView() {
             }
           }}
           onSetCleared={(cleared) => batchMut.mutate({ action: "set-cleared", ids: [...selectedIds], cleared })}
+          onSetFlag={(flag) => batchMut.mutate({ action: "set-flag", ids: [...selectedIds], flag })}
           onDelete={() => setBulkDeleteOpen(true)}
           onClear={() => setSelectedIds(new Set())}
         />
@@ -982,29 +945,20 @@ function TransactionsView() {
       <ConfirmModal
         open={bulkDeleteOpen}
         title="Eliminar movimientos"
-        message={`¿Eliminar ${selectedIds.size} ${selectedIds.size === 1 ? "movimiento" : "movimientos"}? Los pagos recurrentes se omiten (se gestionan desde su programación) y de un traspaso se borran las dos partes. No se puede deshacer.`}
+        message={`¿Eliminar ${selectedIds.size} ${selectedIds.size === 1 ? "movimiento" : "movimientos"}? Los pagos recurrentes se omiten (se gestionan desde su programación) y de un traspaso se borran las dos partes. Tendrás unos segundos para deshacerlo.`}
         confirmLabel="Eliminar"
         variant="danger"
-        onConfirm={() => batchMut.mutate({ action: "delete", ids: [...selectedIds] })}
+        onConfirm={() => {
+          const ids = [...selectedIds].filter((id) => !transactions.find((t) => t.id === id)?.recurringTransactionId);
+          setBulkDeleteOpen(false);
+          if (ids.length === 0) {
+            toast.info("Los pagos recurrentes se gestionan desde su programación");
+            return;
+          }
+          deleteWithUndo(ids, `${ids.length} ${ids.length === 1 ? "movimiento eliminado" : "movimientos eliminados"}`, () =>
+            batchTransactions({ action: "delete", ids }));
+        }}
         onCancel={() => setBulkDeleteOpen(false)}
-      />
-      <ConfirmModal
-        open={!!deleteTxTarget}
-        title="Eliminar transacción"
-        message={deleteTxTarget?.splitGroupId ? "Es una parte de un gasto dividido: se eliminarán todas sus partes. Esta acción no se puede deshacer." : "¿Eliminar esta transacción? Esta acción no se puede deshacer."}
-        confirmLabel="Eliminar"
-        variant="danger"
-        onConfirm={() => { if (deleteTxTarget) deleteMut.mutate(deleteTxTarget.id); setDeleteTxTarget(null); }}
-        onCancel={() => setDeleteTxTarget(null)}
-      />
-      <ConfirmModal
-        open={!!deleteRecurringTarget}
-        title="Eliminar programación recurrente"
-        message={`¿Eliminar la programación recurrente de ${deleteRecurringTarget?.payee || "este movimiento"}?`}
-        confirmLabel="Eliminar"
-        variant="danger"
-        onConfirm={() => { if (deleteRecurringTarget) deleteRecurringMut.mutate(deleteRecurringTarget.id); setDeleteRecurringTarget(null); }}
-        onCancel={() => setDeleteRecurringTarget(null)}
       />
     </div>
   );

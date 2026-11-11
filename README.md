@@ -1,27 +1,93 @@
 # SueldIA
 
-Aplicación web para gestión y análisis de nóminas con OCR.
+Aplicación web para entender tus nóminas españolas y llevar tus finanzas personales en el mismo sitio.
 
-## Stack
+- **Nóminas**: subes el PDF y SueldIA extrae periodo, empresa, bruto, neto y cada concepto (devengos y deducciones). Panel, analítica (evolución, IRPF, interanual, anomalías) y alertas configurables.
+- **Finanzas**: cuentas, transacciones (traspasos, gastos divididos, recurrentes), presupuesto por categorías al estilo YNAB, reglas de categorización, informe mensual, previsión y analítica. Importación desde YNAB.
 
-- **Backend**: Node.js + Express + Drizzle ORM (SQLite)
-- **Frontend**: Astro + React + Tailwind CSS
-- **OCR**: Tesseract (requiere `spa.traineddata`)
+Los PDF **no se guardan**: se procesan en memoria al subirlos y solo se conserva el texto extraído y los datos estructurados.
 
-## Setup
+## Arquitectura
+
+```
+Navegador ──▶ Astro estático + islas React ──▶ /api/* (rewrite de Vercel) ──▶ Express ──▶ Postgres (Supabase)
+                     │
+                     └──▶ Supabase Auth (login con Google)
+```
+
+| Pieza | Tecnología | Dónde |
+|---|---|---|
+| Frontend | Astro 5 (salida estática) + React 19 + TanStack Query + Tailwind 4 + shadcn/ui (Base UI) | `frontend/` |
+| Backend | Express 4 + Drizzle ORM + Zod + Pino | `backend/` |
+| Base de datos | Postgres en Supabase (RLS activado en todas las tablas; la app no usa la Data API) | `backend/src/db/` |
+| Autenticación | Supabase Auth con Google; el backend verifica el JWT contra el JWKS de Supabase | `backend/src/middleware/auth.ts` |
+| Despliegue | Un proyecto de Vercel con dos servicios (`vercel.json`) y un cron diario | raíz |
+
+Guías para agentes de IA y convenciones del código: `AGENTS.md`, `backend/AGENTS.md`, `frontend/AGENTS.md`.
+
+## Desarrollo local
+
+Requisitos: Node 22 o superior y un Postgres (local con Docker, o un proyecto de Supabase de pruebas).
 
 ```bash
-# Instalar dependencias
 npm install
 
-# Copiar variables de entorno
-cp .env.example .env
-# Editar .env con un JWT_SECRET seguro
+# Variables de entorno (backend y frontend comparten fichero)
+cp .env.example .env.local
+# Edita .env.local: DATABASE_URL, SUPABASE_URL, PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY
 
-# Descargar datos OCR para español
-# Colocar spa.traineddata en backend/
-# https://github.com/tesseract-ocr/tessdata
+# Postgres local (opcional)
+docker run -d --name sueldia-pg -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=sueldia -p 5432:5432 postgres:16-alpine
 
-# Ejecutar migraciones y arrancar
-npm run dev
+# El backend lee las variables del entorno (no usa dotenv): expórtalas antes
+set -a; source .env.local; set +a
+
+npm run db:migrate   # aplica backend/src/db/migrations
+npm run dev          # backend en :3001 y frontend en :4321 (con proxy de /api)
+```
+
+El login necesita un proyecto de Supabase con el proveedor de Google configurado y `http://localhost:4321/login` en las URL de redirección.
+
+## Pruebas
+
+```bash
+npm test             # backend y frontend; las de integración se saltan sin BBDD
+npm run typecheck
+npm run build
+```
+
+Las pruebas de integración (autorización entre usuarios, borrados con reasignación…) necesitan un Postgres **de pruebas**, porque vacían las tablas:
+
+```bash
+docker run -d --name sueldia-pg-test -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=sueldia_test -p 55432:5432 postgres:16-alpine
+export TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:55432/sueldia_test
+DATABASE_URL=$TEST_DATABASE_URL npm run db:migrate
+npm test
+```
+
+La integración continua (`.github/workflows/ci.yml`) hace todo esto en cada PR.
+
+## Base de datos y migraciones
+
+- El esquema está en `backend/src/db/schema.ts`. Tras cambiarlo: `npm run db:generate` y revisar el SQL generado.
+- Toda tabla nueva lleva `.enableRLS()`: `db:migrate` falla si alguna tabla de `public` queda sin RLS.
+- En Vercel, las migraciones se aplican en el build del servicio backend, **solo** en producción (los previews se las saltan). Escribe migraciones compatibles con la versión anterior del código: primero añadir, en otro despliegue quitar.
+
+## Despliegue
+
+`vercel.json` define dos servicios (`backend` con Express, `frontend` con Astro), las rutas, las cabeceras de seguridad y el cron diario (`/api/cron/daily`: recurrentes y alertas). Variables necesarias en Vercel: las de `.env.example` (`CRON_SECRET` para el cron; `SUPABASE_SERVICE_ROLE_KEY` para que eliminar la cuenta borre también el acceso de Google; `VAPID_PUBLIC_KEY`/`VAPID_PRIVATE_KEY`/`VAPID_SUBJECT` para los avisos push de las alertas, generadas una vez con `npx web-push generate-vapid-keys`).
+
+## Añadir un formato de nómina
+
+El analizador está en `backend/src/parsers/`: `pdf-text-extractor.ts` reconstruye el texto por filas y columnas, y cada formato vive en `parsers/formats/` con la interfaz `PayslipFormat` (`detect(texto)` → confianza de 0 a 1, `parse(texto)` → nómina). Para uno nuevo:
+
+1. Crea `parsers/formats/<programa>.ts` con su `id` (estable: se guarda en `payslips.parser_format`), su detección y su extracción.
+2. Añádelo a `FORMATS` en `parsers/formats/index.ts` (gana el de más confianza; `private-generic` es el de reserva y va el último).
+3. Pruebas con nóminas **anonimizadas** (sin NIF, IBAN, nombres ni número de afiliación) junto al formato.
+
+Cada subida registra el formato, el estado final y el tiempo (`payslips.parser_format`, `payslips.parse_ms` y la línea «Nómina analizada» del log), sin datos personales. Para ver qué formato falla más:
+
+```sql
+SELECT parser_format, parsing_status, count(*), round(avg(parse_ms)) AS ms
+FROM payslips GROUP BY 1, 2 ORDER BY 1, 2;
 ```

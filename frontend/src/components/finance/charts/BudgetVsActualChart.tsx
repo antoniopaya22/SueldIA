@@ -10,13 +10,11 @@ import { chartAxis, chartCursor, chartGrid } from "../../app";
 import { ChartEmpty, ChartLegend, shortenLabel } from "../finance-ui";
 import { Button } from "@/components/ui/button";
 import { cn } from "cn";
+import { currentMonthKey } from "../../../lib/dates";
 
 const MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const monthName = (m: string) => `${MONTHS[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
-const currentMonth = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-};
+const currentMonth = () => currentMonthKey();
 
 /** Lo presupuestado frente a lo gastado de cada categoría en un mes (en rojo, las que se han pasado). */
 export function BudgetVsActualChart({ limit, expanded }: { limit: number; expanded: boolean }) {
@@ -44,7 +42,7 @@ export function BudgetVsActualChart({ limit, expanded }: { limit: number; expand
         <>
           <div style={{ height: Math.max(expanded ? 380 : 260, rows.length * 38) }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 12, left: 0, bottom: 0 }} barGap={2}>
+              <BarChart accessibilityLayer data={rows} layout="vertical" margin={{ top: 4, right: 12, left: 0, bottom: 0 }} barGap={2}>
                 <CartesianGrid {...chartGrid} horizontal={false} vertical />
                 <XAxis type="number" {...chartAxis} tickFormatter={formatCompact} />
                 <YAxis type="category" dataKey="label" {...chartAxis} width={expanded ? 150 : 96} />

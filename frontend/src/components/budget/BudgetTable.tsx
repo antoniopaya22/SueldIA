@@ -124,8 +124,10 @@ export function BudgetTable({ categories, month, pendingId, onAssign, onEditTarg
                     type="button"
                     onClick={() => onEditTarget(c)}
                     className={cn(
-                      "inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50",
-                      c.target ? "opacity-100" : "opacity-0 group-hover/row:opacity-100",
+                      "inline-flex size-6 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring/50 pointer-coarse:size-9",
+                      // Sin objetivo, solo aparece al pasar el ratón… donde hay ratón: en
+                      // táctil se veía nunca, aunque la página dice «Pulsa ◎».
+                      c.target ? "opacity-100" : "pointer-fine:opacity-0 pointer-fine:group-hover/row:opacity-100 pointer-coarse:opacity-60",
                     )}
                     aria-label={c.target ? `Editar el objetivo de ${c.name}` : `Poner un objetivo a ${c.name}`}
                     title={c.target ? "Editar objetivo" : "Poner un objetivo"}

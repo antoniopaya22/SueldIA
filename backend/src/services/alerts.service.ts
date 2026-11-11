@@ -1,11 +1,15 @@
 import { z } from "zod";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { alertHistory, alertRules, payslipConcepts, payslips, profiles } from "../db/schema.js";
 import { logger } from "../logger.js";
+import { alertsPushMessage, notifyUser } from "./push.service.js";
+import { todayIso } from "../utils/dates.js";
 import {
-  evalCategoryOverspent, evalLowBalance, evalOverduePending, financeAlertConfigSchemas,
+  evalCategoryOverspent, evalDuplicateCharge, evalLowBalance, evalLowBalanceForecast, evalOverduePending,
+  evalSubscriptionPriceIncrease, evalUnusualCategorySpend, financeAlertConfigSchemas,
 } from "./finance-alerts.service.js";
+import { isIrpfAmount } from "../parsers/concept-classifier.js";
 
 /* ───────── Config por tipo de regla ─────────────────────────────
  * Cada tipo de `alert_rules.type` tiene su propia forma de `config`.
@@ -27,11 +31,18 @@ export const alertConfigSchemas = {
     conceptName: z.string().min(1).max(100),
     thresholdPercent: z.number().positive().max(1000).default(15),
   }),
+  // Cambio del tipo efectivo de IRPF (retención / bruto) entre la última
+  // nómina y la anterior, en puntos porcentuales. Antes solo se calculaba al
+  // vuelo en Analítica y nunca llegaba como aviso.
+  irpf_change: z.object({
+    profileId: z.number().int().positive().optional(),
+    thresholdPoints: z.number().positive().max(50).default(2),
+  }),
   custom_threshold: z.object({
     profileId: z.number().int().positive().optional(),
     metric: z.enum(["net", "gross"]),
     comparator: z.enum(["below", "above"]),
-    value: z.number().nonnegative(),
+    value: z.number().finite().nonnegative().max(1_000_000_000),
   }),
   // Alertas de finanzas (ver finance-alerts.service.ts)
   ...financeAlertConfigSchemas,
@@ -68,6 +79,11 @@ async function parsedOrdinalPayslips(profileId: number): Promise<ParsedPayslip[]
         eq(payslips.profileId, profileId),
         eq(payslips.parsingStatus, "parsed"),
         eq(payslips.payslipType, "ordinal"),
+        // Sin periodo no se puede ordenar: Postgres pondría los NULL al final
+        // y esa nómina pasaría a ser "la última", desactivando en silencio la
+        // regla de nómina ausente y comparando las demás con la equivocada.
+        isNotNull(payslips.periodYear),
+        isNotNull(payslips.periodMonth),
       ),
     )
     .orderBy(asc(payslips.periodYear), asc(payslips.periodMonth));
@@ -100,8 +116,12 @@ async function evalMissingPayslip(
     );
     if (alreadyHasExpected) continue;
 
-    const deadline = new Date(expected.year, expected.month - 1, 1 + config.graceDays);
-    if (new Date() < deadline) continue;
+    // Plazo en fecha de Madrid (el servidor va en UTC). La nómina de un mes se
+    // cobra a final de ese mes: el plazo es el día 1 del mes siguiente + días
+    // de gracia (antes contaba desde el día 1 del propio mes y la nómina de
+    // noviembre "faltaba" ya el 11 de noviembre).
+    const deadline = new Date(Date.UTC(expected.year, expected.month, 1 + config.graceDays)).toISOString().slice(0, 10);
+    if (todayIso() < deadline) continue;
 
     const monthLabel = new Date(expected.year, expected.month - 1, 1).toLocaleDateString("es-ES", {
       month: "long",
@@ -205,6 +225,55 @@ async function evalCustomThreshold(
   return candidates;
 }
 
+/** ¿Es la retención de IRPF? ("IRPF", "I.R.P.F.", "Retención IRPF", "Retención a cuenta"…) */
+export function isIrpfConceptName(name: string): boolean {
+  const n = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return /\bi\.?\s?r\.?\s?p\.?\s?f\b/.test(n) || /retencion (a cuenta|irpf)/.test(n);
+}
+
+/** Tipo efectivo de IRPF (%) de una nómina; null sin bruto o sin retención. */
+export function effectiveIrpfRate(
+  grossSalary: number | null,
+  concepts: Array<{ category: string; name: string; amount: number; isPercentage: boolean; kind?: string | null }>,
+): number | null {
+  if (!grossSalary || grossSalary <= 0) return null;
+  const irpf = concepts.filter((c) => isIrpfAmount(c)).reduce((s, c) => s + c.amount, 0);
+  return irpf > 0 ? (irpf / grossSalary) * 100 : null;
+}
+
+async function evalIrpfChange(
+  rule: Rule,
+  config: z.infer<typeof alertConfigSchemas.irpf_change>,
+): Promise<Candidate[]> {
+  const candidates: Candidate[] = [];
+  for (const profile of await scopedProfiles(rule.userId, config.profileId)) {
+    const history = await parsedOrdinalPayslips(profile.id);
+    const latest = history.at(-1);
+    const prior = history.at(-2);
+    if (!latest || !prior) continue;
+
+    const concepts = await db
+      .select()
+      .from(payslipConcepts)
+      .where(inArray(payslipConcepts.payslipId, [latest.id, prior.id]));
+    const latestRate = effectiveIrpfRate(latest.grossSalary, concepts.filter((c) => c.payslipId === latest.id));
+    const priorRate = effectiveIrpfRate(prior.grossSalary, concepts.filter((c) => c.payslipId === prior.id));
+    if (latestRate == null || priorRate == null) continue;
+
+    const diff = latestRate - priorRate;
+    if (Math.abs(diff) < config.thresholdPoints) continue;
+
+    const fmt = (n: number) => n.toLocaleString("es-ES", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    candidates.push({
+      severity: "warning",
+      message: `La retención de IRPF de ${profile.name} ha ${diff > 0 ? "subido" : "bajado"} del ${fmt(priorRate)} % al ${fmt(latestRate)} % en la última nómina.`,
+      payslipId: latest.id,
+      dedupeKey: `irpf_change:${rule.id}:${latest.id}`,
+    });
+  }
+  return candidates;
+}
+
 async function evaluateRule(rule: Rule): Promise<Candidate[]> {
   const schema = alertConfigSchemas[rule.type as AlertRuleType];
   if (!schema) return [];
@@ -230,12 +299,22 @@ async function evaluateRule(rule: Rule): Promise<Candidate[]> {
       return evalConceptChange(rule, parsed.data as z.infer<typeof alertConfigSchemas.concept_change>);
     case "custom_threshold":
       return evalCustomThreshold(rule, parsed.data as z.infer<typeof alertConfigSchemas.custom_threshold>);
+    case "irpf_change":
+      return evalIrpfChange(rule, parsed.data as z.infer<typeof alertConfigSchemas.irpf_change>);
     case "category_overspent":
       return evalCategoryOverspent(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.category_overspent>);
     case "low_balance":
       return evalLowBalance(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.low_balance>);
     case "overdue_pending":
       return evalOverduePending(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.overdue_pending>);
+    case "low_balance_forecast":
+      return evalLowBalanceForecast(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.low_balance_forecast>);
+    case "subscription_price_increase":
+      return evalSubscriptionPriceIncrease(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.subscription_price_increase>);
+    case "duplicate_charge":
+      return evalDuplicateCharge(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.duplicate_charge>);
+    case "unusual_category_spend":
+      return evalUnusualCategorySpend(rule.userId, rule.id, parsed.data as z.infer<typeof alertConfigSchemas.unusual_category_spend>);
     default:
       return [];
   }
@@ -269,15 +348,37 @@ export async function evaluateRulesForUser(userId: number): Promise<number> {
     .where(and(eq(alertRules.userId, userId), eq(alertRules.enabled, true)));
 
   let created = 0;
+  const newRuleNames: string[] = [];
   for (const rule of rules) {
     try {
       const candidates = await evaluateRule(rule);
-      created += await insertCandidates(rule, candidates);
+      const n = await insertCandidates(rule, candidates);
+      created += n;
+      for (let i = 0; i < n; i++) newRuleNames.push(rule.name);
     } catch (err) {
       logger.error({ err, ruleId: rule.id }, "Error evaluando regla de alerta");
     }
   }
+  // Un solo aviso por evaluación (no uno por alerta), y solo si hay algo nuevo.
+  const message = alertsPushMessage(newRuleNames);
+  if (message) await notifyUser(userId, message).catch((err) => logger.warn({ err }, "Aviso push fallido"));
   return created;
+}
+
+/**
+ * Reglas con las que empieza cada cuenta nueva: la portada promete «te avisa
+ * si algo cambia» y un usuario recién llegado no tenía ninguna.
+ */
+export const DEFAULT_ALERT_RULES = [
+  { name: "Bajada del neto", type: "salary_drop", config: { thresholdPercent: 5 } },
+  { name: "Nómina sin subir", type: "missing_payslip", config: { graceDays: 10 } },
+  { name: "Cambio en la retención de IRPF", type: "irpf_change", config: { thresholdPoints: 2 } },
+] as const;
+
+export async function createDefaultAlertRules(userId: number): Promise<void> {
+  await db.insert(alertRules).values(
+    DEFAULT_ALERT_RULES.map((r) => ({ userId, name: r.name, type: r.type, config: JSON.stringify(r.config) })),
+  );
 }
 
 /** Evalúa las reglas de todos los usuarios — pensado para el cron diario. */

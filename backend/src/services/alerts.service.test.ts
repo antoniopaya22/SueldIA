@@ -51,3 +51,27 @@ describe("alertConfigSchemas", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("IRPF", () => {
+  it("reconoce las formas habituales del concepto", async () => {
+    const { isIrpfConceptName } = await import("./alerts.service.js");
+    for (const name of ["IRPF", "Retención I.R.P.F.", "I.R.P.F. 15%", "Retención a cuenta", "Tributación IRPF"]) {
+      expect(isIrpfConceptName(name), name).toBe(true);
+    }
+    for (const name of ["Contingencias comunes", "Desempleo", "Salario base", "Irpfx"]) {
+      expect(isIrpfConceptName(name), name).toBe(false);
+    }
+  });
+
+  it("calcula el tipo efectivo sobre el bruto", async () => {
+    const { effectiveIrpfRate } = await import("./alerts.service.js");
+    const concepts = [
+      { category: "deduccion", name: "IRPF", amount: 300, isPercentage: false },
+      { category: "deduccion", name: "IRPF", amount: 15, isPercentage: true },
+      { category: "deduccion", name: "Contingencias comunes", amount: 100, isPercentage: false },
+    ];
+    expect(effectiveIrpfRate(2000, concepts)).toBeCloseTo(15);
+    expect(effectiveIrpfRate(null, concepts)).toBeNull();
+    expect(effectiveIrpfRate(2000, [])).toBeNull();
+  });
+});

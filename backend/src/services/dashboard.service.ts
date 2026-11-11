@@ -2,6 +2,8 @@ import { db } from "../db/index.js";
 import { payslips, payslipConcepts, profiles } from "../db/schema.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { round } from "../utils/math.js";
+import { currentYearMonth } from "../utils/dates.js";
+import { isIrpfAmount } from "../parsers/concept-classifier.js";
 
 /* ───────── Types ────────────────────────────────────────────── */
 
@@ -87,7 +89,7 @@ export function buildKpis(filtered: Payslip[], allConcepts: Concept[]) {
   const totalNetYear = filtered.reduce((s, p) => s + (p.netSalary ?? 0), 0);
 
   const irpfConcepts = allConcepts.filter(
-    (c) => c.category === "deduccion" && c.name.toLowerCase().includes("irpf"),
+    (c) => isIrpfAmount(c),
   );
   const avgIrpf =
     irpfConcepts.length > 0
@@ -150,7 +152,11 @@ export function buildConceptBreakdown(allConcepts: Concept[]) {
 
 /* ───────── Annual Summaries ─────────────────────────────────── */
 
-export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]) {
+/**
+ * `paymentsPerYear`: pagas al año del perfil (si se mira uno solo y se conoce):
+ * con 14, la proyección cuenta también las extras que aún no han llegado.
+ */
+export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[], paymentsPerYear?: number | null) {
   const byYear = new Map<number, Payslip[]>();
   for (const p of filtered) {
     const y = p.periodYear ?? 0;
@@ -173,16 +179,18 @@ export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]
       const totalNet = regularNet + extraNet;
       const totalDeductions = totalGross - totalNet;
       const months = regular.length;
-      const currentMonth = new Date().getMonth() + 1;
-      const currentFullYear = new Date().getFullYear();
-      const isCurrentYear = year === currentFullYear;
-      const projectedMonths = isCurrentYear ? Math.max(months, currentMonth) : 12;
       const monthlyAvgGross = months > 0 ? regularGross / months : 0;
       const monthlyAvgNet = months > 0 ? regularNet / months : 0;
+      // Proyección del AÑO completo: 12 mensualidades a la media, más las extras
+      // cobradas y, si el perfil dice cuántas pagas tiene, las que faltan
+      // (estimadas como una mensualidad media). Antes, en el año en curso solo
+      // proyectaba hasta el mes actual y nunca contaba las pagas extra.
+      const expectedExtras = paymentsPerYear ? Math.max(0, paymentsPerYear - 12) : extras.length;
+      const missingExtras = Math.max(0, expectedExtras - extras.length);
 
       const yearPayslipIds = new Set(ps.map((p) => p.id));
       const yearIrpf = allConcepts
-        .filter((c) => yearPayslipIds.has(c.payslipId) && c.category === "deduccion" && c.name.toLowerCase().includes("irpf"))
+        .filter((c) => yearPayslipIds.has(c.payslipId) && isIrpfAmount(c))
         .reduce((s, c) => s + c.amount, 0);
 
       return {
@@ -194,12 +202,97 @@ export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]
         totalIrpf: round(yearIrpf),
         avgMonthlyGross: round(monthlyAvgGross),
         avgMonthlyNet: round(monthlyAvgNet),
-        projectedAnnualGross: round(monthlyAvgGross * projectedMonths),
-        projectedAnnualNet: round(monthlyAvgNet * projectedMonths),
+        projectedAnnualGross: round(monthlyAvgGross * 12 + extraGross + missingExtras * monthlyAvgGross),
+        projectedAnnualNet: round(monthlyAvgNet * 12 + extraNet + missingExtras * monthlyAvgNet),
         pagasExtra: extras.length,
         extraGross: round(extraGross),
         extraNet: round(extraNet),
         retentionRate: totalGross > 0 ? round((totalNet / totalGross) * 100) : 0,
+      };
+    });
+}
+
+/* ───────── Hogar (varios perfiles) ──────────────────────────── */
+
+export interface HouseholdMember {
+  profileId: number;
+  name: string;
+  color: string;
+  payslips: number;
+  totalGross: number;
+  totalNet: number;
+  totalIrpf: number;
+  avgMonthlyNet: number;
+  projectedAnnualNet: number;
+  /** % del neto del hogar en el año (0–100). */
+  shareOfNet: number;
+}
+
+export interface HouseholdYear {
+  year: number;
+  totalGross: number;
+  totalNet: number;
+  totalIrpf: number;
+  /** Suma de la proyección de cada perfil, cada uno con sus pagas. */
+  projectedAnnualNet: number;
+  members: HouseholdMember[];
+}
+
+/**
+ * Ingresos del hogar por año y cuánto aporta cada perfil. Solo tiene sentido
+ * con dos o más perfiles con nóminas: si no, devuelve [] y la vista no sale.
+ */
+export function buildHousehold(
+  filtered: Payslip[],
+  allConcepts: Concept[],
+  profileMap: Map<number, Pick<Profile, "id" | "name" | "color"> & { paymentsPerYear?: number | null }>,
+): HouseholdYear[] {
+  const byProfile = new Map<number, Payslip[]>();
+  for (const p of filtered) {
+    if (!byProfile.has(p.profileId)) byProfile.set(p.profileId, []);
+    byProfile.get(p.profileId)!.push(p);
+  }
+  if (byProfile.size < 2) return [];
+
+  const conceptsByPayslip = new Map<number, Concept[]>();
+  for (const c of allConcepts) {
+    if (!conceptsByPayslip.has(c.payslipId)) conceptsByPayslip.set(c.payslipId, []);
+    conceptsByPayslip.get(c.payslipId)!.push(c);
+  }
+
+  const years = new Map<number, Omit<HouseholdMember, "shareOfNet">[]>();
+  for (const [profileId, ps] of byProfile) {
+    const profile = profileMap.get(profileId);
+    const concepts = ps.flatMap((p) => conceptsByPayslip.get(p.id) ?? []);
+    for (const s of buildAnnualSummaries(ps, concepts, profile?.paymentsPerYear ?? null)) {
+      if (!years.has(s.year)) years.set(s.year, []);
+      years.get(s.year)!.push({
+        profileId,
+        name: profile?.name ?? `Perfil ${profileId}`,
+        color: profile?.color ?? "#2e3a48",
+        payslips: ps.filter((p) => (p.periodYear ?? 0) === s.year).length,
+        totalGross: s.totalGross,
+        totalNet: s.totalNet,
+        totalIrpf: s.totalIrpf,
+        avgMonthlyNet: s.avgMonthlyNet,
+        projectedAnnualNet: s.projectedAnnualNet,
+      });
+    }
+  }
+
+  return [...years.entries()]
+    .sort(([a], [b]) => b - a)
+    .map(([year, members]) => {
+      const totalNet = members.reduce((s, m) => s + m.totalNet, 0);
+      return {
+        year,
+        totalGross: round(members.reduce((s, m) => s + m.totalGross, 0)),
+        totalNet: round(totalNet),
+        totalIrpf: round(members.reduce((s, m) => s + m.totalIrpf, 0)),
+        projectedAnnualNet: round(members.reduce((s, m) => s + m.projectedAnnualNet, 0)),
+        members: members
+          .map((m) => ({ ...m, shareOfNet: totalNet > 0 ? round((m.totalNet / totalNet) * 100) : 0 }))
+          .sort((a, b) => b.totalNet - a.totalNet),
       };
     });
 }
@@ -209,7 +302,7 @@ export function buildAnnualSummaries(filtered: Payslip[], allConcepts: Concept[]
 export function buildIrpfEvolution(filtered: Payslip[], allConcepts: Concept[]) {
   const regular = filtered.filter((p) => p.payslipType !== "extra");
   const irpfConcepts = allConcepts.filter(
-    (c) => c.category === "deduccion" && c.name.toLowerCase().includes("irpf"),
+    (c) => isIrpfAmount(c),
   );
   const irpfByPayslip = new Map<number, number>();
   for (const c of irpfConcepts) {

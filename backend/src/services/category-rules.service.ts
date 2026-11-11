@@ -8,22 +8,60 @@ import { normalizeText } from "../utils/text.js";
 export interface RuleMatch {
   match: string;
   categoryId: number;
+  matchField?: "payee" | "memo" | "any";
+  transactionType?: "expense" | "income" | null;
+  minAmount?: number | null;
+  maxAmount?: number | null;
+  accountId?: number | null;
+}
+
+export interface RuleTarget {
+  payee?: string | null;
+  memo?: string | null;
+  type?: string;
+  /** Importe positivo. */
+  amount?: number;
+  accountId?: number;
+}
+
+/** ¿Cumple el movimiento todas las condiciones de la regla? */
+export function ruleMatches(rule: RuleMatch, t: RuleTarget): boolean {
+  if (!rule.match) return false;
+  const field = rule.matchField ?? "payee";
+  const haystacks =
+    field === "payee" ? [t.payee] : field === "memo" ? [t.memo] : [t.payee, t.memo];
+  if (!haystacks.some((h) => normalizeText(h).includes(rule.match))) return false;
+  // Las condiciones que no se pueden comprobar (falta el dato) no se cumplen.
+  if (rule.transactionType && t.type !== rule.transactionType) return false;
+  if (rule.accountId != null && t.accountId !== rule.accountId) return false;
+  if (rule.minAmount != null && (t.amount == null || t.amount < rule.minAmount)) return false;
+  if (rule.maxAmount != null && (t.amount == null || t.amount > rule.maxAmount)) return false;
+  return true;
+}
+
+/** Puntuación de especificidad: más texto y más condiciones = más específica. */
+function specificity(rule: RuleMatch): number {
+  const conditions = [rule.transactionType, rule.accountId, rule.minAmount, rule.maxAmount].filter((v) => v != null).length;
+  return rule.match.length + conditions * 1000;
 }
 
 /**
- * Categoría que dicta la regla que encaja con el beneficiario. Si encajan
- * varias, gana la más específica (el texto más largo): "amazon prime" antes
- * que "amazon".
+ * Categoría que dicta la regla que encaja con el movimiento. Si encajan
+ * varias, gana la más específica: con más condiciones y, a igualdad, con el
+ * texto más largo ("amazon prime" antes que "amazon").
  */
-export function findRuleCategory(payee: string | null | undefined, rules: RuleMatch[]): number | null {
-  const p = normalizeText(payee);
-  if (!p) return null;
+export function findRuleFor(t: RuleTarget, rules: RuleMatch[]): number | null {
   let best: RuleMatch | null = null;
   for (const rule of rules) {
-    if (!rule.match || !p.includes(rule.match)) continue;
-    if (!best || rule.match.length > best.match.length) best = rule;
+    if (!ruleMatches(rule, t)) continue;
+    if (!best || specificity(rule) > specificity(best)) best = rule;
   }
   return best ? best.categoryId : null;
+}
+
+/** Atajo cuando solo se conoce el beneficiario (las reglas con más condiciones no aplican). */
+export function findRuleCategory(payee: string | null | undefined, rules: RuleMatch[]): number | null {
+  return findRuleFor({ payee }, rules);
 }
 
 /** payee normalizado → categoría → veces que se ha usado (con el tipo delante: "expense:mercadona"). */
@@ -61,7 +99,15 @@ export function pickHistoryCategory(type: string, payee: string | null | undefin
 
 export async function loadRules(userId: number): Promise<RuleMatch[]> {
   return db
-    .select({ match: categoryRules.match, categoryId: categoryRules.categoryId })
+    .select({
+      match: categoryRules.match,
+      categoryId: categoryRules.categoryId,
+      matchField: categoryRules.matchField,
+      transactionType: categoryRules.transactionType,
+      minAmount: categoryRules.minAmount,
+      maxAmount: categoryRules.maxAmount,
+      accountId: categoryRules.accountId,
+    })
     .from(categoryRules)
     .where(eq(categoryRules.userId, userId));
 }
@@ -72,6 +118,11 @@ export async function listRules(userId: number) {
       id: categoryRules.id,
       match: categoryRules.match,
       categoryId: categoryRules.categoryId,
+      matchField: categoryRules.matchField,
+      transactionType: categoryRules.transactionType,
+      minAmount: categoryRules.minAmount,
+      maxAmount: categoryRules.maxAmount,
+      accountId: categoryRules.accountId,
       categoryName: categories.name,
       groupName: categoryGroups.name,
       createdAt: categoryRules.createdAt,
@@ -83,14 +134,64 @@ export async function listRules(userId: number) {
     .orderBy(categoryRules.match);
 }
 
-export async function upsertRule(userId: number, match: string, categoryId: number) {
+export type RuleConditions = Pick<RuleMatch, "matchField" | "transactionType" | "minAmount" | "maxAmount" | "accountId">;
+
+export async function upsertRule(userId: number, match: string, categoryId: number, conditions: RuleConditions = {}) {
   const normalized = normalizeText(match);
+  const values = {
+    categoryId,
+    matchField: conditions.matchField ?? "payee",
+    transactionType: conditions.transactionType ?? null,
+    minAmount: conditions.minAmount ?? null,
+    maxAmount: conditions.maxAmount ?? null,
+    accountId: conditions.accountId ?? null,
+  };
   const [row] = await db
     .insert(categoryRules)
-    .values({ userId, match: normalized, categoryId })
-    .onConflictDoUpdate({ target: [categoryRules.userId, categoryRules.match], set: { categoryId } })
+    .values({ userId, match: normalized, ...values })
+    .onConflictDoUpdate({ target: [categoryRules.userId, categoryRules.match], set: values })
     .returning();
   return row;
+}
+
+/** Editar una regla existente (texto, categoría o condiciones). */
+export async function updateRule(userId: number, id: number, match: string, categoryId: number, conditions: RuleConditions) {
+  const [row] = await db
+    .update(categoryRules)
+    .set({
+      match: normalizeText(match),
+      categoryId,
+      matchField: conditions.matchField ?? "payee",
+      transactionType: conditions.transactionType ?? null,
+      minAmount: conditions.minAmount ?? null,
+      maxAmount: conditions.maxAmount ?? null,
+      accountId: conditions.accountId ?? null,
+    })
+    .where(and(eq(categoryRules.id, id), eq(categoryRules.userId, userId)))
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * A qué movimientos afectaría una regla (antes de guardarla): cuántos encajan,
+ * cuántos están sin categoría y una muestra. Sobre los últimos 5.000.
+ */
+export async function previewRule(userId: number, rule: RuleMatch) {
+  const rows = await db
+    .select({
+      id: transactions.id, date: transactions.date, payee: transactions.payee, memo: transactions.memo,
+      type: transactions.type, amount: transactions.amount, accountId: transactions.accountId, categoryId: transactions.categoryId,
+    })
+    .from(transactions)
+    .where(and(eq(transactions.userId, userId), sql`${transactions.type} != 'transfer'`))
+    .orderBy(sql`${transactions.date} desc`)
+    .limit(5000);
+  const matched = rows.filter((t) => ruleMatches({ ...rule, match: normalizeText(rule.match) }, t));
+  return {
+    matched: matched.length,
+    uncategorized: matched.filter((t) => t.categoryId == null).length,
+    sample: matched.slice(0, 8).map(({ id, date, payee, amount, type }) => ({ id, date, payee, amount, type })),
+  };
 }
 
 export async function deleteRule(userId: number, id: number): Promise<boolean> {
@@ -102,9 +203,10 @@ export async function deleteRule(userId: number, id: number): Promise<boolean> {
 }
 
 /** Categoría que dicta alguna regla del usuario para ese beneficiario (se usa al crear movimientos). */
-export async function ruleCategoryFor(userId: number, payee: string | null | undefined): Promise<number | null> {
-  if (!payee) return null;
-  return findRuleCategory(payee, await loadRules(userId));
+export async function ruleCategoryFor(userId: number, target: RuleTarget | string | null | undefined): Promise<number | null> {
+  const t = typeof target === "string" || target == null ? { payee: target } : target;
+  if (!t.payee && !t.memo) return null;
+  return findRuleFor(t, await loadRules(userId));
 }
 
 export interface ApplyResult {
@@ -134,7 +236,7 @@ export async function applySuggestions(userId: number, ids?: number[]): Promise<
 
   const [targets, rules, historyRows] = await Promise.all([
     db
-      .select({ id: transactions.id, type: transactions.type, payee: transactions.payee })
+      .select({ id: transactions.id, type: transactions.type, payee: transactions.payee, memo: transactions.memo, amount: transactions.amount, accountId: transactions.accountId })
       .from(transactions)
       .where(and(...conditions)),
     loadRules(userId),
@@ -165,7 +267,7 @@ export async function applySuggestions(userId: number, ids?: number[]): Promise<
   let byRule = 0;
   let byHistory = 0;
   for (const t of targets) {
-    const fromRule = findRuleCategory(t.payee, rules);
+    const fromRule = findRuleFor(t, rules);
     const categoryId = fromRule ?? pickHistoryCategory(t.type, t.payee, history);
     if (categoryId === null) continue;
     if (fromRule !== null) byRule++;

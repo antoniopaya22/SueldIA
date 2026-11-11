@@ -5,14 +5,14 @@ import { eq, and, desc } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { alertConfigSchemas, evaluateRulesForUser, type AlertRuleType } from "../services/alerts.service.js";
+import { assertUnderLimit, USER_LIMITS } from "../utils/limits.js";
 
 export const alertsRouter = Router();
 alertsRouter.param("id", validateIdParam);
 
-const ruleTypeSchema = z.enum([
-  "salary_drop", "missing_payslip", "concept_change", "custom_threshold",
-  "category_overspent", "low_balance", "overdue_pending",
-]);
+// Los tipos salen de los esquemas de config: antes era una lista aparte y se
+// quedó sin «irpf_change» (la interfaz lo ofrecía y la API lo rechazaba).
+const ruleTypeSchema = z.enum(Object.keys(alertConfigSchemas) as [AlertRuleType, ...AlertRuleType[]]);
 
 /** Valida `config` contra el esquema propio de `type` (ver alerts.service.ts). */
 function parseConfigForType(type: AlertRuleType, config: unknown) {
@@ -22,7 +22,7 @@ function parseConfigForType(type: AlertRuleType, config: unknown) {
 const baseRuleSchema = z.object({
   name: z.string().min(1).max(100),
   type: ruleTypeSchema,
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
   enabled: z.boolean().default(true),
 });
 
@@ -43,6 +43,7 @@ alertsRouter.get("/rules", async (req, res, next) => {
 alertsRouter.post("/rules", async (req, res, next) => {
   try {
     const { userId } = req.user!;
+    await assertUnderLimit(alertRules, alertRules.userId, userId, USER_LIMITS.alertRules, "reglas de alerta");
     const parsed = baseRuleSchema.safeParse(req.body);
     if (!parsed.success) {
       return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });

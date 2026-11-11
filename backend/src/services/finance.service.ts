@@ -1,8 +1,10 @@
 import { db } from "../db/index.js";
-import { accounts, transactions, categories, categoryGroups } from "../db/schema.js";
+import { accounts, accountValuations, transactions, categories, categoryGroups } from "../db/schema.js";
+import { adjustmentAt, type ValuationAdjustment } from "./loans.service.js";
 import { eq, and, sql, gte, lte, asc } from "drizzle-orm";
 import { effectiveTransaction } from "./transaction-filters.js";
 import { getTodayIsoDate } from "./recurring-transactions.service.js";
+import { lastDayOfMonth } from "../utils/dates.js";
 
 type FinanceFlowType = "income" | "expense";
 
@@ -35,6 +37,12 @@ export interface AccountWithBalance {
   unclearedCount: number;
   /** Saldo de trabajo: liquidado + sin liquidar. Lo programado a futuro no cuenta todavía. */
   workingBalance: number;
+  /** Última valoración (inversiones): el saldo ya la incluye. */
+  valuation: { date: string; value: number } | null;
+  loanPrincipal: number | null;
+  loanRate: number | null;
+  loanTermMonths: number | null;
+  loanStartDate: string | null;
   createdAt: string;
 }
 
@@ -189,7 +197,7 @@ function getMonthKey(date: string): string {
 }
 
 function buildMonthRange(filters: FinanceFilters, rows: FinanceAnalyticsSourceRow[]): string[] {
-  const nowMonth = getMonthKey(new Date().toISOString().slice(0, 10));
+  const nowMonth = getMonthKey(getTodayIsoDate());
   const startMonth = filters.from?.slice(0, 7) ?? rows[0]?.date.slice(0, 7) ?? nowMonth;
   const endMonth = filters.to?.slice(0, 7) ?? rows[rows.length - 1]?.date.slice(0, 7) ?? startMonth;
 
@@ -314,8 +322,13 @@ export async function getAccountsWithBalance(userId: number): Promise<AccountWit
     .groupBy(transactions.accountId);
 
   const sumMap = new Map(sums.map((row) => [row.accountId, row]));
+  const valuations = await getValuationAdjustments(userId);
 
-  return userAccounts.map((acc) => ({
+  return userAccounts.map((acc) => {
+    const list = valuations.get(acc.id);
+    const adj = adjustmentAt(list, today);
+    const last = list?.filter((v) => v.date <= today).pop();
+    return {
     id: acc.id,
     name: acc.name,
     type: acc.type,
@@ -325,12 +338,50 @@ export async function getAccountsWithBalance(userId: number): Promise<AccountWit
     icon: acc.icon,
     archived: acc.archived ?? false,
     sortOrder: acc.sortOrder,
-    balance: roundValue(acc.initialBalance + Number(sumMap.get(acc.id)?.cleared ?? 0)),
+    lastReconciledAt: acc.lastReconciledAt ? acc.lastReconciledAt.toISOString() : null,
+    lastReconciledBalance: acc.lastReconciledBalance,
+    balance: roundValue(acc.initialBalance + Number(sumMap.get(acc.id)?.cleared ?? 0) + adj),
     unclearedBalance: roundValue(Number(sumMap.get(acc.id)?.uncleared ?? 0)),
     unclearedCount: Number(sumMap.get(acc.id)?.unclearedCount ?? 0),
-    workingBalance: roundValue(acc.initialBalance + Number(sumMap.get(acc.id)?.cleared ?? 0) + Number(sumMap.get(acc.id)?.uncleared ?? 0)),
+    workingBalance: roundValue(acc.initialBalance + Number(sumMap.get(acc.id)?.cleared ?? 0) + Number(sumMap.get(acc.id)?.uncleared ?? 0) + adj),
+    valuation: last ? { date: last.date, value: last.value } : null,
+    loanPrincipal: acc.loanPrincipal,
+    loanRate: acc.loanRate,
+    loanTermMonths: acc.loanTermMonths,
+    loanStartDate: acc.loanStartDate,
     createdAt: acc.createdAt.toISOString(),
-  }));
+    };
+  });
+}
+
+/**
+ * Valoraciones de cada cuenta (ascendentes por fecha) con su ajuste: valor −
+ * saldo contable (inicial + liquidados) a esa fecha. Ver loans.service.ts.
+ */
+export async function getValuationAdjustments(userId: number): Promise<Map<number, ValuationAdjustment[]>> {
+  const rows = await db
+    .select({
+      accountId: accountValuations.accountId,
+      date: accountValuations.date,
+      value: accountValuations.value,
+      book: sql<number>`${accounts.initialBalance} + coalesce((
+        select sum(${signedAmountSql}) from ${transactions}
+        where ${transactions.userId} = ${userId}
+          and ${transactions.accountId} = ${accountValuations.accountId}
+          and ${effectiveTransaction()}
+          and ${transactions.date} <= ${accountValuations.date}
+      ), 0)`,
+    })
+    .from(accountValuations)
+    .innerJoin(accounts, eq(accountValuations.accountId, accounts.id))
+    .where(eq(accountValuations.userId, userId))
+    .orderBy(asc(accountValuations.accountId), asc(accountValuations.date));
+  const out = new Map<number, ValuationAdjustment[]>();
+  for (const r of rows) {
+    if (!out.has(r.accountId)) out.set(r.accountId, []);
+    out.get(r.accountId)!.push({ date: r.date, value: r.value, adjustment: roundValue(r.value - Number(r.book)) });
+  }
+  return out;
 }
 
 /* ───────── Monthly trends ───────────────────────────────────── */
@@ -427,7 +478,7 @@ export async function getFinanceSummary(userId: number): Promise<FinanceSummary>
   const now = new Date();
   const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const monthStart = `${currentMonth}-01`;
-  const monthEnd = `${currentMonth}-31`;
+  const monthEnd = lastDayOfMonth(currentMonth);
 
   const trends = await getMonthlyTrends({ userId, from: monthStart, to: monthEnd });
   const current = trends.find((item) => item.month === currentMonth);

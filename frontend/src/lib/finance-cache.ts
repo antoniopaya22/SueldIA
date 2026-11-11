@@ -18,6 +18,12 @@ const FINANCE_QUERY_KEYS = [
   "balance-history",
   "forecast",
   "payslip-link-suggestions",
+  // Paneles de la analítica con su propia serie (ritmo, calendario, importes)
+  // y las reglas recurrentes (contadores de pendientes/vencidas): se quedaban
+  // con cifras viejas tras crear o editar un movimiento.
+  "finance-daily",
+  "finance-amounts",
+  "recurring-transactions",
 ] as const;
 
 export function invalidateFinance(queryClient: QueryClient) {

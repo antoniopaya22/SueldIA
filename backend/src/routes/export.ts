@@ -1,25 +1,21 @@
+import { gzipSync } from "node:zlib";
 import { Router } from "express";
 import { z } from "zod";
+import { toCsv } from "../utils/csv.js";
+import { toXlsx, XLSX_MIME, type XlsxColumn } from "../utils/xlsx.js";
 import { amountRangeValid, amountRangeIssue, buildConditions, transactionFilterFields } from "../services/transaction-query.js";
 import { db } from "../db/index.js";
+import { buildFullExport } from "../services/backup-restore.service.js";
 import {
   payslips,
   payslipConcepts,
-  payslipNotes,
-  payslipTags,
   profiles,
   transactions,
   accounts,
   categories,
   categoryGroups,
-  tags,
-  recurringTransactions,
-  alertRules,
-  alertHistory,
-  budgets,
-  users,
 } from "../db/schema.js";
-import { eq, and, sql, gte, lte, like, desc, asc, inArray } from "drizzle-orm";
+import { eq, and, sql, asc } from "drizzle-orm";
 
 export const exportRouter = Router();
 
@@ -30,78 +26,50 @@ export const exportRouter = Router();
 exportRouter.get("/all", async (req, res, next) => {
   try {
     const { userId } = req.user!;
-
-    const [user] = await db
-      .select({ id: users.id, email: users.email, name: users.name, createdAt: users.createdAt })
-      .from(users)
-      .where(eq(users.id, userId));
-    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
-
-    const userProfiles = await db.select().from(profiles).where(eq(profiles.userId, userId));
-    const profileIds = userProfiles.map((p) => p.id);
-
-    const userPayslips = profileIds.length
-      ? await db.select().from(payslips).where(inArray(payslips.profileId, profileIds))
-      : [];
-    const payslipIds = userPayslips.map((p) => p.id);
-
-    const [concepts, notes, payslipTagLinks, userTags, userAccounts, groups, cats, txs, recurring, rules, history, userBudgets] =
-      await Promise.all([
-        payslipIds.length
-          ? db.select().from(payslipConcepts).where(inArray(payslipConcepts.payslipId, payslipIds))
-          : Promise.resolve([]),
-        payslipIds.length
-          ? db.select().from(payslipNotes).where(inArray(payslipNotes.payslipId, payslipIds))
-          : Promise.resolve([]),
-        payslipIds.length
-          ? db.select().from(payslipTags).where(inArray(payslipTags.payslipId, payslipIds))
-          : Promise.resolve([]),
-        db.select().from(tags).where(eq(tags.userId, userId)),
-        db.select().from(accounts).where(eq(accounts.userId, userId)),
-        db.select().from(categoryGroups).where(eq(categoryGroups.userId, userId)),
-        db
-          .select({ category: categories })
-          .from(categories)
-          .innerJoin(categoryGroups, eq(categories.groupId, categoryGroups.id))
-          .where(eq(categoryGroups.userId, userId))
-          .then((rows) => rows.map((r) => r.category)),
-        db.select().from(transactions).where(eq(transactions.userId, userId)),
-        db.select().from(recurringTransactions).where(eq(recurringTransactions.userId, userId)),
-        db.select().from(alertRules).where(eq(alertRules.userId, userId)),
-        db.select().from(alertHistory).where(eq(alertHistory.userId, userId)),
-        db.select().from(budgets).where(eq(budgets.userId, userId)),
-      ]);
-
+    const data = await buildFullExport(userId);
+    if (!data) return res.status(404).json({ error: "Usuario no encontrado" });
     res.setHeader("Content-Disposition", `attachment; filename="sueldia-datos-${userId}.json"`);
-    res.json({
-      exportedAt: new Date().toISOString(),
-      user,
-      profiles: userProfiles,
-      payslips: userPayslips,
-      payslipConcepts: concepts,
-      payslipNotes: notes,
-      payslipTags: payslipTagLinks,
-      tags: userTags,
-      accounts: userAccounts,
-      categoryGroups: groups,
-      categories: cats,
-      transactions: txs,
-      recurringTransactions: recurring,
-      alertRules: rules.map((r) => ({ ...r, config: JSON.parse(r.config) })),
-      alertHistory: history,
-      budgets: userBudgets,
-    });
+    // Comprimida si el navegador lo acepta (siempre): Vercel corta las
+    // respuestas de más de 4,5 MB y un JSON con años de movimientos y el texto
+    // de las nóminas puede acercarse; comprimido ocupa ~10 veces menos.
+    const body = JSON.stringify(data);
+    if (/\bgzip\b/.test(req.headers["accept-encoding"] ?? "")) {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Encoding", "gzip");
+      res.setHeader("Vary", "Accept-Encoding");
+      return res.send(gzipSync(body));
+    }
+    res.type("json").send(body);
   } catch (err) {
     next(err);
   }
 });
 
+const PAYSLIP_CSV_HEADERS = [
+  "Perfil", "Tipo", "Periodo", "Empresa", "Salario Bruto", "Salario Neto", "Devengos", "Deducciones", "Archivo", "Fecha Subida",
+] as const;
+const TRANSACTION_CSV_HEADERS = [
+  "Fecha", "Tipo", "Importe", "Beneficiario", "Cuenta", "Grupo", "Categoría", "Nota", "Estado",
+] as const;
+
 const exportQuerySchema = z.object({
   profileId: z.coerce.number().int().positive().optional(),
   year: z.coerce.number().int().min(1900).max(2200).optional(),
   type: z.enum(["ordinal", "extra"]).optional(),
-  format: z.enum(["csv", "json"]).default("csv"),
+  format: z.enum(["csv", "json", "xlsx"]).default("csv"),
 });
+
+const PAYSLIP_XLSX_COLUMNS: XlsxColumn[] = [
+  { header: "Perfil", width: 16 }, { header: "Tipo", width: 12 }, { header: "Periodo", width: 10 }, { header: "Empresa", width: 28 },
+  { header: "Salario Bruto", type: "money", width: 15 }, { header: "Salario Neto", type: "money", width: 15 },
+  { header: "Devengos", width: 50 }, { header: "Deducciones", width: 50 }, { header: "Archivo", width: 30 }, { header: "Fecha Subida", type: "date", width: 13 },
+];
+
+function sendXlsx(res: import("express").Response, filename: string, sheet: string, columns: XlsxColumn[], rows: unknown[][]) {
+  res.setHeader("Content-Type", XLSX_MIME);
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(toXlsx(sheet, columns, rows as Parameters<typeof toXlsx>[2]));
+}
 
 exportRouter.get("/", async (req, res, next) => {
   try {
@@ -118,21 +86,26 @@ exportRouter.get("/", async (req, res, next) => {
     // Only user's profiles
     const userProfiles = await db.select().from(profiles).where(eq(profiles.userId, userId));
     const userProfileIds = userProfiles.map((p) => p.id);
+    const { profileId, year, type, format } = parsed.data;
 
-    if (userProfileIds.length === 0) {
+    // Sin nada que exportar: un fichero vacío del formato pedido (antes, el
+    // texto "Sin datos" como CSV aunque se hubiera pedido JSON).
+    const sendEmpty = () => {
+      if (format === "json") {
+        res.setHeader("Content-Disposition", 'attachment; filename="nominas.json"');
+        return res.json([]);
+      }
+      if (format === "xlsx") return sendXlsx(res, "nominas.xlsx", "Nóminas", PAYSLIP_XLSX_COLUMNS, []);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="nominas.csv"');
-      return res.send("Sin datos");
-    }
+      return res.send(toCsv(PAYSLIP_CSV_HEADERS, []));
+    };
 
-    const { profileId, year, type, format } = parsed.data;
+    if (userProfileIds.length === 0) return sendEmpty();
 
     const conditions = [eq(payslips.parsingStatus, "parsed")];
     if (profileId) {
-      if (!userProfileIds.includes(profileId)) {
-        res.setHeader("Content-Type", "text/csv; charset=utf-8");
-        return res.send("Sin datos");
-      }
+      if (!userProfileIds.includes(profileId)) return sendEmpty();
       conditions.push(eq(payslips.profileId, profileId));
     } else {
       conditions.push(
@@ -191,40 +164,24 @@ exportRouter.get("/", async (req, res, next) => {
         Empresa: p.company ?? "",
         "Salario Bruto": p.grossSalary ?? "",
         "Salario Neto": p.netSalary ?? "",
-        Devengos: devengos.map((c) => `${c.name}: ${c.amount.toFixed(2)}`).join("; "),
-        Deducciones: deducciones.map((c) => `${c.name}: ${c.amount.toFixed(2)}`).join("; "),
+        Devengos: devengos.map((c) => `${c.name}: ${c.amount.toFixed(2).replace(".", ",")}`).join(" | "),
+        Deducciones: deducciones.map((c) => `${c.name}: ${c.amount.toFixed(2).replace(".", ",")}`).join(" | "),
         Archivo: p.fileName,
         "Fecha Subida": p.createdAt,
       };
     });
 
+    if (format === "xlsx") {
+      return sendXlsx(res, "nominas.xlsx", "Nóminas", PAYSLIP_XLSX_COLUMNS, rows.map((row) => PAYSLIP_CSV_HEADERS.map((h) => {
+        const v = row[h];
+        return v === "" ? null : v;
+      })));
+    }
     if (format === "csv") {
-      if (rows.length === 0) {
-        res.setHeader("Content-Type", "text/csv; charset=utf-8");
-        res.setHeader("Content-Disposition", 'attachment; filename="nominas.csv"');
-        return res.send("Sin datos");
-      }
-
-      const headers = Object.keys(rows[0]);
-      const csvLines = [
-        headers.join(","),
-        ...rows.map((row) =>
-          headers
-            .map((h) => {
-              const val = String(row[h as keyof typeof row] ?? "");
-              // Escape CSV values
-              if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-                return `"${val.replace(/"/g, '""')}"`;
-              }
-              return val;
-            })
-            .join(",")
-        ),
-      ];
-
+      // Sin filas: CSV con solo la cabecera (antes, el texto "Sin datos").
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="nominas.csv"');
-      res.send("\uFEFF" + csvLines.join("\n")); // BOM for Excel UTF-8
+      res.send(toCsv(PAYSLIP_CSV_HEADERS, rows));
     } else if (format === "json") {
       res.setHeader("Content-Disposition", 'attachment; filename="nominas.json"');
       res.json(rows);
@@ -239,7 +196,7 @@ exportRouter.get("/", async (req, res, next) => {
 // ─── Transaction Export ─────────────────────────────────────────
 const transactionExportSchema = z
   .object({
-    format: z.enum(["csv", "json"]).default("csv"),
+    format: z.enum(["csv", "json", "xlsx"]).default("csv"),
     ...transactionFilterFields,
   })
   .refine(amountRangeValid, amountRangeIssue);
@@ -280,7 +237,7 @@ exportRouter.get("/transactions", async (req, res, next) => {
 
     const exportRows = rows.map((r) => ({
       Fecha: r.date,
-      Tipo: r.type === "expense" ? "Gasto" : r.type === "income" ? "Ingreso" : "Transferencia",
+      Tipo: r.type === "expense" ? "Gasto" : r.type === "income" ? "Ingreso" : "Traspaso",
       Importe: r.amount,
       Beneficiario: r.payee ?? "",
       Cuenta: r.accountName,
@@ -294,32 +251,18 @@ exportRouter.get("/transactions", async (req, res, next) => {
       res.setHeader("Content-Disposition", 'attachment; filename="transacciones.json"');
       return res.json(exportRows);
     }
-
-    if (exportRows.length === 0) {
-      res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader("Content-Disposition", 'attachment; filename="transacciones.csv"');
-      return res.send("Sin datos");
+    if (format === "xlsx") {
+      const columns: XlsxColumn[] = [
+        { header: "Fecha", type: "date", width: 12 }, { header: "Tipo", width: 14 }, { header: "Importe", type: "money", width: 14 },
+        { header: "Beneficiario", width: 30 }, { header: "Cuenta", width: 18 }, { header: "Grupo", width: 18 },
+        { header: "Categoría", width: 20 }, { header: "Nota", width: 30 }, { header: "Estado", width: 12 },
+      ];
+      return sendXlsx(res, "transacciones.xlsx", "Movimientos", columns, exportRows.map((r) => TRANSACTION_CSV_HEADERS.map((h) => r[h])));
     }
-
-    const headers = Object.keys(exportRows[0]);
-    const csvLines = [
-      headers.join(","),
-      ...exportRows.map((row) =>
-        headers
-          .map((h) => {
-            const val = String(row[h as keyof typeof row] ?? "");
-            if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-              return `"${val.replace(/"/g, '""')}"`;
-            }
-            return val;
-          })
-          .join(","),
-      ),
-    ];
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="transacciones.csv"');
-    res.send("\uFEFF" + csvLines.join("\n"));
+    res.send(toCsv(TRANSACTION_CSV_HEADERS, exportRows));
   } catch (err) {
     next(err);
   }

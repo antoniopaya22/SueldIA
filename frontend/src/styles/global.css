@@ -301,3 +301,26 @@
 @keyframes app-page-in {
   from { opacity: 0; transform: translateY(6px); }
 }
+
+/* Imprimir (p. ej. el informe anual): solo el contenido de la página, sin el
+   marco de la app, sin altos fijos con scroll y con fondo blanco. */
+@media print {
+  [data-slot="sidebar"],
+  [data-slot="sidebar-gap"],
+  [data-app-header],
+  .app-root nav,
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+  #app-scroll {
+    overflow: visible !important;
+    height: auto !important;
+  }
+  .app-root,
+  .app-root body {
+    background: #fff !important;
+  }
+  .app-root section {
+    break-inside: avoid;
+  }
+}

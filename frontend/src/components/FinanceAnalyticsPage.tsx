@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { transactionsHref } from "../lib/transaction-filters";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart,
@@ -9,21 +9,32 @@ import {
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight, CalendarRange, Download, GitCompareArrows, RefreshCcw, Scale, SlidersHorizontal, Wallet, X,
 } from "lucide-react";
-import {
-  getAccounts, getCategories, getFinanceAnalytics,
-  type FinanceAnalyticsCategoryItem, type FinanceAnalyticsFilters, type FinanceAnalyticsGroupItem,
-} from "../lib/api";
+import { getAccounts, getCategories, getFinanceAnalytics, type FinanceAnalyticsFilters } from "../lib/api";
 import { Providers } from "./Providers";
-import { formatCompact, formatCurrency, formatMonthLabel, formatPct } from "../lib/format";
+import { formatCompact, formatCurrency, formatMonthLabel, formatPct, plural } from "../lib/format";
 import { EmptyState } from "./ui/EmptyState";
 import {
   PageHeader, StatCard, StatGrid, SectionCard, Segmented, PageHeaderSkeleton, StatCardSkeleton, ChartCardSkeleton,
   chartAxis, chartGrid, chartCursor, chartBarCursor, chartActiveDot, chartColors, type SegmentedOption,
 } from "./app";
 import {
-  AccountSelect, ChangeBadge, ChartEmpty, ChartLegend, FilterSelect, LimitSelect, PieTooltip, RankedList, SeriesTooltip,
-  adaptiveColor, flowColors, paletteColor, presetRange, rangeLabel, shortenLabel,
-  tickFormatter as fmtTick, valueFormatter as fmtValue, type RangePreset, type ValueMode,
+  AccountSelect,
+  ChangeBadge,
+  ChartEmpty,
+  ChartLegend,
+  FilterSelect,
+  LimitSelect,
+  PieTooltip,
+  RankedList,
+  SeriesTooltip,
+  flowColors,
+  presetRange,
+  rangeLabel,
+  shortenLabel,
+  tickFormatter as fmtTick,
+  valueFormatter as fmtValue,
+  type RangePreset,
+  type ValueMode,
 } from "./finance/finance-ui";
 import { AnalyticsPanel, ExpandedPanelDialog, MatrixHeatmap, type PanelConfig } from "./finance/AnalyticsPanel";
 import { AnalyticsCustomizeSheet } from "./finance/AnalyticsCustomizeSheet";
@@ -38,27 +49,28 @@ import { AmountsChart } from "./finance/charts/AmountsChart";
 import { SmallMultiples } from "./finance/charts/SmallMultiples";
 import { AnalyticsViewsMenu } from "./finance/AnalyticsViewsMenu";
 import { usePreference } from "../hooks/use-preference";
-import { alignPrevious, changeByKey, changeTrend, isPartialMonth, pctChange, previousRange } from "../lib/analytics-compare";
-import type { ExportTable } from "../lib/export-utils";
+import { changeTrend, pctChange, previousRange } from "../lib/analytics-compare";
+
 import type { StatDelta } from "./app/StatCard";
-import {
-  DEFAULT_PANEL_SETTINGS, normalizeLayout, normalizePanelSettings, normalizeViews,
-  type AnalyticsView, type LayoutEntry, type PanelKey, type PanelSettings,
-} from "../lib/analytics-settings";
+import { normalizeLayout, normalizeViews, type AnalyticsView, type LayoutEntry, type PanelKey } from "../lib/analytics-settings";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "cn";
+import { useAnalyticsSettings } from "../hooks/use-analytics-settings";
+import { useDerivedAnalytics } from "./finance/analytics/use-derived-analytics";
+import { type RankValue } from "./finance/analytics/model";
+import { setUrlParams, useUrlEnumParam, useUrlOptionalIdParam, useUrlParam } from "../lib/url-state";
 
 // Los paneles que son un gráfico con controles (todos menos las "lecturas rápidas", que es una tarjeta aparte).
 type ChartPanelKey = Exclude<PanelKey, "insights">;
 
 // ─── Tipos de controles ─────────────────────────────────────────
 type PeriodPreset = RangePreset | "custom";
+const PERIOD_PRESETS: readonly PeriodPreset[] = ["3m", "6m", "12m", "ytd", "all", "custom"];
 type TrendMetric = "all" | "income" | "expenses" | "net" | "count" | "savingsRate";
 type ChartView = "bars" | "area" | "line";
 type FlowType = "expense" | "income";
 type Scope = "category" | "group";
-type RankValue = "total" | "count" | "average";
 type WeekdayMetric = "expense" | "income" | "net" | "count";
 type AccountMetric = "balance" | "income" | "expenses" | "net" | "count";
 type CumulativeMetric = "net" | "income" | "expenses" | "count";
@@ -89,24 +101,6 @@ const RANK_VALUE_OPTIONS: SegmentedOption<RankValue>[] = [
 
 const RANK_VALUE_LABEL: Record<RankValue, string> = { total: "Importe", count: "Movimientos", average: "Importe medio" };
 
-function rankValue(total: number, count: number, mode: RankValue): number {
-  if (mode === "count") return count;
-  if (mode === "average") return total / Math.max(count, 1);
-  return total;
-}
-
-interface CompareDatum {
-  key: string;
-  label: string;
-  shortLabel: string;
-  incomeTotal: number;
-  expenseTotal: number;
-  incomeCount: number;
-  expenseCount: number;
-  incomeValue: number;
-  expenseValue: number;
-}
-
 // ─── Skeleton ───────────────────────────────────────────────────
 function AnalyticsSkeleton() {
   return (
@@ -134,113 +128,108 @@ function Insight({ label, value, hint }: { label: string; value: string; hint: s
   );
 }
 
-/** Acumulados mes a mes (ingresos, gastos, neto y movimientos). */
-function accumulate<T extends { income: number; expenses: number; net: number; transactionCount: number }>(items: T[]) {
-  let income = 0;
-  let expenses = 0;
-  let net = 0;
-  let count = 0;
-  return items.map((item) => {
-    income += item.income;
-    expenses += item.expenses;
-    net += item.net;
-    count += item.transactionCount;
-    return { ...item, cumulativeIncome: income, cumulativeExpenses: expenses, cumulativeNet: net, cumulativeCount: count };
-  });
-}
-
 // ─── Vista ──────────────────────────────────────────────────────
 function FinanceAnalyticsView() {
   const defaultRange = useMemo(() => presetRange(DEFAULT_PRESET), []);
-  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>(DEFAULT_PRESET);
-  const [from, setFrom] = useState(defaultRange.from);
-  const [to, setTo] = useState(defaultRange.to);
-  const [accountId, setAccountId] = useState<number | undefined>();
-  const [groupId, setGroupId] = useState<number | undefined>();
-  const [categoryId, setCategoryId] = useState<number | undefined>();
+  // Filtros en la URL (?periodo=3m&cuenta=2…): compartibles y recargables.
+  // Un periodo con nombre se guarda como nombre, no como fechas, para que un
+  // marcador de "últimos 3 meses" siga siéndolo dentro de un mes; solo el
+  // personalizado lleva ?desde=&hasta=.
+  const [periodPreset, setPresetParam] = useUrlEnumParam<PeriodPreset>("periodo", PERIOD_PRESETS, DEFAULT_PRESET);
+  const [fromParam] = useUrlParam("desde");
+  const [toParam] = useUrlParam("hasta");
+  const presetDates = useMemo(() => (periodPreset === "custom" ? null : presetRange(periodPreset)), [periodPreset]);
+  const from = presetDates ? presetDates.from : fromParam || defaultRange.from;
+  const to = presetDates ? presetDates.to : toParam || defaultRange.to;
+  const setPeriodPreset = (preset: PeriodPreset) =>
+    setUrlParams({ periodo: preset === DEFAULT_PRESET ? null : preset, ...(preset === "custom" ? { desde: from, hasta: to } : { desde: null, hasta: null }) });
+  const setFrom = (value: string) => setUrlParams({ periodo: "custom", desde: value, hasta: to });
+  const setTo = (value: string) => setUrlParams({ periodo: "custom", desde: from, hasta: value });
+  const [accountId, setAccountId] = useUrlOptionalIdParam("cuenta");
+  const [groupId, setGroupId] = useUrlOptionalIdParam("grupo");
+  const [categoryId, setCategoryId] = useUrlOptionalIdParam("categoria");
   const [expandedPanel, setExpandedPanel] = useState<ChartPanelKey | null>(null);
 
   // Lo que cada panel recuerda (tipo de gráfico, métrica, "Top N"): se guarda en la cuenta y se valida al leerlo.
-  const [storedSettings, setStoredSettings] = usePreference<unknown>("analytics-settings", DEFAULT_PANEL_SETTINGS);
-  const settings = useMemo(() => normalizePanelSettings(storedSettings), [storedSettings]);
-  const setting = <K extends keyof PanelSettings>(key: K) => (value: PanelSettings[K]) =>
-    setStoredSettings((prev: unknown) => ({ ...normalizePanelSettings(prev), [key]: value }));
-  const trendMetric = settings.trendMetric;
-  const setTrendMetric = setting("trendMetric");
-  const trendView = settings.trendView;
-  const setTrendView = setting("trendView");
-  const distributionMetric = settings.distributionMetric;
-  const setDistributionMetric = setting("distributionMetric");
-  const distributionScope = settings.distributionScope;
-  const setDistributionScope = setting("distributionScope");
-  const distributionView = settings.distributionView;
-  const setDistributionView = setting("distributionView");
-  const distributionValue = settings.distributionValue;
-  const setDistributionValue = setting("distributionValue");
-  const distributionLimit = settings.distributionLimit;
-  const setDistributionLimit = setting("distributionLimit");
-  const payeeMetric = settings.payeeMetric;
-  const setPayeeMetric = setting("payeeMetric");
-  const payeeValue = settings.payeeValue;
-  const setPayeeValue = setting("payeeValue");
-  const payeeLimit = settings.payeeLimit;
-  const setPayeeLimit = setting("payeeLimit");
-  const stackGrouping = settings.stackGrouping;
-  const setStackGrouping = setting("stackGrouping");
-  const stackMetric = settings.stackMetric;
-  const setStackMetric = setting("stackMetric");
-  const stackView = settings.stackView;
-  const setStackView = setting("stackView");
-  const stackLimit = settings.stackLimit;
-  const setStackLimit = setting("stackLimit");
-  const weekdayMetric = settings.weekdayMetric;
-  const setWeekdayMetric = setting("weekdayMetric");
-  const weekdayView = settings.weekdayView;
-  const setWeekdayView = setting("weekdayView");
-  const accountMetric = settings.accountMetric;
-  const setAccountMetric = setting("accountMetric");
-  const accountView = settings.accountView;
-  const setAccountView = setting("accountView");
-  const accountLimit = settings.accountLimit;
-  const setAccountLimit = setting("accountLimit");
-  const cumulativeMetric = settings.cumulativeMetric;
-  const setCumulativeMetric = setting("cumulativeMetric");
-  const cumulativeView = settings.cumulativeView;
-  const setCumulativeView = setting("cumulativeView");
-  const efficiencyMetric = settings.efficiencyMetric;
-  const setEfficiencyMetric = setting("efficiencyMetric");
-  const compareScope = settings.compareScope;
-  const setCompareScope = setting("compareScope");
-  const compareValue = settings.compareValue;
-  const setCompareValue = setting("compareValue");
-  const compareLimit = settings.compareLimit;
-  const setCompareLimit = setting("compareLimit");
-  const matrixScope = settings.matrixScope;
-  const setMatrixScope = setting("matrixScope");
-  const matrixMetric = settings.matrixMetric;
-  const setMatrixMetric = setting("matrixMetric");
-  const matrixLimit = settings.matrixLimit;
-  const setMatrixLimit = setting("matrixLimit");
-  const calendarMetric = settings.calendarMetric;
-  const setCalendarMetric = setting("calendarMetric");
-  const treemapMetric = settings.treemapMetric;
-  const setTreemapMetric = setting("treemapMetric");
-  const sankeyLimit = settings.sankeyLimit;
-  const setSankeyLimit = setting("sankeyLimit");
-  const waterfallLimit = settings.waterfallLimit;
-  const setWaterfallLimit = setting("waterfallLimit");
-  const yoyMetric = settings.yoyMetric;
-  const setYoyMetric = setting("yoyMetric");
-  const amountsMetric = settings.amountsMetric;
-  const setAmountsMetric = setting("amountsMetric");
-  const amountsView = settings.amountsView;
-  const setAmountsView = setting("amountsView");
-  const multiplesMetric = settings.multiplesMetric;
-  const setMultiplesMetric = setting("multiplesMetric");
-  const multiplesLimit = settings.multiplesLimit;
-  const setMultiplesLimit = setting("multiplesLimit");
-  const budgetLimit = settings.budgetLimit;
-  const setBudgetLimit = setting("budgetLimit");
+  const analyticsSettings = useAnalyticsSettings();
+  const {
+    trendMetric,
+    setTrendMetric,
+    trendView,
+    setTrendView,
+    distributionMetric,
+    setDistributionMetric,
+    distributionScope,
+    setDistributionScope,
+    distributionView,
+    setDistributionView,
+    distributionValue,
+    setDistributionValue,
+    distributionLimit,
+    setDistributionLimit,
+    payeeMetric,
+    setPayeeMetric,
+    payeeValue,
+    setPayeeValue,
+    payeeLimit,
+    setPayeeLimit,
+    stackGrouping,
+    setStackGrouping,
+    stackMetric,
+    setStackMetric,
+    stackView,
+    setStackView,
+    stackLimit,
+    setStackLimit,
+    weekdayMetric,
+    setWeekdayMetric,
+    weekdayView,
+    setWeekdayView,
+    accountMetric,
+    setAccountMetric,
+    accountView,
+    setAccountView,
+    accountLimit,
+    setAccountLimit,
+    cumulativeMetric,
+    setCumulativeMetric,
+    cumulativeView,
+    setCumulativeView,
+    efficiencyMetric,
+    setEfficiencyMetric,
+    compareScope,
+    setCompareScope,
+    compareValue,
+    setCompareValue,
+    compareLimit,
+    setCompareLimit,
+    matrixScope,
+    setMatrixScope,
+    matrixMetric,
+    setMatrixMetric,
+    matrixLimit,
+    setMatrixLimit,
+    calendarMetric,
+    setCalendarMetric,
+    treemapMetric,
+    setTreemapMetric,
+    sankeyLimit,
+    setSankeyLimit,
+    waterfallLimit,
+    setWaterfallLimit,
+    yoyMetric,
+    setYoyMetric,
+    amountsMetric,
+    setAmountsMetric,
+    amountsView,
+    setAmountsView,
+    multiplesMetric,
+    setMultiplesMetric,
+    multiplesLimit,
+    setMultiplesLimit,
+    budgetLimit,
+    setBudgetLimit,
+  } = analyticsSettings;
 
   const { data: accounts = [], isLoading: loadingAccounts, error: accountsError } = useQuery({ queryKey: ["accounts"], queryFn: getAccounts });
   const { data: categoryGroups = [], isLoading: loadingCategories, error: categoriesError } = useQuery({ queryKey: ["categories"], queryFn: getCategories });
@@ -253,9 +242,12 @@ function FinanceAnalyticsView() {
     categoryId,
   }), [from, to, accountId, groupId, categoryId]);
 
-  const { data: analytics, isLoading: loadingAnalytics, isFetching, error: analyticsError, refetch } = useQuery({
+  const { data: analytics, isLoading: loadingAnalytics, isFetching, isPlaceholderData: isPlaceholder, error: analyticsError, refetch } = useQuery({
     queryKey: ["finance-analytics", analyticsFilters],
     queryFn: () => getFinanceAnalytics(analyticsFilters),
+    // Al cambiar de filtro se sigue viendo lo anterior (atenuado) en vez de
+    // sustituir la página entera, cabecera y filtros incluidos, por el esqueleto.
+    placeholderData: keepPreviousData,
   });
 
   // Comparar con el periodo anterior: el de la misma duración justo antes. Sin fechas (todo el histórico) no hay con qué comparar.
@@ -301,240 +293,34 @@ function FinanceAnalyticsView() {
   const hasFiltersApplied = hasCustomDateRange || Boolean(accountId) || Boolean(groupId) || Boolean(categoryId);
 
   // ─── Datos derivados ──────────────────────────────────────────
-  const monthlyChartData = useMemo(() => (analytics?.monthly ?? []).map((item) => ({
-    ...item,
-    label: formatMonthLabel(item.month),
-    count: item.transactionCount,
-    savingsRate: item.income > 0 ? (item.net / item.income) * 100 : 0,
-    avgMovement: item.transactionCount > 0 ? (item.income + item.expenses) / item.transactionCount : 0,
-    netPerMovement: item.transactionCount > 0 ? item.net / item.transactionCount : 0,
-  })), [analytics]);
-
-  const prevMonthly = useMemo(() => (prev?.monthly ?? []).map((item) => ({
-    ...item,
-    label: formatMonthLabel(item.month),
-    count: item.transactionCount,
-    savingsRate: item.income > 0 ? (item.net / item.income) * 100 : 0,
-  })), [prev]);
-
-  const cumulativeChartData = useMemo(() => accumulate(monthlyChartData), [monthlyChartData]);
-  const prevCumulative = useMemo(() => accumulate(prevMonthly), [prevMonthly]);
-
-  // Series con el periodo anterior alineado por posición (mes 1 con mes 1…). Solo con una métrica concreta: con "Todo" serían seis líneas.
-  const trendData = useMemo(
-    () => (compareActive && trendMetric !== "all"
-      // Los meses cortados por el borde del periodo anterior se dejan sin punto: compararlos con un mes entero dibujaría una caída que no existe.
-      ? alignPrevious(monthlyChartData, prevMonthly, (m) => (prevRange && isPartialMonth(m.month, prevRange) ? null : m[trendMetric]))
-      : monthlyChartData),
-    [compareActive, monthlyChartData, prevMonthly, prevRange, trendMetric],
-  );
-  const cumulativeData = useMemo(() => {
-    if (!compareActive) return cumulativeChartData;
-    const key = cumulativeMetric === "income" ? "cumulativeIncome"
-      : cumulativeMetric === "expenses" ? "cumulativeExpenses"
-        : cumulativeMetric === "count" ? "cumulativeCount"
-          : "cumulativeNet";
-    return alignPrevious(cumulativeChartData, prevCumulative, (m) => m[key]);
-  }, [compareActive, cumulativeChartData, cumulativeMetric, prevCumulative]);
-
-  const distributionData = useMemo(() => {
-    const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      distributionScope === "category" ? analytics?.categories ?? [] : analytics?.groups ?? [];
-    const ranked = source
-      .filter((item) => item.type === distributionMetric)
-      .map((item) => {
-        const isCategory = distributionScope === "category";
-        const label = isCategory ? (item as FinanceAnalyticsCategoryItem).categoryName : (item as FinanceAnalyticsGroupItem).groupName;
-        // Sin categoría/grupo el bucket es "sin categoría" (null): enlaza a ese filtro.
-        const id = isCategory ? (item as FinanceAnalyticsCategoryItem).categoryId : (item as FinanceAnalyticsGroupItem).groupId;
-        const href = transactionsHref({
-          ...(id === null ? { uncategorized: true } : isCategory ? { categoryId: id } : { groupId: id }),
-          type: distributionMetric,
-          from: from || undefined,
-          to: to || undefined,
-          accountId,
-          cleared: "true", // la analítica solo cuenta lo liquidado: así el total del enlace coincide
-        });
-        return {
-          key: item.bucketKey,
-          href,
-          label,
-          parentLabel: isCategory ? (item as FinanceAnalyticsCategoryItem).groupName : null,
-          count: item.count,
-          value: rankValue(item.total, item.count, distributionValue),
-        };
-      })
-      .sort((a, b) => b.value - a.value)
-      .slice(0, distributionLimit);
-    const totalValue = ranked.reduce((sum, item) => sum + item.value, 0);
-    return ranked.map((item, index) => ({ ...item, share: totalValue > 0 ? (item.value / totalValue) * 100 : 0, color: paletteColor(index) }));
-  }, [accountId, analytics, distributionLimit, distributionMetric, distributionScope, distributionValue, from, to]);
-
-  const payeeData = useMemo(() => (analytics?.payees ?? [])
-    .filter((item) => item.type === payeeMetric)
-    .map((item) => ({
-      key: item.bucketKey,
-      label: item.payee,
-      count: item.count,
-      value: rankValue(item.total, item.count, payeeValue),
-      // "Sin beneficiario" no se puede buscar por texto.
-      href: item.payee === "Sin beneficiario"
-        ? undefined
-        : transactionsHref({ search: item.payee, type: payeeMetric, from: from || undefined, to: to || undefined, accountId, cleared: "true" }),
-    }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, payeeLimit), [accountId, analytics, from, payeeLimit, payeeMetric, payeeValue, to]);
-
-  const stackTrend = useMemo(() => {
-    const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      stackGrouping === "category" ? analytics?.categories ?? [] : analytics?.groups ?? [];
-    const series = source
-      .filter((item) => item.type === stackMetric)
-      .slice(0, stackLimit)
-      .map((item, index) => ({
-        key: item.bucketKey,
-        label: stackGrouping === "category" ? (item as FinanceAnalyticsCategoryItem).categoryName : (item as FinanceAnalyticsGroupItem).groupName,
-        color: paletteColor(index),
-      }));
-    const buckets = stackGrouping === "category" ? analytics?.monthlyCategories ?? [] : analytics?.monthlyGroups ?? [];
-    const keys = new Set(series.map((s) => s.key));
-    const rows = new Map<string, Record<string, number | string>>();
-    for (const month of analytics?.monthly ?? []) {
-      const row: Record<string, number | string> = { month: month.month, label: formatMonthLabel(month.month) };
-      for (const s of series) row[s.key] = 0;
-      rows.set(month.month, row);
-    }
-    for (const item of buckets) {
-      if (item.type !== stackMetric || !keys.has(item.bucketKey)) continue;
-      const row = rows.get(item.month);
-      if (row) row[item.bucketKey] = item.total;
-    }
-    return { data: Array.from(rows.values()), series };
-  }, [analytics, stackGrouping, stackLimit, stackMetric]);
-
-  const weekdayChartData = useMemo(() => (analytics?.weekdays ?? []).map((item) => ({
-    ...item,
-    label: item.weekdayLabel,
-    value: weekdayMetric === "expense" ? item.expenses
-      : weekdayMetric === "income" ? item.income
-        : weekdayMetric === "count" ? item.transactionCount
-          : item.net,
-  })), [analytics, weekdayMetric]);
-
-  const accountChartData = useMemo(() => {
-    const metricValue = (a: { balance: number; income: number; expenses: number; net: number; transactionCount: number }) =>
-      accountMetric === "balance" ? a.balance
-        : accountMetric === "income" ? a.income
-          : accountMetric === "expenses" ? a.expenses
-            : accountMetric === "count" ? a.transactionCount
-              : a.net;
-    return [...(analytics?.accounts ?? [])]
-      .sort((a, b) => Math.abs(metricValue(b)) - Math.abs(metricValue(a)))
-      .slice(0, accountLimit)
-      .map((item, index) => ({
-        ...item,
-        key: String(item.accountId),
-        label: item.accountName,
-        value: metricValue(item),
-        color: adaptiveColor(item.color, paletteColor(index)),
-      }));
-  }, [accountLimit, accountMetric, analytics]);
-
-  const efficiencyChartData = useMemo(() => monthlyChartData.map((item) => ({
-    ...item,
-    displayMetric: efficiencyMetric === "savingsRate" ? item.savingsRate
-      : efficiencyMetric === "avgMovement" ? item.avgMovement
-        : efficiencyMetric === "netPerMovement" ? item.netPerMovement
-          : item.count,
-  })), [efficiencyMetric, monthlyChartData]);
-
-  const compareData = useMemo(() => {
-    const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      compareScope === "category" ? analytics?.categories ?? [] : analytics?.groups ?? [];
-    const map = new Map<string, CompareDatum>();
-    for (const item of source) {
-      const isCategory = compareScope === "category";
-      const cat = item as FinanceAnalyticsCategoryItem;
-      const grp = item as FinanceAnalyticsGroupItem;
-      const key = isCategory ? `category:${cat.categoryId ?? cat.categoryName}` : `group:${grp.groupId ?? grp.groupName}`;
-      const label = isCategory ? cat.categoryName : grp.groupName;
-      const current = map.get(key) ?? {
-        key, label, shortLabel: shortenLabel(label, 18),
-        incomeTotal: 0, expenseTotal: 0, incomeCount: 0, expenseCount: 0, incomeValue: 0, expenseValue: 0,
-      };
-      if (item.type === "income") {
-        current.incomeTotal += item.total;
-        current.incomeCount += item.count;
-      } else {
-        current.expenseTotal += item.total;
-        current.expenseCount += item.count;
-      }
-      map.set(key, current);
-    }
-    return Array.from(map.values())
-      .map((item) => ({
-        ...item,
-        incomeValue: rankValue(item.incomeTotal, item.incomeCount, compareValue),
-        expenseValue: rankValue(item.expenseTotal, item.expenseCount, compareValue),
-      }))
-      .sort((a, b) => (b.incomeValue + b.expenseValue) - (a.incomeValue + a.expenseValue))
-      .slice(0, compareLimit);
-  }, [analytics, compareLimit, compareScope, compareValue]);
-
-  const matrixData = useMemo(() => {
-    const ranking: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      matrixScope === "category" ? analytics?.categories ?? [] : analytics?.groups ?? [];
-    const monthly = matrixScope === "category" ? analytics?.monthlyCategories ?? [] : analytics?.monthlyGroups ?? [];
-    const byKey = new Map<string, number>();
-    for (const item of monthly) {
-      if (item.type === matrixMetric) byKey.set(`${item.bucketKey}|${item.month}`, item.total);
-    }
-    const months = (analytics?.monthly ?? []).map((m) => ({ month: m.month, label: formatMonthLabel(m.month) }));
-    const rows = ranking
-      .filter((item) => item.type === matrixMetric)
-      .slice(0, matrixLimit)
-      .map((item) => {
-        const values = months.map((m) => ({ ...m, value: byKey.get(`${item.bucketKey}|${m.month}`) ?? 0 }));
-        return {
-          key: item.bucketKey,
-          label: matrixScope === "category" ? (item as FinanceAnalyticsCategoryItem).categoryName : (item as FinanceAnalyticsGroupItem).groupName,
-          total: values.reduce((s, v) => s + v.value, 0),
-          values,
-        };
-      });
-    return { months, rows };
-  }, [analytics, matrixLimit, matrixMetric, matrixScope]);
-
-  // Valor de cada categoría/grupo y beneficiario en el periodo anterior, con el mismo valor (importe, nº, media) elegido en el panel.
-  const prevDistribution = useMemo(() => {
-    const source: Array<FinanceAnalyticsCategoryItem | FinanceAnalyticsGroupItem> =
-      distributionScope === "category" ? prev?.categories ?? [] : prev?.groups ?? [];
-    return new Map(source.filter((i) => i.type === distributionMetric).map((i) => [i.bucketKey, rankValue(i.total, i.count, distributionValue)]));
-  }, [distributionMetric, distributionScope, distributionValue, prev]);
-  const prevPayees = useMemo(
-    () => new Map((prev?.payees ?? []).filter((i) => i.type === payeeMetric).map((i) => [i.bucketKey, rankValue(i.total, i.count, payeeValue)])),
-    [payeeMetric, payeeValue, prev],
-  );
-  const distributionChange = useMemo(
-    () => (prev ? changeByKey(distributionData, prevDistribution) : null),
-    [distributionData, prev, prevDistribution],
-  );
-  const payeeChange = useMemo(() => (prev ? changeByKey(payeeData, prevPayees) : null), [payeeData, prev, prevPayees]);
-
-  const topWeekday = useMemo(
-    () => [...weekdayChartData].sort((a, b) => Math.abs(b.value) - Math.abs(a.value))[0],
-    [weekdayChartData],
-  );
+  const {
+    monthlyChartData,
+    prevMonthly,
+    cumulativeChartData,
+    prevCumulative,
+    trendData,
+    cumulativeData,
+    distributionData,
+    payeeData,
+    stackTrend,
+    weekdayChartData,
+    accountChartData,
+    efficiencyChartData,
+    compareData,
+    matrixData,
+    prevDistribution,
+    prevPayees,
+    distributionChange,
+    payeeChange,
+    topWeekday,
+  } = useDerivedAnalytics({ analytics, prev, from, to, prevRange, compareActive, accountId, settings: analyticsSettings });
 
   const loading = loadingAccounts || loadingCategories || loadingAnalytics;
   const error = accountsError || categoriesError || analyticsError;
 
   const applyPreset = (preset: PeriodPreset) => {
     if (preset === "custom") return;
-    const range = presetRange(preset);
     setPeriodPreset(preset);
-    setFrom(range.from);
-    setTo(range.to);
   };
 
   const resetFilters = () => {
@@ -557,9 +343,7 @@ function FinanceAnalyticsView() {
     setGroupId(view.groupId);
     setCategoryId(view.categoryId);
     if (view.preset === "custom") {
-      setPeriodPreset("custom");
-      setFrom(view.from ?? defaultRange.from);
-      setTo(view.to ?? defaultRange.to);
+      setUrlParams({ periodo: "custom", desde: view.from ?? defaultRange.from, hasta: view.to ?? defaultRange.to });
     } else {
       applyPreset(view.preset);
     }
@@ -590,6 +374,9 @@ function FinanceAnalyticsView() {
   useEffect(() => {
     if (defaultViewApplied.current || !defaultViewPref.synced) return;
     defaultViewApplied.current = true;
+    // Un enlace con filtros manda sobre la vista por defecto.
+    const params = new URLSearchParams(window.location.search);
+    if (["periodo", "desde", "hasta", "cuenta", "grupo", "categoria"].some((k) => params.has(k))) return;
     const view = views.find((v) => v.id === defaultViewId);
     if (view) applyView(view);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -688,7 +475,7 @@ function FinanceAnalyticsView() {
     let chart;
     if (trendView === "line") {
       chart = (
-        <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <ComposedChart accessibilityLayer data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           {axes}
           <Tooltip content={<SeriesTooltip format={format} />} cursor={chartCursor} />
           {all ? [
@@ -703,7 +490,7 @@ function FinanceAnalyticsView() {
       );
     } else if (trendView === "area") {
       chart = (
-        <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+        <ComposedChart accessibilityLayer data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           {axes}
           <Tooltip content={<SeriesTooltip format={format} />} cursor={chartCursor} />
           {all ? [
@@ -718,7 +505,7 @@ function FinanceAnalyticsView() {
       );
     } else {
       chart = (
-        <ComposedChart data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={3}>
+        <ComposedChart accessibilityLayer data={trendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }} barGap={3}>
           {axes}
           <Tooltip content={<SeriesTooltip format={format} />} cursor={chartBarCursor} />
           {all ? [
@@ -765,13 +552,13 @@ function FinanceAnalyticsView() {
       <div style={{ height: chartHeight(expanded, 260) }}>
         <ResponsiveContainer width="100%" height="100%">
           {cumulativeView === "line" ? (
-            <ComposedChart data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <ComposedChart accessibilityLayer data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               {common}
               <Line type="monotone" dataKey={key} name="Acumulado" stroke={color} strokeWidth={2} dot={false} activeDot={chartActiveDot} />
               {ghost}
             </ComposedChart>
           ) : (
-            <ComposedChart data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <ComposedChart accessibilityLayer data={cumulativeData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               {common}
               <Area type="monotone" dataKey={key} name="Acumulado" stroke={color} fill={color} fillOpacity={0.14} strokeWidth={2} activeDot={chartActiveDot} />
               {ghost}
@@ -800,7 +587,7 @@ function FinanceAnalyticsView() {
       <div className="grid items-center gap-6 sm:grid-cols-[auto_minmax(0,1fr)]">
         <div className="mx-auto" style={{ width: size, height: size }}>
           <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
+            <PieChart accessibilityLayer>
               <Pie data={distributionData} dataKey="value" nameKey="label" innerRadius="64%" outerRadius="100%" paddingAngle={2} strokeWidth={0}>
                 {distributionData.map((d) => <Cell key={d.key} fill={d.color} />)}
               </Pie>
@@ -869,7 +656,7 @@ function FinanceAnalyticsView() {
               <Radar dataKey="value" name={weekdayMetric === "count" ? "Movimientos" : "Importe"} stroke={color} fill={color} fillOpacity={0.2} strokeWidth={2} />
             </RadarChart>
           ) : (
-            <BarChart data={weekdayChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <BarChart accessibilityLayer data={weekdayChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid {...chartGrid} />
               <XAxis dataKey="label" {...chartAxis} />
               <YAxis {...chartAxis} tickFormatter={fmtTick(weekdayMode)} width={56} />
@@ -897,7 +684,7 @@ function FinanceAnalyticsView() {
         <div style={{ height: chartHeight(expanded, 300) }}>
           <ResponsiveContainer width="100%" height="100%">
             {stackView === "area" ? (
-              <AreaChart data={stackTrend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <AreaChart accessibilityLayer data={stackTrend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 {common}
                 <Tooltip content={<SeriesTooltip format={fmtValue("currency")} />} cursor={chartCursor} />
                 {stackTrend.series.map((s) => (
@@ -905,7 +692,7 @@ function FinanceAnalyticsView() {
                 ))}
               </AreaChart>
             ) : (
-              <BarChart data={stackTrend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <BarChart accessibilityLayer data={stackTrend.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 {common}
                 <Tooltip content={<SeriesTooltip format={fmtValue("currency")} />} cursor={chartBarCursor} />
                 {stackTrend.series.map((s, i) => (
@@ -933,7 +720,7 @@ function FinanceAnalyticsView() {
         <div className="grid items-center gap-6 sm:grid-cols-[auto_minmax(0,1fr)]">
           <div className="mx-auto" style={{ width: size, height: size }}>
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
+              <PieChart accessibilityLayer>
                 <Pie data={slices} dataKey="value" nameKey="label" innerRadius="64%" outerRadius="100%" paddingAngle={2} strokeWidth={0}>
                   {slices.map((a) => <Cell key={a.key} fill={a.color} />)}
                 </Pie>
@@ -983,7 +770,7 @@ function FinanceAnalyticsView() {
       <>
         <div style={{ height: chartHeight(expanded, 260) }}>
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={efficiencyChartData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+            <ComposedChart accessibilityLayer data={efficiencyChartData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
               <CartesianGrid {...chartGrid} />
               <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={16} />
               <YAxis yAxisId="left" {...chartAxis} tickFormatter={fmtTick(efficiencyMode)} width={56} />
@@ -1016,7 +803,7 @@ function FinanceAnalyticsView() {
       <>
         <div style={{ height: Math.max(data.length * rowHeight + 40, expanded ? 420 : 220) }}>
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data} layout="vertical" margin={{ top: 0, right: 8, left: 0, bottom: 0 }} barGap={-12} barCategoryGap="28%">
+            <BarChart accessibilityLayer data={data} layout="vertical" margin={{ top: 0, right: 8, left: 0, bottom: 0 }} barGap={-12} barCategoryGap="28%">
               <CartesianGrid {...chartGrid} vertical horizontal={false} />
               <XAxis type="number" {...chartAxis} tickFormatter={(v: number) => fmtTick(compareMode)(Math.abs(v))} />
               <YAxis type="category" dataKey="shortLabel" {...chartAxis} width={expanded ? 150 : 112} />
@@ -1420,7 +1207,7 @@ function FinanceAnalyticsView() {
           <CalendarRange className="size-3.5" />
           {isFetching
             ? "Actualizando…"
-            : `${rangeLabel(from, to)} · ${summary.visibleMonths} meses · ${summary.transactionCount} movimientos${compareActive && prevRange ? ` · frente a ${rangeLabel(prevRange.from, prevRange.to)}` : ""}`}
+            : `${rangeLabel(from, to)} · ${plural(summary.visibleMonths, "mes", "meses")} · ${plural(summary.transactionCount, "movimiento", "movimientos")}${compareActive && prevRange ? ` · frente a ${rangeLabel(prevRange.from, prevRange.to)}` : ""}`}
         </span>
       }
       title="Analítica"
@@ -1596,7 +1383,7 @@ function FinanceAnalyticsView() {
         </EmptyState>
       ) : (
         <>
-          <div className="mt-8 grid gap-6 xl:grid-cols-2">
+          <div className={cn("mt-8 grid gap-6 transition-opacity xl:grid-cols-2", isPlaceholder && "opacity-60")} aria-busy={isPlaceholder}>
             {layout.filter((entry) => entry.visible).map((entry) => (
               <div key={entry.key} className={cn("min-w-0", entry.span === "full" && "xl:col-span-2")}>
                 {entry.key === "insights" ? insightsCard : panel(entry.key)}

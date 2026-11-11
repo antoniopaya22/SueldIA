@@ -1,6 +1,8 @@
 import { and, eq, gte, inArray, isNotNull, lte } from "drizzle-orm";
 import { db, type DbOrTx } from "../db/index.js";
-import { recurringTransactions, transactions } from "../db/schema.js";
+import { accounts, recurringSkips, recurringTransactions, transactions } from "../db/schema.js";
+import { todayIso } from "../utils/dates.js";
+import { logger } from "../logger.js";
 
 export type RecurringCadence = "weekly" | "monthly" | "yearly";
 
@@ -34,7 +36,7 @@ function addDaysIso(isoDate: string, days: number): string {
   return value.toISOString().slice(0, 10);
 }
 
-function addMonthsFromBase(isoDate: string, monthsToAdd: number): string {
+export function addMonthsFromBase(isoDate: string, monthsToAdd: number): string {
   const { year, month, day } = parseIsoDate(isoDate);
   const absoluteMonth = year * 12 + (month - 1) + monthsToAdd;
   const targetYear = Math.floor(absoluteMonth / 12);
@@ -50,8 +52,9 @@ function addYearsFromBase(isoDate: string, yearsToAdd: number): string {
   return formatIsoDate(targetYear, month, targetDay);
 }
 
+// Hoy en hora de Madrid (el servidor corre en UTC) — ver utils/dates.ts.
 export function getTodayIsoDate(reference = new Date()): string {
-  return formatIsoDate(reference.getFullYear(), reference.getMonth() + 1, reference.getDate());
+  return todayIso(reference);
 }
 
 export function getOccurrenceDate(
@@ -136,6 +139,16 @@ export function summarizePending(
   return out;
 }
 
+/** Claves «regla:fecha» de las ocurrencias saltadas de esas reglas. */
+export async function skippedOccurrenceKeys(ruleIds: number[], dbOrTx: DbOrTx = db): Promise<Set<string>> {
+  if (ruleIds.length === 0) return new Set();
+  const rows = await dbOrTx
+    .select({ ruleId: recurringSkips.recurringTransactionId, scheduledFor: recurringSkips.scheduledFor })
+    .from(recurringSkips)
+    .where(inArray(recurringSkips.recurringTransactionId, ruleIds));
+  return new Set(rows.map((r) => buildOccurrenceKey(r.ruleId, r.scheduledFor)));
+}
+
 function buildOccurrenceKey(recurringTransactionId: number, scheduledFor: string): string {
   return `${recurringTransactionId}:${scheduledFor}`;
 }
@@ -182,9 +195,15 @@ export async function syncRecurringTransactions(
         : []
     )),
   );
+  // Las saltadas («esta vez no») cuentan como ya generadas: no vuelven a salir.
+  for (const key of await skippedOccurrenceKeys(rules.map((r) => r.id), dbOrTx)) existingKeys.add(key);
 
   const rowsToInsert: Array<typeof transactions.$inferInsert> = [];
+  const transfersToInsert: Array<{ out: typeof transactions.$inferInsert; targetAccountId: number }> = [];
   const today = getTodayIsoDate();
+  const accountNames = new Map(
+    (await dbOrTx.select({ id: accounts.id, name: accounts.name }).from(accounts).where(eq(accounts.userId, userId))).map((a) => [a.id, a.name]),
+  );
 
   for (const rule of rules) {
     const occurrenceDates = listOccurrenceDates(
@@ -203,21 +222,26 @@ export async function syncRecurringTransactions(
         continue;
       }
 
-      rowsToInsert.push({
+      const row: typeof transactions.$inferInsert = {
         userId,
         accountId: rule.accountId,
-        categoryId: rule.categoryId,
+        categoryId: rule.type === "transfer" ? null : rule.categoryId,
         type: rule.type,
         amount: rule.amount,
         date: occurrenceDate,
         recurringTransactionId: rule.id,
         scheduledFor: occurrenceDate,
-        payee: rule.payee,
+        payee: rule.type === "transfer" ? rule.payee ?? `Traspaso a ${accountNames.get(rule.targetAccountId ?? 0) ?? "otra cuenta"}` : rule.payee,
         memo: rule.memo,
         cleared: shouldAutoSettle(rule, occurrenceDate, today),
         flag: rule.flag,
         importedFrom: "recurring",
-      });
+      };
+      if (rule.type === "transfer") {
+        if (rule.targetAccountId) transfersToInsert.push({ out: row, targetAccountId: rule.targetAccountId });
+      } else {
+        rowsToInsert.push(row);
+      }
 
       existingKeys.add(occurrenceKey);
     }
@@ -235,9 +259,39 @@ export async function syncRecurringTransactions(
       .onConflictDoNothing({ target: [transactions.recurringTransactionId, transactions.scheduledFor] });
   }
 
+  // Traspasos: dos patas enlazadas, la de salida primero (la dirección de un
+  // traspaso se deduce del orden de los ids: ver signedAmountSql). Solo la de
+  // salida apunta a la regla (la clave única regla + fecha admite una fila).
+  for (const { out, targetAccountId } of transfersToInsert) {
+    const [outflow] = await dbOrTx
+      .insert(transactions)
+      .values(out)
+      .onConflictDoNothing({ target: [transactions.recurringTransactionId, transactions.scheduledFor] })
+      .returning({ id: transactions.id });
+    if (!outflow) continue; // otra petición la creó a la vez
+    const [inflow] = await dbOrTx
+      .insert(transactions)
+      .values({
+        userId,
+        accountId: targetAccountId,
+        categoryId: null,
+        type: "transfer",
+        amount: out.amount,
+        date: out.date,
+        payee: `Transfer : ${accountNames.get(out.accountId) ?? ""}`,
+        memo: out.memo,
+        cleared: out.cleared,
+        flag: out.flag,
+        importedFrom: "recurring",
+        transferId: outflow.id,
+      })
+      .returning({ id: transactions.id });
+    await dbOrTx.update(transactions).set({ transferId: inflow.id }).where(eq(transactions.id, outflow.id));
+  }
+
   await settleDueAutoOccurrences(userId, dbOrTx);
 
-  return rowsToInsert.length;
+  return rowsToInsert.length + transfersToInsert.length;
 }
 
 /**
@@ -256,7 +310,7 @@ export async function settleDueAutoOccurrences(userId: number, dbOrTx: DbOrTx = 
         eq(recurringTransactions.autoSettle, true),
       ),
     );
-  await dbOrTx
+  const settled = await dbOrTx
     .update(transactions)
     .set({ cleared: true })
     .where(
@@ -267,7 +321,13 @@ export async function settleDueAutoOccurrences(userId: number, dbOrTx: DbOrTx = 
         lte(transactions.scheduledFor, getTodayIsoDate()),
         inArray(transactions.recurringTransactionId, autoRules),
       ),
-    );
+    )
+    .returning({ transferId: transactions.transferId });
+  // La otra pata de un traspaso recurrente se liquida a la vez.
+  const partners = settled.flatMap((r) => (r.transferId ? [r.transferId] : []));
+  if (partners.length) {
+    await dbOrTx.update(transactions).set({ cleared: true }).where(and(eq(transactions.userId, userId), inArray(transactions.id, partners)));
+  }
 }
 
 export async function deletePendingRecurringOccurrences(
@@ -275,7 +335,7 @@ export async function deletePendingRecurringOccurrences(
   recurringTransactionId: number,
   dbOrTx: DbOrTx = db,
 ): Promise<void> {
-  await dbOrTx
+  const deleted = await dbOrTx
     .delete(transactions)
     .where(
       and(
@@ -283,7 +343,13 @@ export async function deletePendingRecurringOccurrences(
         eq(transactions.recurringTransactionId, recurringTransactionId),
         eq(transactions.cleared, false),
       ),
-    );
+    )
+    .returning({ transferId: transactions.transferId });
+  // Y la pata de entrada de los traspasos (no apunta a la regla).
+  const partners = deleted.flatMap((r) => (r.transferId ? [r.transferId] : []));
+  if (partners.length) {
+    await dbOrTx.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, partners)));
+  }
 }
 
 export async function countPendingOccurrencesByRule(
@@ -330,15 +396,28 @@ export async function getPendingOccurrencesForRule(
  * GET /recurring-transactions ya no lo hacen en cada lectura (crear,
  * editar y activar/desactivar una regla lo siguen disparando al momento).
  */
-export async function syncAllUsersRecurringTransactions(): Promise<{ usersSynced: number; occurrencesCreated: number }> {
+export async function syncAllUsersRecurringTransactions(): Promise<{
+  usersSynced: number;
+  usersFailed: number;
+  occurrencesCreated: number;
+}> {
   const userIds = await db
     .selectDistinct({ userId: recurringTransactions.userId })
     .from(recurringTransactions)
     .where(eq(recurringTransactions.active, true));
 
   let occurrencesCreated = 0;
+  let usersFailed = 0;
   for (const { userId } of userIds) {
-    occurrencesCreated += await syncRecurringTransactions(userId);
+    // Un usuario con datos rotos (p. ej. una regla antigua con fecha
+    // imposible) no puede dejar sin sus recurrentes a todos los que vienen
+    // detrás en el bucle — antes un solo error abortaba el cron entero.
+    try {
+      occurrencesCreated += await syncRecurringTransactions(userId);
+    } catch (err) {
+      usersFailed++;
+      logger.error({ err, userId }, "Error sincronizando recurrentes de un usuario");
+    }
   }
-  return { usersSynced: userIds.length, occurrencesCreated };
+  return { usersSynced: userIds.length - usersFailed, usersFailed, occurrencesCreated };
 }

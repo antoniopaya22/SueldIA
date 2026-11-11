@@ -1,13 +1,23 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, Download, LogOut, Monitor, Moon, ShieldCheck, Sun, Loader2, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Download, LogOut, Monitor, Moon, ShieldCheck, Sun, Loader2, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Providers } from "./Providers";
 import { useAuth } from "./AuthProvider";
-import { clearAuth, deleteMyAccount, exportAllData, exportData, getMe, getProfiles, updateUserProfile } from "../lib/api";
+import {
+  clearAuth, deleteMyAccount, exportAllData, exportData, getMe, getProfiles, previewBackup, restoreBackup, updateUserProfile,
+  type BackupCounts, type BackupPreview,
+} from "../lib/api";
+import { plural } from "../lib/format";
+import { disablePush, enablePush, getPushState, isPushSupported, needsInstallForPush, type PushState } from "../lib/push";
+import { canPromptInstall, isStandalone, onInstallAvailabilityChange, promptInstall } from "../lib/install-prompt";
+import { sendTestPush } from "../lib/api";
+import { Switch } from "@/components/ui/switch";
 import { supabase } from "../lib/supabase";
 import { PageHeader, SectionCard } from "./app";
 import { ProfileDot } from "./payroll/shared";
+import { ActivitySection } from "./settings/ActivitySection";
+import { SharingSection } from "./settings/SharingSection";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -25,6 +35,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
 import { usePreference } from "@/hooks/use-preference";
+import { useHydrated } from "@/hooks/use-hydrated";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 import { CHART_PALETTES, DEFAULT_CHART_PALETTE, isChartPaletteId, previewColors } from "@/lib/chart-palettes";
 import { cn } from "cn";
 
@@ -90,6 +102,7 @@ function ThemePreview({ variant }: { variant: ThemePreference }) {
 
 function ThemePicker() {
   const { preference, setPreference } = useTheme();
+  const keys = radioGroupKeys(THEME_OPTIONS.map((o) => o.value), preference, setPreference);
   return (
     <div role="radiogroup" aria-label="Tema" className="grid grid-cols-3 gap-3">
       {THEME_OPTIONS.map(({ value, label, icon: Icon }) => {
@@ -101,6 +114,8 @@ function ThemePicker() {
             role="radio"
             aria-checked={selected}
             aria-label={label}
+            tabIndex={keys.tabIndex(value)}
+            onKeyDown={keys.onKeyDown}
             onClick={() => setPreference(value)}
             className="group cursor-pointer text-left outline-none"
           >
@@ -133,6 +148,7 @@ function ChartPalettePicker() {
   const [palette, setPalette] = usePreference("chart-palette", DEFAULT_CHART_PALETTE, isChartPaletteId);
   const { resolved } = useTheme();
   const heights = [62, 88, 46, 74, 55];
+  const keys = radioGroupKeys(CHART_PALETTES.map((p) => p.id), palette, setPalette);
   return (
     <div role="radiogroup" aria-label="Paleta de los gráficos" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       {CHART_PALETTES.map((p) => {
@@ -144,6 +160,8 @@ function ChartPalettePicker() {
             type="button"
             role="radio"
             aria-checked={selected}
+            tabIndex={keys.tabIndex(p.id)}
+            onKeyDown={keys.onKeyDown}
             onClick={() => setPalette(p.id)}
             className="group cursor-pointer text-left outline-none"
           >
@@ -200,7 +218,7 @@ function ProfileSection() {
       setDraft(null);
       toast.success("Perfil actualizado");
     },
-    onError: () => toast.error("No se pudo actualizar el perfil"),
+    onError: (e: Error) => toast.error("No se pudo actualizar el perfil", { description: e.message }),
   });
 
   const initials = (current?.name || current?.email || "?").split(/[\s@]/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
@@ -255,12 +273,240 @@ function ProfileSection() {
   );
 }
 
+const BACKUP_ROWS: Array<{ key: keyof BackupCounts; label: string }> = [
+  { key: "profiles", label: "Perfiles" },
+  { key: "payslips", label: "Nóminas" },
+  { key: "accounts", label: "Cuentas" },
+  { key: "categories", label: "Categorías" },
+  { key: "transactions", label: "Movimientos" },
+  { key: "recurringTransactions", label: "Recurrentes" },
+  { key: "budgets", label: "Asignaciones de presupuesto" },
+  { key: "categoryRules", label: "Reglas de categoría" },
+  { key: "alertRules", label: "Reglas de alerta" },
+];
+
+/** Restaurar una copia de «Exportar todos mis datos»: vista previa y confirmación antes de sustituir nada. */
+function RestoreBackupRow() {
+  const queryClient = useQueryClient();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<{ file: File; preview: BackupPreview } | null>(null);
+
+  const previewMut = useMutation({
+    mutationFn: (file: File) => previewBackup(file).then((preview) => ({ file, preview })),
+    onSuccess: setPending,
+    onError: (e: Error) => toast.error(e.message),
+  });
+  const restoreMut = useMutation({
+    mutationFn: (file: File) => restoreBackup(file),
+    onSuccess: ({ restored }) => {
+      setPending(null);
+      // Las preferencias tienen copia local: fuera, para que manden las de la copia.
+      try {
+        for (const key of Object.keys(window.localStorage)) if (key.startsWith("sueldia:pref:")) window.localStorage.removeItem(key);
+      } catch {
+        // Sin almacenamiento local: nada que limpiar.
+      }
+      void queryClient.invalidateQueries();
+      toast.success(`Copia restaurada: ${plural(restored.payslips, "nómina", "nóminas")} y ${plural(restored.transactions, "movimiento", "movimientos")}.`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const exportedAt = pending?.preview.exportedAt ? new Date(pending.preview.exportedAt) : null;
+  const busy = previewMut.isPending || restoreMut.isPending;
+
+  return (
+    <>
+      <SettingRow
+        title="Restaurar una copia"
+        description="Carga un archivo de «Exportar todos mis datos» para recuperar tu cuenta o llevarla a otra. Antes de cambiar nada verás qué contiene."
+      >
+        <div className="flex sm:justify-end">
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".json,.gz,application/json"
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) previewMut.mutate(file);
+            }}
+          />
+          <Button variant="outline" onClick={() => inputRef.current?.click()} disabled={busy} className="gap-1.5">
+            {previewMut.isPending ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
+            Restaurar una copia…
+          </Button>
+        </div>
+      </SettingRow>
+
+      <AlertDialog open={pending !== null} onOpenChange={(o) => { if (!o && !restoreMut.isPending) setPending(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Sustituir tus datos por esta copia?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {exportedAt && !Number.isNaN(exportedAt.getTime())
+                ? <>Copia del {exportedAt.toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}. </>
+                : null}
+              Se borrará todo lo que hay ahora en tu cuenta y se cargará lo de la copia. No se puede deshacer: si quieres conservar lo actual, expórtalo antes.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {pending && (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted-foreground">
+                  <th className="py-1.5 font-medium">Datos</th>
+                  <th className="py-1.5 text-right font-medium">Ahora</th>
+                  <th className="py-1.5 text-right font-medium">En la copia</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {BACKUP_ROWS.filter((r) => pending.preview.current[r.key] > 0 || pending.preview.backup[r.key] > 0).map((r) => (
+                  <tr key={r.key}>
+                    <td className="py-1.5">{r.label}</td>
+                    <td className="py-1.5 text-right tabular-nums text-muted-foreground">{pending.preview.current[r.key].toLocaleString("es-ES")}</td>
+                    <td className="py-1.5 text-right font-medium tabular-nums">{pending.preview.backup[r.key].toLocaleString("es-ES")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoreMut.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={restoreMut.isPending}
+              className="gap-1.5"
+              onClick={(e) => {
+                e.preventDefault();
+                if (pending) restoreMut.mutate(pending.file);
+              }}
+            >
+              {restoreMut.isPending && <Loader2 className="size-4 animate-spin" />}
+              Sustituir mis datos
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
+/** «Instalar la app» (o cómo hacerlo en iPhone); nada si ya está instalada. */
+function InstallRow() {
+  const [, force] = useState(0);
+  const hydrated = useHydrated();
+  useEffect(() => onInstallAvailabilityChange(() => force((n) => n + 1)), []);
+  if (!hydrated || isStandalone()) return null;
+  const canPrompt = canPromptInstall();
+  const ios = needsInstallForPush();
+  if (!canPrompt && !ios) return null;
+  return (
+    <SettingRow
+      title="Instalar SueldIA"
+      description={
+        canPrompt
+          ? "Como una app más: con su icono, a pantalla completa y desde ella puedes compartir los PDF de tus nóminas directamente."
+          : "En iPhone y iPad: botón Compartir de Safari → «Añadir a pantalla de inicio». Así también podrás recibir avisos."
+      }
+    >
+      {canPrompt && (
+        <div className="flex sm:justify-end">
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (await promptInstall()) toast.success("SueldIA instalada");
+            }}
+          >
+            Instalar
+          </Button>
+        </div>
+      )}
+    </SettingRow>
+  );
+}
+
+/** Avisos de alertas en este dispositivo (Web Push). */
+function NotificationsSection() {
+  const [state, setState] = useState<PushState | "loading">("loading");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    getPushState().then(setState).catch(() => setState("off"));
+  }, []);
+
+  const toggle = async (on: boolean) => {
+    setBusy(true);
+    try {
+      const next = on ? await enablePush() : await disablePush();
+      setState(next);
+      if (on && next === "denied") toast.error("El navegador ha bloqueado los avisos. Puedes permitirlos en los ajustes del sitio.");
+      if (on && next === "on") toast.success("Avisos activados en este dispositivo");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No se pudieron cambiar los avisos");
+      setState(await getPushState().catch(() => "off" as const));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    setBusy(true);
+    try {
+      const { sent } = await sendTestPush();
+      if (sent > 0) toast.success("Aviso de prueba enviado");
+      else toast.error("No se pudo entregar el aviso. Desactívalos y vuelve a activarlos.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "No se pudo enviar el aviso");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Lo que admite el navegador se mira tras hidratar: en el prerender no hay
+  // navegador y salía «Este navegador no admite avisos» un instante.
+  const hydrated = useHydrated();
+  const supported = !hydrated || isPushSupported();
+  const install = hydrated && needsInstallForPush();
+  const description = !supported
+    ? install
+      ? "En iPhone y iPad, primero añade SueldIA a la pantalla de inicio (Compartir → Añadir a pantalla de inicio) y ábrela desde ahí."
+      : "Este navegador no admite avisos."
+    : state === "denied"
+      ? "Has bloqueado los avisos de SueldIA en este navegador. Para activarlos, permítelos en los ajustes del sitio."
+      : "Te avisamos cuando salta una alerta (bajada del neto, nómina sin subir, presupuesto superado…). El aviso solo dice qué regla saltó, nunca importes. Se activa en cada dispositivo por separado.";
+
+  return (
+    <SectionCard title="App y avisos">
+      <InstallRow />
+      <SettingRow title="Avisos en este dispositivo" description={description}>
+        <div className="flex items-center justify-end gap-3">
+          {state === "on" && (
+            <Button variant="outline" size="sm" onClick={test} disabled={busy}>
+              Enviar uno de prueba
+            </Button>
+          )}
+          {state === "loading" || busy ? <Loader2 className="size-4 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
+          <Switch
+            checked={state === "on"}
+            disabled={!supported || state === "denied" || state === "loading" || busy}
+            onCheckedChange={(checked) => void toggle(checked)}
+            aria-label="Avisos en este dispositivo"
+          />
+        </div>
+      </SettingRow>
+    </SectionCard>
+  );
+}
+
 function DataSection() {
   const { data: profiles = [], isLoading } = useQuery({ queryKey: ["profiles"], queryFn: getProfiles });
   const [busy, setBusy] = useState<string | null>(null);
   const [exportingAll, setExportingAll] = useState(false);
 
-  const handleExport = async (profileId: number, format: "csv" | "json") => {
+  const handleExport = async (profileId: number, format: "xlsx" | "csv" | "json") => {
     setBusy(`${profileId}-${format}`);
     try {
       await exportData(profileId, undefined, format);
@@ -294,7 +540,7 @@ function DataSection() {
             <li key={p.id} className="flex items-center gap-3 py-3 first:pt-0">
               <ProfileDot color={p.color} name={p.name} size="sm" />
               <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{p.name}</span>
-              {(["csv", "json"] as const).map((format) => (
+              {(["xlsx", "csv", "json"] as const).map((format) => (
                 <Button
                   key={format}
                   variant="outline"
@@ -302,10 +548,10 @@ function DataSection() {
                   onClick={() => handleExport(p.id, format)}
                   disabled={busy !== null}
                   className="gap-1.5"
-                  aria-label={`Exportar ${p.name} en ${format.toUpperCase()}`}
+                  aria-label={`Exportar ${p.name} en ${format === "xlsx" ? "Excel" : format.toUpperCase()}`}
                 >
                   {busy === `${p.id}-${format}` ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                  {format.toUpperCase()}
+                  {format === "xlsx" ? "Excel" : format.toUpperCase()}
                 </Button>
               ))}
             </li>
@@ -315,7 +561,7 @@ function DataSection() {
       <div className="mt-5 border-t border-border pt-5">
         <SettingRow
           title="Exportar todos mis datos"
-          description="Toda la información de tu cuenta en un único archivo JSON: perfiles, nóminas, conceptos, notas, cuentas, categorías, movimientos y alertas. Es tu derecho de portabilidad."
+          description="Toda la información de tu cuenta en un único archivo JSON: perfiles, nóminas, conceptos, notas, cuentas, categorías, movimientos y alertas. Es tu derecho de portabilidad y te sirve de copia de seguridad (los PDF no se guardan)."
         >
           <div className="flex sm:justify-end">
             <Button variant="outline" onClick={handleExportAll} disabled={exportingAll} className="gap-1.5">
@@ -324,6 +570,9 @@ function DataSection() {
             </Button>
           </div>
         </SettingRow>
+      </div>
+      <div className="mt-5 border-t border-border pt-5">
+        <RestoreBackupRow />
       </div>
       <div className="mt-5 flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-3.5">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary-600 dark:text-primary" aria-hidden="true" />
@@ -342,9 +591,11 @@ function DangerZoneSection() {
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      await deleteMyAccount();
+      const result = await deleteMyAccount();
       await clearAuth();
-      window.location.href = "/";
+      // Los datos ya están borrados; si la identidad de Google no se pudo
+      // cerrar, se dice en la portada en vez de dar a entender que todo fue bien.
+      window.location.href = result.identityDeleted === false ? "/?cuenta=datos-borrados" : "/?cuenta=eliminada";
     } catch {
       toast.error("No se pudo eliminar la cuenta. Inténtalo de nuevo.");
       setDeleting(false);
@@ -413,7 +664,13 @@ function SettingsView() {
           </SettingRow>
         </SectionCard>
 
+        <NotificationsSection />
+
         <DataSection />
+
+        <SharingSection />
+
+        <ActivitySection />
 
         <SectionCard title="Sesión">
           <SettingRow title="Cerrar sesión" description="Saldrás de SueldIA en este navegador.">

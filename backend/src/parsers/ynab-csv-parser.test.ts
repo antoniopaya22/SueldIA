@@ -20,3 +20,17 @@ describe("parseYnabCsv · estado liquidado", () => {
     expect(parseYnabCsv(csv).rows[0].cleared).toBe(expected);
   });
 });
+
+describe("parseYnabCsv · fechas", () => {
+  const withDate = (date: string) => row("Cleared").replace(q("10/03/2025"), q(date));
+
+  it("no marca fechas válidas", () => {
+    expect(parseYnabCsv(["cabecera", row("Cleared")].join("\n")).invalidDateLines).toEqual([]);
+  });
+
+  it("marca la fila de fechas que no existen o en formato US", () => {
+    const csv = ["cabecera", row("Cleared"), withDate("12/25/2024"), withDate("31/02/2025"), withDate("2025-03-10")].join("\n");
+    // La ISO ya válida (última fila) se acepta tal cual.
+    expect(parseYnabCsv(csv).invalidDateLines).toEqual([3, 4]);
+  });
+});

@@ -9,11 +9,13 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { AccountSelect, CategorySelect, CADENCE_LABELS, TypeToggle, amountInputClass, formatCadence } from "./shared";
+import { AccountSelect, CategorySelect, CADENCE_LABELS, TypeToggle, amountInputClass, formatCadence, getTodayIsoDate } from "./shared";
 
 export interface RecurringForm {
-  type: "expense" | "income";
+  type: "expense" | "income" | "transfer";
   accountId: number | "";
+  /** Traspasos: la cuenta que recibe. */
+  targetAccountId?: number | "";
   categoryId: number | "";
   amount: string;
   cadence: RecurringCadence;
@@ -24,6 +26,8 @@ export interface RecurringForm {
   memo: string;
   /** Domiciliación: se liquida sola el día del cargo. */
   autoSettle: boolean;
+  /** Al crear con una fecha de inicio pasada: crear también los movimientos ya pasados. */
+  backfill?: boolean;
 }
 
 interface Props {
@@ -38,7 +42,7 @@ interface Props {
   onSubmit: () => void;
 }
 
-const TYPES = ["expense", "income"] as const;
+const TYPES = ["expense", "income", "transfer"] as const;
 const UNIT: Record<RecurringCadence, [string, string]> = {
   weekly: ["semana", "semanas"],
   monthly: ["mes", "meses"],
@@ -80,17 +84,34 @@ export function RecurringDialog({ open, editing, form, setForm, accounts, groups
                 </div>
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="rec-payee">Beneficiario</Label>
-                <Input id="rec-payee" value={form.payee} onChange={(e) => setForm({ ...form, payee: e.target.value })} placeholder="Ej: Alquiler o Nómina" />
+                <Label htmlFor="rec-payee">{form.type === "transfer" ? "Concepto" : "Beneficiario"}</Label>
+                <Input
+                  id="rec-payee"
+                  value={form.payee}
+                  onChange={(e) => setForm({ ...form, payee: e.target.value })}
+                  placeholder={form.type === "transfer" ? "Opcional: «Ahorro del mes»…" : "Ej: Alquiler o Nómina"}
+                />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="rec-account">Cuenta</Label>
+                <Label htmlFor="rec-account">{form.type === "transfer" ? "Desde la cuenta" : "Cuenta"}</Label>
                 <AccountSelect id="rec-account" value={form.accountId} onChange={(v) => setForm({ ...form, accountId: v })} accounts={accounts} />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="rec-category">Categoría</Label>
-                <CategorySelect id="rec-category" value={form.categoryId} onChange={(v) => setForm({ ...form, categoryId: v })} groups={groups} />
-              </div>
+              {form.type === "transfer" ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="rec-target">A la cuenta</Label>
+                  <AccountSelect
+                    id="rec-target"
+                    value={form.targetAccountId ?? ""}
+                    onChange={(v) => setForm({ ...form, targetAccountId: v })}
+                    accounts={accounts.filter((a) => a.id !== form.accountId)}
+                  />
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label htmlFor="rec-category">Categoría</Label>
+                  <CategorySelect id="rec-category" value={form.categoryId} onChange={(v) => setForm({ ...form, categoryId: v })} groups={groups} />
+                </div>
+              )}
             </div>
 
             <fieldset className="space-y-3 rounded-xl border border-border bg-muted/30 p-4">
@@ -160,6 +181,23 @@ export function RecurringDialog({ open, editing, form, setForm, accounts, groups
                 </p>
               </div>
             </div>
+
+            {!editing && form.startDate && form.startDate < getTodayIsoDate() && (
+              <div className="flex items-start gap-2.5 rounded-lg border border-amber-500/25 bg-amber-500/5 p-3">
+                <Checkbox
+                  id="rec-backfill"
+                  checked={form.backfill === true}
+                  onCheckedChange={(checked) => setForm({ ...form, backfill: checked === true })}
+                  className="mt-0.5"
+                />
+                <div className="space-y-0.5">
+                  <Label htmlFor="rec-backfill" className="cursor-pointer">Crear también los movimientos ya pasados</Label>
+                  <p className="text-xs text-muted-foreground">
+                    El inicio es anterior a hoy. Si no lo marcas, la regla empieza a contar desde hoy y no rellena el pasado (lo normal si esos cargos ya los tienes apuntados o importados).
+                  </p>
+                </div>
+              </div>
+            )}
 
             {editing && (
               <p className="text-xs text-muted-foreground">Al guardar, se regenerarán las instancias pendientes de esta regla.</p>

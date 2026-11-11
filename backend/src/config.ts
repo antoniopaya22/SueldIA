@@ -15,7 +15,7 @@ const envSchema = z.object({
   // defecto solo evita que tests/typecheck exijan configurarlo en local.
   SUPABASE_URL: z.string().default("https://localhost.supabase.co"),
   // Secreto compartido con Vercel Cron para autenticar la llamada diaria a
-  // /api/cron/evaluate-alerts — sin configurar, esa ruta responde 503 (ver
+  // /api/cron/daily — sin configurar, esa ruta responde 503 (ver
   // routes/cron.ts). No hace falta en local/tests.
   CRON_SECRET: z.string().optional(),
   // Service role key de Supabase (Project Settings → API → service_role,
@@ -24,6 +24,14 @@ const envSchema = z.object({
   // igualmente todos sus datos, pero la persona podría volver a entrar con
   // el mismo login de Google y empezar una cuenta nueva desde cero.
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
+  // Notificaciones push (Web Push, sin proveedor de pago): par de claves VAPID
+  // generado una vez con `npx web-push generate-vapid-keys`. Sin ellas, la app
+  // funciona igual pero no ofrece avisos en el dispositivo. El "subject" es un
+  // contacto para los servicios de push (mailto: o https:).
+  VAPID_PUBLIC_KEY: z.string().optional(),
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  // Vacía (como en .env.example) cuenta como sin definir.
+  VAPID_SUBJECT: z.string().optional().transform((v) => v || "mailto:avisos@sueldia.invalid"),
 });
 
 export const env = envSchema.parse(process.env);

@@ -8,7 +8,8 @@ import { CategoryRulesCard } from "./categories/CategoryRulesCard";
 import { useSeedDefaultCategories } from "./categories/useSeedDefaultCategories";
 import { Providers } from "./Providers";
 import { toast } from "sonner";
-import { ConfirmModal } from "./ui/ConfirmModal";
+import { DeleteCategoryDialog } from "./categories/DeleteCategoryDialog";
+import { toIsoDate } from "../lib/dates";
 import { EmptyState } from "./ui/EmptyState";
 import {
   PageHeader, StatCard, StatGrid, PageHeaderSkeleton, StatCardSkeleton,
@@ -26,8 +27,8 @@ import {
 } from "@/components/ui/select";
 import {
   getCategories, getFinanceAnalytics,
-  createCategoryGroup, updateCategoryGroup, deleteCategoryGroup,
-  createCategory, updateCategory, deleteCategory,
+  createCategoryGroup, updateCategoryGroup,
+  createCategory, updateCategory,
   type CategoryGroup, type Category,
 } from "../lib/api";
 import { formatCurrency } from "../lib/format";
@@ -36,9 +37,7 @@ import { cn } from "cn";
 // Ventana de actividad que se muestra junto a cada categoría.
 const ACTIVITY_MONTHS = 3;
 
-function isoDate(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+const isoDate = toIsoDate;
 
 function activityRange() {
   const now = new Date();
@@ -204,7 +203,7 @@ function GroupCard({
                   </div>
                   <RowActions
                     itemLabel={cat.name}
-                    className="opacity-100 sm:opacity-0 sm:group-hover/row:opacity-100 sm:focus-visible:opacity-100 data-popup-open:opacity-100"
+                    className="opacity-100 pointer-fine:opacity-0 pointer-fine:group-hover/row:opacity-100 pointer-fine:focus-visible:opacity-100 data-popup-open:opacity-100"
                     actions={[
                       { label: "Renombrar", icon: Pencil, onSelect: () => onStartEditCat(cat) },
                       { label: "Mover a otro grupo", icon: ArrowRightLeft, onSelect: () => onMoveCat(cat) },
@@ -268,25 +267,19 @@ function CategoriesView() {
   const createGroupMut = useMutation({
     mutationFn: (name: string) => createCategoryGroup({ name }),
     onSuccess: () => { invalidate(); toast.success("Grupo creado"); setGroupDialog(null); },
-    onError: () => toast.error("Error al crear grupo"),
+    onError: (e: Error) => toast.error("Error al crear grupo", { description: e.message }),
   });
 
   const updateGroupMut = useMutation({
     mutationFn: ({ id, name }: { id: number; name: string }) => updateCategoryGroup(id, { name }),
     onSuccess: () => { invalidate(); toast.success("Grupo actualizado"); setGroupDialog(null); },
-    onError: () => toast.error("Error al actualizar grupo"),
-  });
-
-  const deleteGroupMut = useMutation({
-    mutationFn: (id: number) => deleteCategoryGroup(id),
-    onSuccess: () => { invalidate(); toast.success("Grupo eliminado"); },
-    onError: () => toast.error("Error al eliminar grupo (puede tener categorías con transacciones)"),
+    onError: (e: Error) => toast.error("Error al actualizar grupo", { description: e.message }),
   });
 
   const createCatMut = useMutation({
     mutationFn: ({ groupId, name }: { groupId: number; name: string }) => createCategory({ groupId, name }),
     onSuccess: () => { invalidate(); toast.success("Categoría creada"); setAddingToGroupId(null); },
-    onError: () => toast.error("Error al crear categoría"),
+    onError: (e: Error) => toast.error("Error al crear categoría", { description: e.message }),
   });
 
   const updateCatMut = useMutation({
@@ -297,13 +290,7 @@ function CategoriesView() {
       setEditingCatId(null);
       setMoveTarget(null);
     },
-    onError: () => toast.error("Error al actualizar categoría"),
-  });
-
-  const deleteCatMut = useMutation({
-    mutationFn: (id: number) => deleteCategory(id),
-    onSuccess: () => { invalidate(); toast.success("Categoría eliminada"); },
-    onError: () => toast.error("Error al eliminar categoría (puede tener transacciones asignadas)"),
+    onError: (e: Error) => toast.error("Error al actualizar categoría", { description: e.message }),
   });
 
   const activity = useMemo(() => {
@@ -349,13 +336,6 @@ function CategoriesView() {
     if (!name || !groupDialog) return;
     if (groupDialog.mode === "create") createGroupMut.mutate(name);
     else updateGroupMut.mutate({ id: groupDialog.group.id, name });
-  };
-
-  const handleConfirmDelete = () => {
-    if (!confirm) return;
-    if (confirm.type === "group") deleteGroupMut.mutate(confirm.id);
-    else deleteCatMut.mutate(confirm.id);
-    setConfirm(null);
   };
 
   if (isLoading) {
@@ -549,15 +529,7 @@ function CategoriesView() {
         </DialogContent>
       </Dialog>
 
-      <ConfirmModal
-        open={!!confirm}
-        title={`Eliminar ${confirm?.type === "group" ? "grupo" : "categoría"}`}
-        message={`¿Seguro que quieres eliminar "${confirm?.name ?? ""}"? Esta acción no se puede deshacer.`}
-        confirmLabel="Eliminar"
-        variant="danger"
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setConfirm(null)}
-      />
+      <DeleteCategoryDialog target={confirm} groups={groups} onClose={() => setConfirm(null)} />
     </div>
   );
 }

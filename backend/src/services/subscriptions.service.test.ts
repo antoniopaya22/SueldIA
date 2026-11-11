@@ -29,13 +29,13 @@ const rows: SubscriptionRow[] = [
 describe("detectSubscriptions", () => {
   const found = detectSubscriptions(rows, ["Gym Fit"], TODAY);
 
-  it("propone solo lo mensual, estable y activo que aún no está programado", () => {
+  it("propone lo periódico, estable y activo que aún no está programado", () => {
     expect(found.map((s) => s.payee)).toEqual(["Netflix"]);
   });
 
   it("calcula importe típico, último cargo y el siguiente", () => {
     expect(found[0]).toMatchObject({
-      amount: 11.99, occurrences: 4, lastDate: "2025-04-15", nextDate: "2025-05-15", categoryId: 7, accountId: 1,
+      cadence: "monthly", amount: 11.99, monthlyAmount: 11.99, occurrences: 4, lastDate: "2025-04-15", nextDate: "2025-05-15", categoryId: 7, accountId: 1,
     });
   });
 
@@ -48,12 +48,23 @@ describe("detectSubscriptions", () => {
     expect(detectSubscriptions(r, [], "2025-04-10")[0].nextDate).toBe("2025-04-30");
   });
 
-  it("necesita al menos tres cargos, y descarta lo caducado, lo irregular y lo semanal", () => {
+  it("lo mensual necesita tres cargos, y descarta lo caducado, lo irregular y las compras semanales", () => {
     const payees = detectSubscriptions(rows, [], TODAY).map((s) => s.payee);
     expect(payees).not.toContain("Seguro Hogar"); // 2 cargos
     expect(payees).not.toContain("Spotify");      // el último fue hace meses
     expect(payees).not.toContain("Amazon");       // importes muy distintos
-    expect(payees).not.toContain("Mercadona");    // semanal
+    expect(payees).not.toContain("Mercadona");    // semanal, importes variables y ya no reciente
     expect(payees).not.toContain("Dropbox");      // ya viene de una regla
+  });
+
+  it("reconoce también lo semanal (importe exacto) y lo anual", () => {
+    const weekly = [tx("2025-03-27", 3.5, "Periódico"), tx("2025-04-03", 3.5, "Periódico"), tx("2025-04-10", 3.5, "Periódico"), tx("2025-04-17", 3.5, "Periódico")];
+    const yearly = [tx("2023-05-02", 89, "Amazon Prime"), tx("2024-05-01", 95, "Amazon Prime")];
+    const found = detectSubscriptions([...weekly, ...yearly], [], TODAY);
+    expect(found.find((s) => s.payee === "Periódico")).toMatchObject({ cadence: "weekly", nextDate: "2025-04-24", monthlyAmount: 15.17 });
+    expect(found.find((s) => s.payee === "Amazon Prime")).toMatchObject({ cadence: "yearly", amount: 92, nextDate: "2025-05-01", monthlyAmount: 7.67 });
+    // Compras semanales con importes que varían: no son una suscripción.
+    const groceries = [tx("2025-03-27", 40, "Súper"), tx("2025-04-03", 47, "Súper"), tx("2025-04-10", 38, "Súper"), tx("2025-04-17", 44, "Súper")];
+    expect(detectSubscriptions(groceries, [], TODAY)).toEqual([]);
   });
 });

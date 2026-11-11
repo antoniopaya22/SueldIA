@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Bell, ChevronLeft, ChevronRight, PiggyBank, Receipt, Tags, Target } from "lucide-react";
+import { useMemo, useState } from "react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, ArrowLeftRight, Bell, PiggyBank, Receipt, Tags, Target } from "lucide-react";
 import { toast } from "sonner";
 import { Providers } from "./Providers";
-import { PageHeader, StatCard, StatGrid, SectionCard, PageHeaderSkeleton, ListCardSkeleton } from "./app";
+import { PageHeader, StatCard, StatGrid, SectionCard, PageHeaderSkeleton, ListCardSkeleton, MonthSwitcher } from "./app";
 import { EmptyState } from "./ui/EmptyState";
 import { BudgetTable } from "./budget/BudgetTable";
 import { CoverDialog, READY_TO_ASSIGN } from "./budget/CoverDialog";
@@ -18,27 +18,14 @@ import { formatCurrency } from "../lib/format";
 import { groupTotals } from "../lib/budget-progress";
 import { invalidateFinance } from "../lib/finance-cache";
 import { cn } from "cn";
+import { useUrlParam } from "../lib/url-state";
+import { MoveMoneyDialog } from "./budget/MoveMoneyDialog";
+import { monthRange, transactionsHref } from "../lib/transaction-filters";
+import { currentMonthKey, isMonthKey, monthLabel } from "../lib/dates";
 
-const MONTHS_FULL = [
-  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
-];
 
-function currentMonth(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
 
-function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
-function monthLabel(month: string): string {
-  const [y, m] = month.split("-");
-  return `${MONTHS_FULL[Number(m) - 1]} ${y}`;
-}
 
 const AUTO_EMPTY_MESSAGE: Record<AutoAssignMode, string> = {
   "copy-previous": "Nada que copiar: el mes anterior no tenía importes, o esas categorías ya tienen asignación este mes.",
@@ -49,13 +36,20 @@ const AUTO_EMPTY_MESSAGE: Record<AutoAssignMode, string> = {
 // ─── Página ─────────────────────────────────────────────────────
 function BudgetView() {
   const queryClient = useQueryClient();
-  const [month, setMonth] = useState(currentMonth);
+  // El mes va en la URL (?mes=2026-08): un enlace o una recarga abren ese mes.
+  const thisMonth = useMemo(() => currentMonthKey(), []);
+  const [monthParam, setMonthParam] = useUrlParam("mes", thisMonth);
+  const month = isMonthKey(monthParam) ? monthParam : thisMonth;
+  const setMonth = (next: string) => setMonthParam(next);
   const [targetFor, setTargetFor] = useState<CategoryBudget | null>(null);
   const [coverFor, setCoverFor] = useState<CategoryBudget | null>(null);
 
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, isPlaceholderData, error, refetch } = useQuery({
     queryKey: ["budgets", month],
     queryFn: () => getBudgetSummary(month),
+    // Al cambiar de filtro se sigue viendo lo anterior (atenuado) en vez de
+    // sustituir la página entera, cabecera y filtros incluidos, por el esqueleto.
+    placeholderData: keepPreviousData,
   });
 
   const refresh = () => invalidateFinance(queryClient);
@@ -113,6 +107,17 @@ function BudgetView() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const [moveOpen, setMoveOpen] = useState(false);
+  const moveMut = useMutation({
+    mutationFn: ({ fromId, toId, amount }: { fromId: number; toId: number; amount: number }) => moveBudget(month, fromId, toId, amount),
+    onSuccess: () => {
+      refresh();
+      setMoveOpen(false);
+      toast.success("Dinero movido");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const coverMut = useMutation({
     mutationFn: async ({ category, source, amount }: { category: CategoryBudget; source: typeof READY_TO_ASSIGN | number; amount: number }) => {
       if (source === READY_TO_ASSIGN) await assignBudget(category.id, month, Math.round((category.assigned + amount) * 100) / 100);
@@ -126,19 +131,7 @@ function BudgetView() {
     onError: (e: Error) => toast.error(e.message),
   });
 
-  const monthSwitcher = (
-    <div className="flex items-center gap-1">
-      <Button variant="outline" size="icon-sm" onClick={() => setMonth((m) => shiftMonth(m, -1))} aria-label="Mes anterior">
-        <ChevronLeft className="size-4" />
-      </Button>
-      <span className="min-w-32 px-1 text-center text-sm font-medium text-foreground tabular-nums">
-        {monthLabel(month)}
-      </span>
-      <Button variant="outline" size="icon-sm" onClick={() => setMonth((m) => shiftMonth(m, 1))} aria-label="Mes siguiente">
-        <ChevronRight className="size-4" />
-      </Button>
-    </div>
-  );
+  const monthSwitcher = <MonthSwitcher month={month} onChange={setMonth} />;
 
   if (error && !isLoading) {
     return (
@@ -185,11 +178,21 @@ function BudgetView() {
     : tone === "zero"
       ? "text-muted-foreground"
       : "text-foreground";
-  const readyHint = tone === "negative"
-    ? "Has asignado más dinero del que has recibido este mes."
-    : tone === "zero"
-      ? "Ya has asignado todo el dinero de este mes."
-      : "Repártelo entre tus categorías para que trabaje para ti.";
+  const readyHint = (
+    <>
+      {tone === "negative"
+        ? "Has asignado más dinero del que tienes."
+        : tone === "zero"
+          ? "Ya has asignado todo tu dinero."
+          : "Repártelo entre tus categorías para que trabaje para ti."}
+      {/* De dónde sale la cifra (antes no se explicaba en ningún sitio). */}
+      <span className="mt-1 block text-[11px] tabular-nums text-muted-foreground">
+        Ingresos {formatCurrency(data.readyBreakdown.income)}
+        {data.readyBreakdown.initialBalances !== 0 && <> + saldos iniciales {formatCurrency(data.readyBreakdown.initialBalances)}</>}
+        {" "}− asignado {formatCurrency(data.readyBreakdown.assigned)}
+      </span>
+    </>
+  );
 
   const totals = groupTotals(allCategories);
   const overspentCount = allCategories.filter((c) => c.available < -0.005).length;
@@ -211,24 +214,32 @@ function BudgetView() {
               <Bell className="size-4" aria-hidden="true" />
               <span className="hidden sm:inline">Avisarme si me paso</span>
             </a>
-            <QuickAssignMenu onRun={(mode) => autoMut.mutate(mode)} busy={autoMut.isPending} hasTargets={targetCount > 0} />
+            <Button variant="outline" onClick={() => setMoveOpen(true)} disabled={isPlaceholderData} className="gap-1.5">
+              <ArrowLeftRight className="size-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Mover dinero</span>
+            </Button>
+            <QuickAssignMenu onRun={(mode) => autoMut.mutate(mode)} busy={autoMut.isPending || isPlaceholderData} hasTargets={targetCount > 0} />
           </>
         }
       >
         {monthSwitcher}
       </PageHeader>
 
+      {/* Mientras llega el mes nuevo se ve el anterior atenuado y sin poder
+          editarse: si no, se asignaría dinero al mes equivocado. */}
+      <div className={cn("transition-opacity", isPlaceholderData && "opacity-60")} inert={isPlaceholderData || undefined} aria-busy={isPlaceholderData}>
       <StatGrid className="sm:grid-cols-3 xl:grid-cols-3">
         <StatCard
           label="Para presupuestar"
           value={<span className={readyValueClass}>{formatCurrency(data.readyToAssign)}</span>}
           icon={PiggyBank}
           hint={readyHint}
+          hintWrap
           emphasis
           className={cn(tone === "negative" && "border-amber-500/30 bg-amber-500/5")}
         />
         <StatCard
-          label="Gastado este mes"
+          label={month === thisMonth ? "Gastado este mes" : `Gastado en ${monthLabel(month).toLowerCase()}`}
           value={formatCurrency(totals.spent)}
           icon={Receipt}
           hint={
@@ -252,6 +263,19 @@ function BudgetView() {
           }
         />
       </StatGrid>
+
+      {data.uncategorizedActivity < -0.005 && (
+        // Gasto sin categoría: no descuenta de ninguna y el presupuesto no lo ve.
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm">
+          <span>
+            <span className="font-medium text-foreground">{formatCurrency(Math.abs(data.uncategorizedActivity))} gastados sin categoría</span>
+            <span className="text-muted-foreground"> en {monthLabel(month).toLowerCase()}: no cuentan en ninguna categoría del presupuesto.</span>
+          </span>
+          <a href={transactionsHref({ uncategorized: true, type: "expense", ...monthRange(month) })} className="font-medium text-foreground underline underline-offset-2">
+            Categorizarlos
+          </a>
+        </div>
+      )}
 
       <div className="mt-6 space-y-6">
         {data.groups.map((g) => {
@@ -291,6 +315,7 @@ function BudgetView() {
           );
         })}
       </div>
+      </div>
 
       <TargetDialog
         category={targetFor}
@@ -299,6 +324,13 @@ function BudgetView() {
         onClose={() => setTargetFor(null)}
         onSave={(target) => targetFor && targetMut.mutate({ categoryId: targetFor.id, remove: false, target })}
         onRemove={() => targetFor && targetMut.mutate({ categoryId: targetFor.id, remove: true })}
+      />
+      <MoveMoneyDialog
+        open={moveOpen}
+        summary={data}
+        pending={moveMut.isPending}
+        onClose={() => setMoveOpen(false)}
+        onConfirm={(fromId, toId, amount) => moveMut.mutate({ fromId, toId, amount })}
       />
       <CoverDialog
         category={coverFor}

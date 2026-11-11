@@ -23,6 +23,14 @@ export function errorHandler(
     return res.status(err.statusCode).json({ error: err.message });
   }
 
+  // JSON mal formado en el cuerpo (express.json): es un error del cliente, no un 500.
+  if ((err as Error & { type?: string }).type === "entity.parse.failed") {
+    return res.status(400).json({ error: "El cuerpo de la petición no es un JSON válido" });
+  }
+  if ((err as Error & { type?: string }).type === "entity.too.large") {
+    return res.status(413).json({ error: "La petición es demasiado grande" });
+  }
+
   if (err.message === "No permitido por CORS") {
     logger.warn("Origen rechazado por CORS");
     return res.status(403).json({ error: "Origen no permitido" });

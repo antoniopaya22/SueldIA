@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { detectPayslipType, matchConcepts } from "./concept-matcher.js";
+import { detectPayslipType } from "./concept-matcher.js";
+import { matchConcepts } from "./formats/index.js";
 
 describe("matchConcepts type2", () => {
   it("uses the rightmost amount for devengos and avoids synthetic deductions", () => {

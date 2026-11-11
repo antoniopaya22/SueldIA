@@ -1,8 +1,15 @@
+import { randomUUID } from "node:crypto";
+import { decodeCsv, detectDelimiter, findHeaderIndex, guessMapping, parseBankCsv, splitCsv } from "../parsers/bank-csv.js";
+import { findRuleFor, loadRules } from "../services/category-rules.service.js";
+import { todayIso } from "../utils/dates.js";
 import { Router } from "express";
+import { normalizeFlag } from "../utils/flags.js";
 import { db } from "../db/index.js";
 import { accounts, categoryGroups, categories, transactions } from "../db/schema.js";
-import { eq, inArray, sql } from "drizzle-orm";
-import { uploadCsv } from "../middleware/upload.js";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { z } from "zod";
+import { uploadBackup, uploadCsv } from "../middleware/upload.js";
+import { countBackup, countCurrent, readBackupFile, restoreBackup } from "../services/backup-restore.service.js";
 import {
   parseYnabCsv,
   isTransfer,
@@ -36,9 +43,27 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
       return res.status(400).json({ error: "No se ha subido ningún archivo" });
     }
 
-    const parsed = parseYnabCsv(file.buffer.toString("utf-8"));
+    let parsed: ReturnType<typeof parseYnabCsv>;
+    try {
+      parsed = parseYnabCsv(file.buffer.toString("utf-8"));
+    } catch (err) {
+      // El parser lanza Error con un mensaje ya pensado para el usuario
+      // (p. ej. fichero vacío) — sin esto llegaba como 500 genérico.
+      throw new AppError(400, err instanceof Error ? err.message : "No se pudo leer el archivo");
+    }
     if (parsed.rows.length === 0) {
       throw new AppError(400, "El archivo no contiene movimientos de YNAB");
+    }
+    // Una fecha que no existe (o en formato US, MM/DD/YYYY) se insertaba tal
+    // cual y luego dejaba en blanco toda la analítica de finanzas.
+    if (parsed.invalidDateLines.length > 0) {
+      const lines = parsed.invalidDateLines;
+      const shown = lines.slice(0, 5).join(", ") + (lines.length > 5 ? ` y ${lines.length - 5} más` : "");
+      throw new AppError(
+        400,
+        `Hay ${lines.length} ${lines.length === 1 ? "fila" : "filas"} con una fecha no válida (fila ${shown}). ` +
+          "El export de YNAB debe usar fechas DD/MM/AAAA.",
+      );
     }
 
     const existingAccounts = await db.select().from(accounts).where(eq(accounts.userId, userId));
@@ -50,9 +75,25 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
       .select({ date: transactions.date, amount: transactions.amount, accountId: transactions.accountId, payee: transactions.payee })
       .from(transactions)
       .where(eq(transactions.userId, userId));
-    const existingSet = new Set(existingTx.map((t) => `${t.date}|${t.amount}|${t.accountId}|${t.payee ?? ""}`));
-    const isDuplicate = (row: YnabRawRow, accountId: number | undefined) =>
-      accountId !== undefined && existingSet.has(`${row.date}|${rowAmount(row)}|${accountId}|${row.payee || ""}`);
+    // Recuento (no conjunto): con un café ya apuntado y dos cafés iguales el
+    // mismo día en el fichero, antes se descartaban los dos.
+    const existingCounts = new Map<string, number>();
+    for (const t of existingTx) {
+      const key = `${t.date}|${t.amount}|${t.accountId}|${t.payee ?? ""}`;
+      existingCounts.set(key, (existingCounts.get(key) ?? 0) + 1);
+    }
+    const makeDuplicateChecker = () => {
+      const remaining = new Map(existingCounts);
+      return (row: YnabRawRow, accountId: number | undefined) => {
+        if (accountId === undefined) return false;
+        const key = `${row.date}|${rowAmount(row)}|${accountId}|${row.payee || ""}`;
+        const n = remaining.get(key) ?? 0;
+        if (n === 0) return false;
+        remaining.set(key, n - 1);
+        return true;
+      };
+    };
+    const isDuplicate = makeDuplicateChecker();
 
     const baseSummary = {
       accounts: parsed.accounts.length,
@@ -62,15 +103,39 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
     };
 
     if (dryRun) {
-      let count = 0;
+      // Vista previa: mismos números que dará la importación real («nuevos»
+      // = los que se van a crear; antes el contador incluía los duplicados)
+      // y una muestra de filas con su estado.
+      let newCount = 0;
       let duplicates = 0;
+      let zero = 0;
+      const sample: Array<{ date: string; account: string; payee: string; category: string; amount: number; status: "new" | "duplicate" | "skipped" }> = [];
       for (const row of parsed.rows) {
-        if (rowAmount(row) === 0) continue;
-        count++;
-        if (isDuplicate(row, accountMap.get(row.account))) duplicates++;
+        const status = rowAmount(row) === 0 ? "skipped" : isDuplicate(row, accountMap.get(row.account)) ? "duplicate" : "new";
+        if (status === "skipped") zero++;
+        else if (status === "duplicate") duplicates++;
+        else newCount++;
+        if (sample.length < 100) {
+          sample.push({
+            date: row.date,
+            account: row.account,
+            payee: row.payee,
+            category: row.category ? `${row.categoryGroup} › ${row.category}` : "",
+            amount: row.inflow > 0 ? row.inflow : -row.outflow,
+            status,
+          });
+        }
       }
-      return res.json({ ok: true, dryRun: true, summary: { ...baseSummary, transactions: count, duplicates } });
+      return res.json({
+        ok: true,
+        dryRun: true,
+        summary: { ...baseSummary, transactions: newCount, duplicates, skippedZero: zero },
+        newAccounts: parsed.accounts.filter((name) => !accountMap.has(name)),
+        sample,
+      });
     }
+
+    const batchId = randomUUID();
 
     const result = await db.transaction(async (tx) => {
       // 1. Cuentas que no existan
@@ -143,8 +208,9 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
         payee: row.payee || null,
         memo: row.memo || null,
         cleared: row.cleared,
-        flag: row.flag || null,
+        flag: normalizeFlag(row.flag),
         importedFrom: "ynab",
+        importBatchId: batchId,
         ...fields,
       });
 
@@ -221,6 +287,7 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
 
     res.status(201).json({
       ok: true,
+      batchId,
       summary: { ...baseSummary, transactions: result.imported, duplicates: result.skipped },
     });
   } catch (err) {
@@ -228,8 +295,199 @@ importRouter.post("/ynab", uploadCsv.single("file"), async (req, res, next) => {
   }
 });
 
-function inferAccountType(name: string): "bank" | "credit_card" | "cash" | "investment" | "other" {
+// ─── Extractos bancarios (CSV de cualquier banco) ───────────────
+const bankMappingSchema = z.object({
+  delimiter: z.enum([";", ",", "\t", "|"]),
+  hasHeader: z.boolean(),
+  dateColumn: z.number().int().min(0).max(100),
+  dateFormat: z.enum(["DD/MM/YYYY", "YYYY-MM-DD", "MM/DD/YYYY"]),
+  payeeColumn: z.number().int().min(0).max(100),
+  memoColumn: z.number().int().min(0).max(100).nullish(),
+  amountColumn: z.number().int().min(0).max(100).nullish(),
+  debitColumn: z.number().int().min(0).max(100).nullish(),
+  creditColumn: z.number().int().min(0).max(100).nullish(),
+  decimal: z.enum(["comma", "dot"]),
+}).refine((m) => m.amountColumn != null || (m.debitColumn != null && m.creditColumn != null), {
+  message: "Indica la columna del importe o las de cargo y abono",
+});
+
+// Primer paso: leer el fichero y proponer qué columna es cada cosa.
+importRouter.post("/csv/inspect", uploadCsv.single("file"), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No se ha subido ningún archivo" });
+    const text = decodeCsv(req.file.buffer);
+    const delimiter = detectDelimiter(text);
+    const lines = splitCsv(text, delimiter);
+    if (lines.length < 2) return res.status(400).json({ error: "El archivo está vacío o tiene una sola línea" });
+    // Algunos bancos ponen unas líneas de cabecera antes de la tabla: se
+    // toma como cabecera la primera fila con el número de columnas habitual.
+    const headerIndex = findHeaderIndex(lines);
+    const header = lines[headerIndex];
+    res.json({
+      delimiter,
+      headerIndex,
+      header,
+      sample: lines.slice(headerIndex + 1, headerIndex + 9),
+      totalLines: lines.length - headerIndex - 1,
+      mapping: guessMapping(header, lines[headerIndex + 1], delimiter),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Segundo paso: vista previa (?dryRun=true) o importación a una cuenta.
+importRouter.post("/csv", uploadCsv.single("file"), async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const dryRun = req.query.dryRun === "true";
+    if (!req.file) return res.status(400).json({ error: "No se ha subido ningún archivo" });
+    const accountId = Number(req.body.accountId);
+    const headerIndex = Math.max(0, Number(req.body.headerIndex) || 0);
+    let mappingRaw: unknown;
+    try {
+      mappingRaw = JSON.parse(String(req.body.mapping ?? ""));
+    } catch {
+      return res.status(400).json({ error: "Mapeo de columnas no válido" });
+    }
+    const mapping = bankMappingSchema.safeParse(mappingRaw);
+    if (!mapping.success) {
+      return res.status(400).json({ error: "Mapeo de columnas no válido", details: mapping.error.flatten().fieldErrors });
+    }
+    const [account] = await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)));
+    if (!account) return res.status(404).json({ error: "Cuenta no encontrada" });
+
+    const text = decodeCsv(req.file.buffer).split(/\r?\n/).filter((l) => l.trim() !== "").slice(headerIndex).join("\n");
+    const parsed = parseBankCsv(text, mapping.data);
+    // Números de línea del fichero original (se recortaron las líneas de título).
+    for (const e of parsed.errors) e.line += headerIndex;
+    if (parsed.rows.length === 0) {
+      return res.status(400).json({ error: "No se ha podido leer ningún movimiento con estas columnas", errors: parsed.errors.slice(0, 20) });
+    }
+
+    // Duplicados por recuento contra lo que ya hay en esa cuenta.
+    const existing = await db
+      .select({ date: transactions.date, amount: transactions.amount, type: transactions.type, payee: transactions.payee })
+      .from(transactions)
+      .where(and(eq(transactions.userId, userId), eq(transactions.accountId, accountId)));
+    const counts = new Map<string, number>();
+    const keyOf = (date: string, signed: number, payee: string | null) => `${date}|${signed}|${(payee ?? "").toLowerCase()}`;
+    for (const t of existing) {
+      const signed = t.type === "income" ? t.amount : -t.amount;
+      const k = keyOf(t.date, signed, t.payee);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    const isDuplicate = (date: string, amount: number, payee: string) => {
+      const k = keyOf(date, amount, payee || null);
+      const n = counts.get(k) ?? 0;
+      if (n === 0) return false;
+      counts.set(k, n - 1);
+      return true;
+    };
+    const fresh = parsed.rows.filter((r) => !isDuplicate(r.date, r.amount, r.payee));
+    const duplicates = parsed.rows.length - fresh.length;
+
+    if (dryRun) {
+      const freshSet = new Set(fresh);
+      return res.json({
+        ok: true,
+        dryRun: true,
+        summary: { transactions: fresh.length, duplicates, errors: parsed.errors.length },
+        errors: parsed.errors.slice(0, 20),
+        sample: parsed.rows.slice(0, 100).map((r) => ({
+          date: r.date, account: "", payee: r.payee, category: "", amount: r.amount,
+          status: freshSet.has(r) ? "new" : "duplicate",
+        })),
+      });
+    }
+
+    // Categoría con las reglas del usuario («si el beneficiario contiene…»).
+    const rules = await loadRules(userId);
+    const batchId = randomUUID();
+    const today = todayIso();
+    const values = fresh.map((r) => ({
+      userId,
+      accountId,
+      type: (r.amount > 0 ? "income" : "expense") as "income" | "expense",
+      amount: Math.abs(r.amount),
+      date: r.date,
+      payee: r.payee || null,
+      memo: r.memo || null,
+      categoryId: findRuleFor({ payee: r.payee, memo: r.memo, type: r.amount > 0 ? "income" : "expense", amount: Math.abs(r.amount), accountId }, rules),
+      // Lo que ya aparece en el extracto, el banco ya lo ha cobrado o pagado.
+      cleared: r.date <= today,
+      importedFrom: "csv",
+      importBatchId: batchId,
+    }));
+    await db.transaction(async (tx) => {
+      for (let i = 0; i < values.length; i += INSERT_CHUNK) {
+        await tx.insert(transactions).values(values.slice(i, i + INSERT_CHUNK));
+      }
+    });
+    res.status(201).json({
+      ok: true,
+      batchId,
+      summary: {
+        transactions: values.length,
+        duplicates,
+        errors: parsed.errors.length,
+        categorized: values.filter((v) => v.categoryId != null).length,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Importaciones hechas (para poder deshacerlas).
+importRouter.get("/batches", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const rows = await db
+      .select({
+        batchId: transactions.importBatchId,
+        importedAt: sql<string>`min(${transactions.createdAt})`,
+        count: sql<number>`count(*)::int`,
+        from: sql<string>`min(${transactions.date})`,
+        to: sql<string>`max(${transactions.date})`,
+      })
+      .from(transactions)
+      .where(and(eq(transactions.userId, userId), isNotNull(transactions.importBatchId)))
+      .groupBy(transactions.importBatchId)
+      .orderBy(sql`min(${transactions.createdAt}) desc`)
+      .limit(20);
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Deshacer una importación: borra sus movimientos (las dos patas de cada
+// traspaso llevan el mismo lote). Las cuentas y categorías que creó se
+// quedan: pueden tener ya otros movimientos o asignaciones.
+importRouter.delete("/batches/:batchId", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const batchId = z.string().uuid().safeParse(req.params.batchId);
+    if (!batchId.success) return res.status(400).json({ error: "Importación no válida" });
+    const deleted = await db
+      .delete(transactions)
+      .where(and(eq(transactions.userId, userId), eq(transactions.importBatchId, batchId.data)))
+      .returning({ id: transactions.id });
+    if (deleted.length === 0) return res.status(404).json({ error: "Importación no encontrada" });
+    res.json({ ok: true, deleted: deleted.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+function inferAccountType(name: string): "bank" | "credit_card" | "cash" | "investment" | "loan" | "mortgage" | "other" {
   const lower = name.toLowerCase();
+  if (lower.includes("hipoteca")) return "mortgage";
+  if (lower.includes("préstamo") || lower.includes("prestamo")) return "loan";
   if (lower.includes("tarjeta") || lower.includes("credito") || lower.includes("crédito")) {
     return "credit_card";
   }
@@ -239,3 +497,25 @@ function inferAccountType(name: string): "bank" | "credit_card" | "cash" | "inve
   }
   return "bank";
 }
+
+// Restaurar una copia de «Exportar todos mis datos». Con ?dryRun=true solo
+// lee y valida el fichero y cuenta lo que trae y lo que hay ahora; sin él,
+// sustituye todos los datos de la cuenta (en una transacción: o todo o nada).
+// Exige ?replace=true para que nadie lo dispare por accidente.
+importRouter.post("/backup", uploadBackup.single("file"), async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    if (!req.file) return res.status(400).json({ error: "No se ha subido ningún archivo" });
+    const backup = readBackupFile(req.file.buffer);
+    if (req.query.dryRun === "true") {
+      return res.json({ exportedAt: backup.exportedAt ?? null, backup: countBackup(backup), current: await countCurrent(userId) });
+    }
+    if (req.query.replace !== "true") {
+      return res.status(400).json({ error: "Falta confirmar que quieres sustituir tus datos" });
+    }
+    const restored = await restoreBackup(userId, backup);
+    res.json({ restored });
+  } catch (err) {
+    next(err);
+  }
+});

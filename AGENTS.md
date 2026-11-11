@@ -26,8 +26,24 @@ Aplicación web monorepo de gestión y análisis de nóminas españolas. Solo ve
 | `payslip_notes` | Notas libres por nómina |
 | `tags` | Etiquetas reutilizables |
 | `payslip_tags` | Relación M:N nóminas ↔ tags |
-| `alert_rules` | Reglas de alerta configurables |
+| `alert_rules` | Reglas de alerta configurables (nóminas y finanzas) |
 | `alert_history` | Historial de alertas emitidas |
+| `accounts` | Cuentas (banco, tarjeta, efectivo, inversión, préstamo, hipoteca) con saldo inicial y orden; los préstamos guardan importe, TIN, plazo y primera cuota (cuadro de amortización) |
+| `account_valuations` | «Actualizar valor» de una cuenta (inversiones): desde esa fecha, saldo = valor + movimientos posteriores. No es un movimiento |
+| `category_groups` / `categories` | Grupos y categorías del presupuesto (categories no tiene `user_id`: la propiedad va por el grupo) |
+| `transactions` | Movimientos: gastos, ingresos, traspasos (dos filas enlazadas por `transfer_id`), partes de un gasto dividido (`split_group_id`), ocurrencias de recurrentes, enlace opcional a una nómina |
+| `recurring_transactions` | Reglas recurrentes que generan ocurrencias (cron diario y al crear/editar) |
+| `budgets` | Asignado por categoría y mes (`YYYY-MM`) |
+| `category_targets` | Objetivo por categoría (mensual o para una fecha) |
+| `category_rules` | «Si el beneficiario contiene X → categoría Y» |
+| `user_preferences` | Preferencias de interfaz (clave → JSON) |
+| `recurring_skips` | Ocurrencias de una recurrente que no se generan («saltar esta vez», o el pasado al crear «desde hoy») |
+| `savings_goals` | Objetivos de ahorro (importe, fecha, cuenta asociada o cantidad apuntada a mano) |
+| `push_subscriptions` | Dispositivos con avisos push activados (Web Push) |
+| `shares` / `share_invites` | Compartir en solo lectura: quién puede ver los datos de quién, e invitaciones de un solo uso (código guardado como hash) |
+| `activity_log` | Registro de actividad («qué ha cambiado y cuándo»), 180 días. Lo apunta un middleware según `ACTIVITY` en `services/activity.service.ts` |
+
+**RLS**: todas las tablas tienen Row Level Security activado y sin políticas (`.enableRLS()` en `schema.ts`). La app no usa la Data API de Supabase; el backend se conecta como propietario. Una tabla nueva sin `.enableRLS()` hace fallar `db:migrate`.
 
 ## Flujo de Parsing de Nóminas
 

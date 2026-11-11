@@ -1,14 +1,16 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import {
-  ArrowRight, Building2, CalendarDays, CheckCircle2, CircleAlert, FileText, FileUp, Gift,
+  ArrowRight, Building2, CalendarDays, CheckCircle2, CircleAlert, Eye, FileText, FileUp, Gift,
   Loader2, Lock, RotateCcw, ScanLine, Sparkles, Upload, Users, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getProfiles, uploadPayslips, type Payslip } from "../lib/api";
 import { formatCurrency } from "../lib/format";
 import { useSelectedProfile } from "../hooks/use-selected-profile";
+import { useLeaveGuard } from "../hooks/use-leave-guard";
+import { setUrlParams } from "../lib/url-state";
 import { Providers } from "./Providers";
 import { PageHeader, PageHeaderSkeleton, SectionCard, Segmented } from "./app";
 import { EmptyState } from "./ui/EmptyState";
@@ -17,6 +19,7 @@ import { StatusBadge, ExtraBadge, formatPeriod } from "./payroll/shared";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "cn";
+import { OcrButton } from "./payroll/OcrButton";
 
 // Debe coincidir con el límite del backend (middleware/upload.ts) — Vercel
 // Functions rechaza cualquier petición de más de 4.5MB de cuerpo.
@@ -30,6 +33,9 @@ interface QueueItem {
   state: ItemState;
   result?: Payslip;
   error?: string;
+  /** Perfil y tipo con los que se subió (o se intentó): «Reintentar» usa estos, no la selección actual. */
+  profileId?: number;
+  payslipType?: "ordinal" | "extra";
 }
 
 function formatFileSize(bytes: number): string {
@@ -39,10 +45,12 @@ function formatFileSize(bytes: number): string {
 }
 
 // ─── Fila de la cola ────────────────────────────────────────────
-function QueueRow({ item, onRemove, onRetry, disabled }: {
+function QueueRow({ item, onRemove, onRetry, onOcr, disabled }: {
   item: QueueItem;
   onRemove: () => void;
   onRetry: () => void;
+  /** El OCR del navegador ha completado la nómina escaneada. */
+  onOcr: (payslip: Payslip) => void;
   disabled: boolean;
 }) {
   const r = item.result;
@@ -78,6 +86,29 @@ function QueueRow({ item, onRemove, onRetry, disabled }: {
             </>
           )}
         </p>
+        {item.state === "done" && r?.alreadyUploaded && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Este PDF ya estaba subido: no se ha guardado otra vez.{" "}
+            <a href={`/app/payslips?nomina=${r.id}`} className="font-medium whitespace-nowrap text-foreground underline underline-offset-2">Ver nómina</a>
+          </p>
+        )}
+        {item.state === "done" && r?.duplicateOfId && !r.alreadyUploaded && (
+          // Antes era un aviso que desaparecía a los pocos segundos.
+          <p className="mt-1 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+            <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+            <span>
+              Ya tenías una nómina de {formatPeriod(r.periodMonth, r.periodYear)} en este perfil: puede ser un duplicado.{" "}
+              <a href={`/app/payslips?nomina=${r.duplicateOfId}`} className="font-medium whitespace-nowrap underline underline-offset-2">Ver la anterior</a>
+            </span>
+          </p>
+        )}
+        {item.state === "done" && r && !r.alreadyUploaded && !r.rawText?.trim() && r.parsingStatus !== "parsed" && (
+          // PDF escaneado: no trae texto. El OCR se hace aquí, con el fichero que acabas de elegir.
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span>Parece escaneada (sin texto).</span>
+            <OcrButton payslipId={r.id} file={item.file} onDone={onOcr} />
+          </div>
+        )}
         {item.state === "uploading" && (
           <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
             <div className="h-full w-full animate-pulse rounded-full bg-gradient-to-r from-primary-500/30 via-primary-500 to-primary-500/30 dark:from-primary/30 dark:via-primary dark:to-primary/30" />
@@ -103,6 +134,24 @@ function QueueRow({ item, onRemove, onRetry, disabled }: {
           <RotateCcw className="size-3.5" /> Reintentar
         </Button>
       )}
+      {item.state !== "uploading" && (
+        // El PDF no se guarda en el servidor, pero mientras sigue aquí se puede
+        // abrir desde el propio navegador para comparar con lo extraído.
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => {
+            const url = URL.createObjectURL(item.file);
+            window.open(url, "_blank", "noopener");
+            setTimeout(() => URL.revokeObjectURL(url), 60_000);
+          }}
+          aria-label={`Ver el PDF ${item.file.name}`}
+          title="Ver el PDF (solo en este navegador, no se guarda)"
+          className="text-muted-foreground"
+        >
+          <Eye className="size-4" />
+        </Button>
+      )}
       {item.state === "done" && r && (
         <a
           href={`/app/payslips?nomina=${r.id}`}
@@ -118,7 +167,7 @@ function QueueRow({ item, onRemove, onRetry, disabled }: {
 
 // ─── Resumen de resultados ──────────────────────────────────────
 function ResultsSummary({ items }: { items: QueueItem[] }) {
-  const done = items.filter((i) => i.state === "done" && i.result);
+  const done = items.filter((i) => i.state === "done" && i.result && !i.result.alreadyUploaded);
   const review = done.filter((i) => i.result!.parsingStatus !== "parsed");
   const failed = items.filter((i) => i.state === "failed");
   if (done.length + failed.length === 0) return null;
@@ -144,7 +193,13 @@ function ResultsSummary({ items }: { items: QueueItem[] }) {
         </div>
       </div>
       <div className="flex gap-2">
-        <a href="/app/payroll" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>Ver dashboard</a>
+        {review.length > 0 ? (
+          <a href="/app/payslips?estado=review" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+            Revisar {review.length === 1 ? "la pendiente" : `las ${review.length} pendientes`}
+          </a>
+        ) : (
+          <a href="/app/payroll" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>Ver dashboard</a>
+        )}
         <a href="/app/payslips" className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
           Mis nóminas <ArrowRight className="size-3.5" />
         </a>
@@ -171,15 +226,14 @@ function UploadManager() {
     mutationFn: async (items: QueueItem[]) => {
       if (!selectedProfile) return;
       for (const item of items) {
-        patch(item.id, { state: "uploading", error: undefined });
+        // Se fija al empezar: cambiar el selector a mitad de tanda (o antes de
+        // reintentar) ya no manda archivos a otro perfil sin querer.
+        const profileId = item.profileId ?? selectedProfile;
+        const type = item.payslipType ?? payslipType;
+        patch(item.id, { state: "uploading", error: undefined, profileId, payslipType: type });
         try {
-          const [result] = await uploadPayslips(selectedProfile, [item.file], payslipType);
+          const [result] = await uploadPayslips(profileId, [item.file], type);
           patch(item.id, { state: "done", result });
-          if (result?.duplicateOfId) {
-            toast.warning(
-              `${item.file.name}: ya tienes otra nómina de ${formatPeriod(result.periodMonth, result.periodYear)} para este perfil — revisa si es un duplicado.`,
-            );
-          }
         } catch (err) {
           patch(item.id, { state: "failed", error: err instanceof Error ? err.message : "No se pudo procesar" });
         }
@@ -191,6 +245,34 @@ function UploadManager() {
       queryClient.invalidateQueries({ queryKey: ["analytics"] });
     },
   });
+
+  // «Compartir con SueldIA» desde el móvil: el service worker deja los PDF en
+  // una caché y abre /app/upload?compartido=1. Se recogen y se borran al momento.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("compartido") || !("caches" in window)) return;
+    setUrlParams({ compartido: null });
+    void (async () => {
+      try {
+        const cache = await caches.open("sueldia-share");
+        const keys = await cache.keys();
+        const files: File[] = [];
+        for (const req of keys) {
+          const res = await cache.match(req);
+          if (res) {
+            const name = decodeURIComponent(res.headers.get("X-File-Name") ?? "nomina.pdf");
+            files.push(new File([await res.blob()], name, { type: "application/pdf" }));
+          }
+          await cache.delete(req);
+        }
+        if (files.length) {
+          setQueue((q) => [...q, ...files.map((file) => ({ id: `${file.name}-${file.size}-${Math.random()}`, file, state: "queued" as const }))]);
+          toast.success(files.length === 1 ? "PDF recibido: revisa el perfil y súbelo" : `${files.length} PDF recibidos: revisa el perfil y súbelos`);
+        }
+      } catch {
+        toast.error("No se pudieron recoger los PDF compartidos");
+      }
+    })();
+  }, []);
 
   const onDrop = useCallback((accepted: File[], rejected: FileRejection[]) => {
     if (accepted.length) {
@@ -207,6 +289,8 @@ function UploadManager() {
   }, []);
 
   const busy = uploadMut.isPending;
+  // Salir a mitad de tanda cortaba la cola sin avisar.
+  useLeaveGuard(busy, "Todavía se están subiendo nóminas. Si sales, las que faltan no se subirán. ¿Salir?");
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
     accept: { "application/pdf": [".pdf"] },
@@ -260,7 +344,8 @@ function UploadManager() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
           <SectionCard>
-            <div className="grid gap-5 sm:grid-cols-2">
+            {/* Bloqueado mientras se sube: la tanda usa el perfil y el tipo del momento de empezar. */}
+            <fieldset disabled={busy} className="grid gap-5 disabled:opacity-60 sm:grid-cols-2">
               <div className="space-y-2">
                 <p className="text-xs font-medium text-muted-foreground">Perfil</p>
                 {profiles.length > 1 ? (
@@ -282,7 +367,7 @@ function UploadManager() {
                   ]}
                 />
               </div>
-            </div>
+            </fieldset>
 
             <div
               {...getRootProps()}
@@ -348,6 +433,7 @@ function UploadManager() {
                     disabled={busy}
                     onRemove={() => setQueue((q) => q.filter((i) => i.id !== item.id))}
                     onRetry={() => uploadMut.mutate([item])}
+                    onOcr={(payslip) => setQueue((q) => q.map((i) => (i.id === item.id ? { ...i, result: { ...i.result!, ...payslip } } : i)))}
                   />
                 ))}
               </ul>
@@ -361,9 +447,9 @@ function UploadManager() {
           <SectionCard title="Qué puedes subir">
             <ul className="space-y-4">
               {[
-                { icon: FileText, title: "PDF digital", text: "El que descargas del portal del empleado o te envía la empresa." },
+                { icon: FileText, title: "PDF digital o escaneado", text: "El que descargas del portal del empleado; si es un escaneo, lo leemos con OCR en tu navegador." },
                 { icon: Building2, title: "Empresa privada y organismos públicos", text: "Reconocemos los dos formatos más habituales en España." },
-                { icon: ScanLine, title: "Sin fotos ni escaneos", text: "Leemos el texto del PDF directamente, sin OCR." },
+                { icon: ScanLine, title: "Escaneos, en tu navegador", text: "Un PDF escaneado se lee con OCR en tu dispositivo: el documento no sale de él." },
               ].map(({ icon: Icon, title, text }) => (
                 <li key={title} className="flex gap-3">
                   <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/60">

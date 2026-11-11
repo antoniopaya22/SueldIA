@@ -8,6 +8,7 @@ import { ChartTooltip } from "../../ui/ChartTooltip";
 import { chartAxis, chartColors, chartCursor, chartGrid } from "../../app";
 import { ChartEmpty, ChartLegend } from "../finance-ui";
 import { cn } from "cn";
+import { toIsoDate } from "../../../lib/dates";
 
 interface Props {
   accountId?: number;
@@ -16,7 +17,7 @@ interface Props {
   expanded: boolean;
 }
 
-const localIso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const localIso = toIsoDate;
 
 /**
  * Gasto acumulado de este mes día a día, frente al mes pasado y a la media de
@@ -70,7 +71,7 @@ export function PaceChart({ accountId, groupId, categoryId, expanded }: Props) {
 
       <div className={expanded ? "h-96" : "h-64"}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={pace.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+          <ComposedChart accessibilityLayer data={pace.rows} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
             <CartesianGrid {...chartGrid} />
             <XAxis dataKey="day" {...chartAxis} interval={4} tickFormatter={(d) => String(d)} />
             <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />

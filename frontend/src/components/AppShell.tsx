@@ -1,4 +1,5 @@
 import * as React from "react";
+import { toast } from "sonner";
 import { Bell, Check, ChevronsUpDown, LogOut, Monitor, Moon, Search, Settings, Sun } from "lucide-react";
 import {
   Sidebar,
@@ -43,15 +44,29 @@ import { supabase } from "@/lib/supabase";
 import {
   clearAuth, getAlertHistory, getMe, markAlertRead, markAllAlertsRead, type AlertHistoryItem,
 } from "@/lib/api";
-import { formatRelativeDate } from "@/lib/format";
+import { formatRelativeDate, plural } from "@/lib/format";
 import { useTheme, type ThemePreference } from "@/hooks/use-theme";
+import { radioGroupKeys } from "@/hooks/use-radio-group-keys";
 import { CommandMenu } from "@/components/app/CommandMenu";
+import { ShortcutsDialog } from "@/components/app/ShortcutsDialog";
+import { DemoBanner } from "@/components/app/DemoData";
+import { ViewAsBanner } from "@/components/app/ViewAsBanner";
+import { isNewVersionAvailable } from "@/lib/version-check";
+// Registra beforeinstallprompt cuanto antes (se ofrece desde Ajustes).
+import "@/lib/install-prompt";
 import { PreferencesBoot } from "@/components/app/PreferencesBoot";
 import { MobileTabBar } from "@/components/app/MobileTabBar";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { TransactionFormDialog } from "@/components/finance-manage/transactions/TransactionFormDialog";
 import type { TxForm } from "@/components/finance-manage/transactions/TransactionDialog";
 import { appQueryClient } from "@/lib/query-client";
+
+// El formulario de «Nueva transacción» (y sus selectores) no hace falta para
+// pintar la página: se descarga aparte, en un momento ocioso tras cargar, para
+// que al abrirlo no haya espera.
+const loadTransactionFormDialog = () => import("@/components/finance-manage/transactions/TransactionFormDialog");
+const TransactionFormDialog = React.lazy(() => loadTransactionFormDialog().then((m) => ({ default: m.TransactionFormDialog })));
+import { installGlobalErrorReporting } from "@/lib/error-reporting";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { NEW_TRANSACTION_EVENT, openNewTransaction, type NewTransactionType } from "@/lib/new-transaction";
 import {
   HOME_ITEM,
@@ -177,7 +192,10 @@ function useShellUser(): ShellUser | null {
         avatarUrl: meta.avatar_url ?? meta.picture,
       });
     });
-    getMe()
+    // Misma query ["me"] y mismo cliente que AuthProvider: las dos peticiones
+    // simultáneas de cada carga de página se quedan en una.
+    appQueryClient
+      .fetchQuery({ queryKey: ["me"], queryFn: getMe, staleTime: 60_000 })
       .then((me) => {
         if (!cancelled && !fromSession) setUser({ name: me.name, email: me.email });
       })
@@ -205,6 +223,7 @@ function NavUser() {
   const user = useShellUser();
   const { preference, setPreference } = useTheme();
   const { isMobile } = useSidebar();
+  const themeKeys = radioGroupKeys(THEME_OPTIONS.map((o) => o.value), preference, setPreference);
 
   const logout = async () => {
     await clearAuth();
@@ -274,6 +293,8 @@ function NavUser() {
                       type="button"
                       role="radio"
                       aria-checked={selected}
+                      tabIndex={themeKeys.tabIndex(opt.value)}
+                      onKeyDown={themeKeys.onKeyDown}
                       onClick={() => setPreference(opt.value)}
                       className={cn(
                         "flex cursor-pointer flex-col items-center gap-1 rounded-lg border py-2 text-[11px] font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
@@ -347,7 +368,7 @@ function NotificationBell() {
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) refresh(); }}>
       <PopoverTrigger
-        render={<Button variant="ghost" size="icon" className="relative text-muted-foreground hover:text-foreground" aria-label="Alertas" />}
+        render={<Button variant="ghost" size="icon" className="relative text-muted-foreground hover:text-foreground" aria-label={count > 0 ? `Alertas: ${plural(count, "sin leer", "sin leer")}` : "Alertas"} />}
       >
         <Bell className="size-4" />
         {count > 0 && (
@@ -410,7 +431,7 @@ function AppHeader({ currentPath, onOpenSearch }: { currentPath: string; onOpenS
   const ActionIcon = action.icon;
 
   return (
-    <header className="sticky top-0 z-20 flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-border/70 bg-background/80 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md supports-backdrop-filter:bg-background/65 sm:px-5">
+    <header data-app-header className="sticky top-0 z-20 flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-border/70 bg-background/80 px-4 pt-[env(safe-area-inset-top)] backdrop-blur-md supports-backdrop-filter:bg-background/65 sm:px-5">
       {/* En móvil el panel se abre desde "Más" en la barra inferior. */}
       <SidebarTrigger className="-ml-1 hidden text-muted-foreground hover:text-foreground md:inline-flex" />
       <div aria-hidden="true" className="mr-1 hidden h-4 w-px shrink-0 bg-border md:block" />
@@ -485,7 +506,18 @@ interface AppShellProps {
   children?: React.ReactNode;
 }
 
-export function AppShell({ currentPath, children }: AppShellProps) {
+// El shell está en todas las páginas de /app: si falla, se ve el aviso de
+// ErrorBoundary en vez de una página en blanco, y el error llega a los logs.
+export function AppShell(props: AppShellProps) {
+  React.useEffect(() => installGlobalErrorReporting(), []);
+  return (
+    <ErrorBoundary>
+      <AppShellInner {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function AppShellInner({ currentPath, children }: AppShellProps) {
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [searchOpen, setSearchOpen] = React.useState(false);
   // Nueva transacción global: el diálogo se monta la primera vez que se pide
@@ -519,23 +551,64 @@ export function AppShell({ currentPath, children }: AppShellProps) {
     if (params.has("nueva")) {
       params.delete("nueva");
       const query = params.toString();
-      window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
       open();
     }
 
     window.addEventListener(NEW_TRANSACTION_EVENT, onRequest);
     window.addEventListener("keydown", onKey);
+    const idle = window.requestIdleCallback ?? ((cb: () => void) => window.setTimeout(cb, 2000));
+    idle(() => { void loadTransactionFormDialog().catch(() => undefined); });
     return () => {
       window.removeEventListener(NEW_TRANSACTION_EVENT, onRequest);
       window.removeEventListener("keydown", onKey);
     };
   }, []);
 
+  const [shortcutsOpen, setShortcutsOpen] = React.useState(false);
+  // Versión nueva desplegada mientras la pestaña seguía abierta: se propone recargar (una vez).
+  React.useEffect(() => {
+    let notified = false;
+    const check = () => {
+      if (notified || document.visibilityState !== "visible") return;
+      void isNewVersionAvailable().then((available) => {
+        if (!available || notified) return;
+        notified = true;
+        toast("Hay una versión nueva de SueldIA", {
+          description: "Recarga para usar la última (no perderás nada guardado).",
+          duration: Infinity,
+          action: { label: "Recargar", onClick: () => window.location.reload() },
+        });
+      });
+    };
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => {
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
+    };
+  }, []);
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setSearchOpen((o) => !o);
+        return;
+      }
+      // «/» y «?»: solo si no se está escribiendo ni hay un diálogo abierto.
+      if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("input, textarea, select, [contenteditable='true'], [role='combobox']")) return;
+      if (document.querySelector("[role='dialog'], [role='alertdialog']")) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        setShortcutsOpen(true);
+      } else if (e.key === "/") {
+        e.preventDefault();
+        // El buscador de la página si lo hay; si no, el de toda la app.
+        const field = document.querySelector<HTMLInputElement>("#app-scroll [data-page-search], #app-scroll input[type='search']");
+        if (field) field.focus();
+        else setSearchOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -578,22 +651,29 @@ export function AppShell({ currentPath, children }: AppShellProps) {
           <SidebarRail />
         </Sidebar>
         <SidebarInset className="md:h-[calc(100svh-1rem)] md:overflow-hidden md:ring-1 md:ring-black/[0.04] dark:md:ring-white/[0.06]">
-          <div className="flex min-h-0 flex-1 flex-col md:overflow-y-auto">
+          <div id="app-scroll" className="flex min-h-0 flex-1 flex-col md:overflow-y-auto">
             <AppHeader currentPath={currentPath} onOpenSearch={() => setSearchOpen(true)} />
-            <div className="app-page mx-auto w-full max-w-7xl flex-1 px-4 pt-5 pb-[calc(var(--mobile-nav-h)+1.5rem)] sm:px-6 sm:pt-6 md:pb-6 lg:px-10 lg:py-9">{children}</div>
+            <div className="app-page mx-auto w-full max-w-7xl flex-1 px-4 pt-5 pb-[calc(var(--mobile-nav-h)+1.5rem)] sm:px-6 sm:pt-6 md:pb-6 lg:px-10 lg:py-9">
+              <ViewAsBanner />
+              <QueryClientProvider client={appQueryClient}><DemoBanner /></QueryClientProvider>
+              {children}
+            </div>
           </div>
         </SidebarInset>
         <MobileTabBar workspace={activeWorkspace} currentPath={currentPath} />
         <CommandMenu open={searchOpen} onOpenChange={setSearchOpen} />
+        <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
         <QueryClientProvider client={appQueryClient}>
           <PreferencesBoot />
           {txDialog.mounted && (
-            <TransactionFormDialog
-              open={txDialog.open}
-              onClose={() => setTxDialog((d) => ({ ...d, open: false }))}
-              editing={null}
-              initial={txDialog.initial}
-            />
+            <React.Suspense fallback={null}>
+              <TransactionFormDialog
+                open={txDialog.open}
+                onClose={() => setTxDialog((d) => ({ ...d, open: false }))}
+                editing={null}
+                initial={txDialog.initial}
+              />
+            </React.Suspense>
           )}
         </QueryClientProvider>
       </SidebarProvider>

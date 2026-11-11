@@ -4,11 +4,8 @@
 const pad = (n: number) => String(n).padStart(2, "0");
 const roundCents = (n: number) => Math.round(n * 100) / 100;
 
-export function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const abs = y * 12 + (m - 1) + delta;
-  return `${Math.floor(abs / 12)}-${pad((abs % 12) + 1)}`;
-}
+import { shiftMonth } from "./dates";
+export { shiftMonth };
 
 export function daysInMonth(month: string): number {
   const [y, m] = month.split("-").map(Number);
@@ -183,6 +180,71 @@ export function buildSankey(income: number, groups: { name: string; total: numbe
       if (value > 0) links.push({ source: si, target: sources.length + di, value });
     });
   });
+  return { nodes, links };
+}
+
+/**
+ * «Del bruto al bolsillo»: el bruto se reparte en IRPF, Seguridad Social (y
+ * otras deducciones) y neto; el neto, en grupos de gasto y ahorro. Si se
+ * gastó más que el neto, la diferencia entra desde «Otros ingresos y ahorros».
+ * Lo que entra en cada nodo es igual a lo que sale.
+ */
+export function buildPaySankey(
+  pay: { gross: number; irpf: number; otherDeductions: number; net: number },
+  groups: { name: string; total: number }[],
+  limit: number,
+): SankeyData {
+  const sorted = [...groups].filter((g) => g.total > 0).sort((a, b) => b.total - a.total);
+  const top = sorted.slice(0, limit).map((g) => ({ name: g.name, total: g.total }));
+  const rest = sorted.slice(limit).reduce((s, g) => s + g.total, 0);
+  if (rest > 0) top.push({ name: "Otros gastos", total: rest });
+  const expense = top.reduce((s, g) => s + g.total, 0);
+  if (pay.gross <= 0) return { nodes: [], links: [] };
+
+  // Bruto → Neto y Bruto → «Impuestos y cotizaciones» → IRPF / Seguridad Social:
+  // así IRPF y cotizaciones acaban en la última columna, junto a los gastos
+  // (Recharts pone a la derecha todo nodo sin salida).
+  const taxes = pay.irpf + pay.otherDeductions;
+  const nodes: SankeyData["nodes"] = [
+    { name: "Bruto", kind: "source" },
+    { name: "Neto", kind: "source" },
+  ];
+  const links: SankeyData["links"] = [{ source: 0, target: 1, value: roundCents(pay.net) }];
+  if (taxes > 0) {
+    const t = nodes.length;
+    nodes.push({ name: "Impuestos y cotizaciones", kind: "group" });
+    links.push({ source: 0, target: t, value: roundCents(taxes) });
+    if (pay.irpf > 0) {
+      nodes.push({ name: "IRPF", kind: "group" });
+      links.push({ source: t, target: nodes.length - 1, value: roundCents(pay.irpf) });
+    }
+    if (pay.otherDeductions > 0) {
+      nodes.push({ name: "Cotizaciones", kind: "group" });
+      links.push({ source: t, target: nodes.length - 1, value: roundCents(pay.otherDeductions) });
+    }
+  }
+
+  const saving = pay.net - expense;
+  const extra = saving < -0.005 ? -saving : 0;
+  let extraIndex = -1;
+  if (extra > 0) {
+    extraIndex = nodes.length;
+    nodes.push({ name: "Otros ingresos y ahorros", kind: "source" });
+  }
+  const destinations: { name: string; value: number; kind: "group" | "saving" }[] = top.map((g) => ({ name: g.name, value: g.total, kind: "group" }));
+  if (saving > 0.005) destinations.push({ name: "Ahorro", value: saving, kind: "saving" });
+  const outTotal = destinations.reduce((s, d) => s + d.value, 0);
+  for (const d of destinations) {
+    const idx = nodes.length;
+    nodes.push({ name: d.name, kind: d.kind });
+    // Cada fuente (neto y, si hace falta, el extra) reparte en proporción a lo que se lleva cada destino.
+    const fromNet = roundCents(outTotal > 0 ? (pay.net * d.value) / Math.max(outTotal, pay.net) : 0);
+    if (fromNet > 0) links.push({ source: 1, target: idx, value: fromNet });
+    if (extra > 0) {
+      const fromExtra = roundCents((extra * d.value) / outTotal);
+      if (fromExtra > 0) links.push({ source: extraIndex, target: idx, value: fromExtra });
+    }
+  }
   return { nodes, links };
 }
 

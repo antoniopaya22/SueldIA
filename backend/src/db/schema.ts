@@ -1,4 +1,4 @@
-import { pgTable, text, integer, serial, boolean, doublePrecision, timestamp, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, serial, boolean, doublePrecision, timestamp, uniqueIndex, index, date } from "drizzle-orm/pg-core";
 
 // Nota: las columnas de dinero usan doublePrecision (float8) en vez de numeric.
 // numeric devuelve string en el driver de Postgres (para no perder precisión
@@ -6,25 +6,47 @@ import { pgTable, text, integer, serial, boolean, doublePrecision, timestamp, un
 // dashboard/analytics/finance sobre estos campos. SQLite's `real` ya era un
 // float8 sin precisión decimal exacta, así que esto no es una regresión.
 
+// RLS: toda tabla lleva `.enableRLS()` (sin políticas). La app no usa la Data
+// API de Supabase — el backend se conecta como propietario y no le afecta —,
+// así que esto solo cierra el acceso por la anon key del navegador. Una tabla
+// nueva sin `.enableRLS()` hace fallar `npm run db:migrate` (ver migrate.ts).
+
 // ─── Users ──────────────────────────────────────────────────────
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
-  email: text("email").notNull().unique(),
+  // Sin unique: la identidad es supabase_user_id. Con unique, una identidad
+  // nueva de Supabase con el mismo correo que una fila antigua no podía darse
+  // de alta nunca (el insert fallaba y el usuario recibía un 401 sin más).
+  email: text("email").notNull(),
   name: text("name").notNull(),
   supabaseUserId: text("supabase_user_id").notNull().unique(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}).enableRLS();
 
 // ─── Profiles ───────────────────────────────────────────────────
-export const profiles = pgTable("profiles", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  color: text("color").notNull().default("#6366f1"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const profiles = pgTable(
+  "profiles",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color").notNull().default("#6366f1"),
+    // Datos que afinan los cálculos (todos opcionales): 12 o 14 pagas al año,
+    // % de jornada (100 = completa), empresa actual y comunidad autónoma.
+    paymentsPerYear: integer("payments_per_year"),
+    workdayPercent: integer("workday_percent"),
+    employer: text("employer"),
+    region: text("region"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    // Claves foráneas consultadas o usadas en borrados en cascada (sin índice,
+    // Postgres recorre la tabla hija entera).
+    userIdx: index("profiles_user_idx").on(table.userId),
+  }),
+).enableRLS();
 
 export const payslips = pgTable(
   "payslips",
@@ -50,6 +72,18 @@ export const payslips = pgTable(
     })
       .notNull()
       .default("ordinal"),
+    // true en cuanto el usuario corrige la nómina a mano (PUT /:id/concepts).
+    // El reprocesado masivo se la salta para no pisar esas correcciones;
+    // reprocesarla una a una (con confirmación) lo vuelve a poner a false.
+    manuallyEdited: boolean("manually_edited").notNull().default(false),
+    // sha256 (hex) del texto extraído: subir dos veces el mismo PDF no crea
+    // otra nómina (contaba doble en totales, IRPF y medias).
+    contentHash: text("content_hash"),
+    // Métricas del analizador: formato con el que se leyó (ver parsers/formats)
+    // y lo que tardó al subirla. Para saber qué formato falla más y si una
+    // mejora del analizador mejora algo.
+    parserFormat: text("parser_format"),
+    parseMs: integer("parse_ms"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -60,8 +94,9 @@ export const payslips = pgTable(
       table.periodYear,
       table.periodMonth,
     ),
+    profileHashIdx: index("payslips_profile_hash_idx").on(table.profileId, table.contentHash),
   }),
-);
+).enableRLS();
 
 export const payslipConcepts = pgTable(
   "payslip_concepts",
@@ -76,32 +111,48 @@ export const payslipConcepts = pgTable(
     name: text("name").notNull(),
     amount: doublePrecision("amount").notNull(),
     isPercentage: boolean("is_percentage").notNull().default(false),
+    // Tipo semántico (irpf, ss_contingencias, salario_base…) — ver
+    // parsers/concept-classifier.ts. Se rellena al guardar; las filas antiguas
+    // las completa db:migrate (backfillConceptKinds).
+    kind: text("kind"),
   },
   (table) => ({
     // Toda pantalla que muestra una nómina carga sus conceptos por payslipId.
     payslipIdx: index("payslip_concepts_payslip_idx").on(table.payslipId),
   }),
-);
+).enableRLS();
 
 // ─── Payslip Notes (document management) ────────────────────────
-export const payslipNotes = pgTable("payslip_notes", {
-  id: serial("id").primaryKey(),
-  payslipId: integer("payslip_id")
-    .notNull()
-    .references(() => payslips.id, { onDelete: "cascade" }),
-  content: text("content").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const payslipNotes = pgTable(
+  "payslip_notes",
+  {
+    id: serial("id").primaryKey(),
+    payslipId: integer("payslip_id")
+      .notNull()
+      .references(() => payslips.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    payslipIdx: index("payslip_notes_payslip_idx").on(table.payslipId),
+  }),
+).enableRLS();
 
 // ─── Tags (document organization) ──────────────────────────────
-export const tags = pgTable("tags", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  color: text("color").notNull().default("#6366f1"),
-});
+export const tags = pgTable(
+  "tags",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color").notNull().default("#6366f1"),
+  },
+  (table) => ({
+    userIdx: index("tags_user_idx").on(table.userId),
+  }),
+).enableRLS();
 
 export const payslipTags = pgTable(
   "payslip_tags",
@@ -118,26 +169,34 @@ export const payslipTags = pgTable(
     // Evita asignar la misma etiqueta dos veces a la misma nómina (p. ej. un
     // doble clic en "asignar").
     payslipTagIdx: uniqueIndex("payslip_tags_payslip_tag_idx").on(table.payslipId, table.tagId),
+    tagIdx: index("payslip_tags_tag_idx").on(table.tagId),
   }),
-);
+).enableRLS();
 
 // ─── Alert Rules (automation) ───────────────────────────────────
-export const alertRules = pgTable("alert_rules", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  type: text("type", {
-    enum: [
-      "salary_drop", "missing_payslip", "concept_change", "custom_threshold",
-      "category_overspent", "low_balance", "overdue_pending",
-    ],
-  }).notNull(),
-  config: text("config").notNull().default("{}"), // JSON config
-  enabled: boolean("enabled").notNull().default(true),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const alertRules = pgTable(
+  "alert_rules",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: text("type", {
+      enum: [
+        "salary_drop", "missing_payslip", "concept_change", "custom_threshold", "irpf_change",
+        "category_overspent", "low_balance", "overdue_pending",
+        "low_balance_forecast", "subscription_price_increase", "duplicate_charge", "unusual_category_spend",
+      ],
+    }).notNull(),
+    config: text("config").notNull().default("{}"), // JSON config
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("alert_rules_user_idx").on(table.userId),
+  }),
+).enableRLS();
 
 // ─── Alert History ──────────────────────────────────────────────
 export const alertHistory = pgTable(
@@ -162,52 +221,170 @@ export const alertHistory = pgTable(
   },
   (table) => ({
     ruleDedupeIdx: uniqueIndex("alert_history_rule_dedupe_idx").on(table.ruleId, table.dedupeKey),
+    // La campana lo consulta en cada carga de página.
+    userIdx: index("alert_history_user_idx").on(table.userId, table.createdAt),
+    payslipIdx: index("alert_history_payslip_idx").on(table.payslipId),
   }),
-);
+).enableRLS();
 
 // ─── Financial Accounts ─────────────────────────────────────────
-export const accounts = pgTable("accounts", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  type: text("type", {
-    enum: ["bank", "credit_card", "cash", "investment", "other"],
-  })
-    .notNull()
-    .default("bank"),
-  currency: text("currency").notNull().default("EUR"),
-  initialBalance: doublePrecision("initial_balance").notNull().default(0),
-  color: text("color").notNull().default("#6366f1"),
-  icon: text("icon"),
-  archived: boolean("archived").notNull().default(false),
-  // Orden elegido por el usuario (Transacciones → Ordenar); a igualdad, por nombre.
-  sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: text("type", {
+      enum: ["bank", "credit_card", "cash", "investment", "loan", "mortgage", "other"],
+    })
+      .notNull()
+      .default("bank"),
+    currency: text("currency").notNull().default("EUR"),
+    initialBalance: doublePrecision("initial_balance").notNull().default(0),
+    color: text("color").notNull().default("#6366f1"),
+    icon: text("icon"),
+    archived: boolean("archived").notNull().default(false),
+    // Orden elegido por el usuario (Transacciones → Ordenar); a igualdad, por nombre.
+    sortOrder: integer("sort_order").notNull().default(0),
+    // Última conciliación con el extracto del banco (Cuentas → Conciliar).
+    lastReconciledAt: timestamp("last_reconciled_at", { withTimezone: true }),
+    lastReconciledBalance: doublePrecision("last_reconciled_balance"),
+    // Préstamo o hipoteca (type loan/mortgage): para el cuadro de amortización
+    // (sistema francés). Importe prestado, TIN anual en %, plazo en meses y
+    // fecha de la primera cuota. Todo opcional.
+    loanPrincipal: doublePrecision("loan_principal"),
+    loanRate: doublePrecision("loan_rate"),
+    loanTermMonths: integer("loan_term_months"),
+    loanStartDate: date("loan_start_date", { mode: "string" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("accounts_user_idx").on(table.userId),
+  }),
+).enableRLS();
+
+// ─── Compartir (solo lectura) ───────────────────────────────────
+// Otra persona puede ver tus datos sin poder cambiarlos: el titular crea una
+// invitación de un solo uso y quien la acepta queda en `shares`. Ver
+// middleware/view-as.ts.
+export const shares = pgTable(
+  "shares",
+  {
+    id: serial("id").primaryKey(),
+    ownerUserId: integer("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    viewerUserId: integer("viewer_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    pairIdx: uniqueIndex("shares_owner_viewer_idx").on(table.ownerUserId, table.viewerUserId),
+    viewerIdx: index("shares_viewer_idx").on(table.viewerUserId),
+  }),
+).enableRLS();
+
+export const shareInvites = pgTable(
+  "share_invites",
+  {
+    id: serial("id").primaryKey(),
+    ownerUserId: integer("owner_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // SHA-256 del código: el código en claro solo lo ve el titular al crearlo.
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tokenIdx: uniqueIndex("share_invites_token_idx").on(table.tokenHash),
+    ownerIdx: index("share_invites_owner_idx").on(table.ownerUserId),
+  }),
+).enableRLS();
+
+// ─── Registro de actividad ──────────────────────────────────────
+// «Qué ha cambiado y cuándo»: una fila por acción que modifica datos (la
+// apunta un middleware, ver services/activity.service.ts). Se podan las de
+// más de 180 días en el cron diario.
+export const activityLog = pgTable(
+  "activity_log",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // "transaction", "account", "payslip", "import"…
+    entity: text("entity").notNull(),
+    entityId: integer("entity_id"),
+    // Texto para el usuario, en español.
+    summary: text("summary").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userCreatedIdx: index("activity_log_user_created_idx").on(table.userId, table.createdAt),
+  }),
+).enableRLS();
+
+// ─── Valoraciones de cuentas (inversiones) ─────────────────────
+// «Actualizar valor» sin crear un movimiento: desde esa fecha el saldo es el
+// valor apuntado más los movimientos posteriores. No cuenta como ingreso ni
+// gasto (no toca analítica ni presupuesto).
+export const accountValuations = pgTable(
+  "account_valuations",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    date: date("date", { mode: "string" }).notNull(),
+    value: doublePrecision("value").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("account_valuations_user_idx").on(table.userId),
+    accountDateIdx: uniqueIndex("account_valuations_account_date_idx").on(table.accountId, table.date),
+  }),
+).enableRLS();
 
 // ─── Category Groups ────────────────────────────────────────────
-export const categoryGroups = pgTable("category_groups", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  icon: text("icon"),
-  sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const categoryGroups = pgTable(
+  "category_groups",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    icon: text("icon"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("category_groups_user_idx").on(table.userId),
+  }),
+).enableRLS();
 
-export const categories = pgTable("categories", {
-  id: serial("id").primaryKey(),
-  groupId: integer("group_id")
-    .notNull()
-    .references(() => categoryGroups.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const categories = pgTable(
+  "categories",
+  {
+    id: serial("id").primaryKey(),
+    groupId: integer("group_id")
+      .notNull()
+      .references(() => categoryGroups.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    groupIdx: index("categories_group_idx").on(table.groupId),
+  }),
+).enableRLS();
 
 // ─── Financial Transactions ─────────────────────────────────────
 export const transactions = pgTable(
@@ -227,7 +404,7 @@ export const transactions = pgTable(
       enum: ["expense", "income", "transfer"],
     }).notNull(),
     amount: doublePrecision("amount").notNull(),
-    date: text("date").notNull(),
+    date: date("date", { mode: "string" }).notNull(),
     recurringTransactionId: integer("recurring_transaction_id").references(
       () => recurringTransactions.id,
       { onDelete: "set null" },
@@ -237,13 +414,17 @@ export const transactions = pgTable(
     // nunca se crea ni se enlaza solo). Si se borra la nómina, la
     // transacción se queda, solo pierde el enlace.
     payslipId: integer("payslip_id").references(() => payslips.id, { onDelete: "set null" }),
-    scheduledFor: text("scheduled_for"),
+    scheduledFor: date("scheduled_for", { mode: "string" }),
     payee: text("payee"),
     memo: text("memo"),
     cleared: boolean("cleared").notNull().default(false),
+    // Liquidado y comprobado contra el extracto del banco (conciliación).
+    reconciled: boolean("reconciled").notNull().default(false),
     transferId: integer("transfer_id"),
     flag: text("flag"),
     importedFrom: text("imported_from"),
+    // Lote de importación (uuid): permite ver y deshacer una importación entera.
+    importBatchId: text("import_batch_id"),
     // Un gasto dividido en varias categorías son varias filas reales (cada una con su
     // categoría e importe) enlazadas por este identificador: así saldos, presupuesto e
     // informes no cambian — lo que suma por categoría sigue sumando. Liquidar, borrar o
@@ -267,44 +448,76 @@ export const transactions = pgTable(
     categoryIdx: index("transactions_category_idx").on(table.categoryId),
     // Localizar las partes de un gasto dividido.
     splitGroupIdx: index("transactions_split_group_idx").on(table.splitGroupId),
+    // Editar/borrar un traspaso busca su pareja.
+    transferIdx: index("transactions_transfer_idx").on(table.transferId),
+    importBatchIdx: index("transactions_import_batch_idx").on(table.userId, table.importBatchId),
   }),
-);
+).enableRLS();
 
 // ─── Recurring Transactions ────────────────────────────────────
-export const recurringTransactions = pgTable("recurring_transactions", {
-  id: serial("id").primaryKey(),
-  userId: integer("user_id")
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  accountId: integer("account_id")
-    .notNull()
-    .references(() => accounts.id, { onDelete: "cascade" }),
-  categoryId: integer("category_id").references(() => categories.id, {
-    onDelete: "set null",
+export const recurringTransactions = pgTable(
+  "recurring_transactions",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    categoryId: integer("category_id").references(() => categories.id, {
+      onDelete: "set null",
+    }),
+    type: text("type", {
+      enum: ["expense", "income", "transfer"],
+    }).notNull(),
+    // Solo en los traspasos recurrentes: la cuenta que recibe el dinero.
+    targetAccountId: integer("target_account_id").references(() => accounts.id, { onDelete: "cascade" }),
+    amount: doublePrecision("amount").notNull(),
+    cadence: text("cadence", {
+      enum: ["weekly", "monthly", "yearly"],
+    })
+      .notNull()
+      .default("monthly"),
+    intervalCount: integer("interval_count").notNull().default(1),
+    startDate: date("start_date", { mode: "string" }).notNull(),
+    endDate: date("end_date", { mode: "string" }),
+    payee: text("payee"),
+    memo: text("memo"),
+    flag: text("flag"),
+    active: boolean("active").notNull().default(true),
+    // Domiciliaciones: las ocurrencias se liquidan solas el día del cargo (si no, quedan
+    // pendientes hasta que el usuario las marque).
+    autoSettle: boolean("auto_settle").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("recurring_transactions_user_idx").on(table.userId),
+    accountIdx: index("recurring_transactions_account_idx").on(table.accountId),
+    categoryIdx: index("recurring_transactions_category_idx").on(table.categoryId),
   }),
-  type: text("type", {
-    enum: ["expense", "income"],
-  }).notNull(),
-  amount: doublePrecision("amount").notNull(),
-  cadence: text("cadence", {
-    enum: ["weekly", "monthly", "yearly"],
-  })
-    .notNull()
-    .default("monthly"),
-  intervalCount: integer("interval_count").notNull().default(1),
-  startDate: text("start_date").notNull(),
-  endDate: text("end_date"),
-  payee: text("payee"),
-  memo: text("memo"),
-  flag: text("flag"),
-  active: boolean("active").notNull().default(true),
-  // Domiciliaciones: las ocurrencias se liquidan solas el día del cargo (si no, quedan
-  // pendientes hasta que el usuario las marque).
-  autoSettle: boolean("auto_settle").notNull().default(false),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+).enableRLS();
 
 // ─── Budgets (presupuesto por categoría y mes, estilo YNAB) ─────
+// Ocurrencias de una recurrente que no se deben generar: las que el usuario ha
+// saltado («esta vez no») y, al crear una regla con fecha pasada, las
+// anteriores a hoy si no quiso rellenar el pasado.
+export const recurringSkips = pgTable(
+  "recurring_skips",
+  {
+    id: serial("id").primaryKey(),
+    recurringTransactionId: integer("recurring_transaction_id")
+      .notNull()
+      .references(() => recurringTransactions.id, { onDelete: "cascade" }),
+    // "YYYY-MM-DD": la fecha prevista de la ocurrencia (scheduled_for).
+    scheduledFor: date("scheduled_for", { mode: "string" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    ruleDateIdx: uniqueIndex("recurring_skips_rule_date_idx").on(table.recurringTransactionId, table.scheduledFor),
+  }),
+).enableRLS();
+
 export const budgets = pgTable(
   "budgets",
   {
@@ -325,7 +538,7 @@ export const budgets = pgTable(
     categoryMonthIdx: uniqueIndex("budgets_category_month_idx").on(table.categoryId, table.month),
     userMonthIdx: index("budgets_user_month_idx").on(table.userId, table.month),
   }),
-);
+).enableRLS();
 
 // ─── Objetivos por categoría (presupuesto) ──────────────────────
 // Una categoría tiene como mucho un objetivo:
@@ -351,7 +564,7 @@ export const categoryTargets = pgTable(
     categoryIdx: uniqueIndex("category_targets_category_idx").on(table.categoryId),
     userIdx: index("category_targets_user_idx").on(table.userId),
   }),
-);
+).enableRLS();
 
 // ─── Reglas de categorización automática ────────────────────────
 // "Si el beneficiario contiene `match`, la categoría es `categoryId`".
@@ -367,19 +580,71 @@ export const categoryRules = pgTable(
     categoryId: integer("category_id")
       .notNull()
       .references(() => categories.id, { onDelete: "cascade" }),
+    // Condiciones opcionales (todas deben cumplirse). Sin ellas, la regla es
+    // la de siempre: "el beneficiario contiene `match`".
+    matchField: text("match_field", { enum: ["payee", "memo", "any"] }).notNull().default("payee"),
+    transactionType: text("transaction_type", { enum: ["expense", "income"] }),
+    minAmount: doublePrecision("min_amount"),
+    maxAmount: doublePrecision("max_amount"),
+    accountId: integer("account_id").references(() => accounts.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     // Una regla por texto y usuario: volver a crearla solo cambia su categoría.
     userMatchIdx: uniqueIndex("category_rules_user_match_idx").on(table.userId, table.match),
+    categoryIdx: index("category_rules_category_idx").on(table.categoryId),
   }),
-);
+).enableRLS();
 
 // ─── Preferencias del usuario ───────────────────────────────────
 // Pares clave → JSON (texto) para recordar ajustes de interfaz entre sesiones y
 // dispositivos: paleta de gráficos, qué paneles de la analítica se ven y en qué
 // orden, vistas guardadas, etc. Lo que se guarda lo valida el cliente de cada
 // pantalla; aquí solo se acotan tamaño y número de claves.
+// Dispositivos que han aceptado notificaciones push (una fila por navegador).
+export const pushSubscriptions = pgTable(
+  "push_subscriptions",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    endpoint: text("endpoint").notNull(),
+    p256dh: text("p256dh").notNull(),
+    auth: text("auth").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    endpointIdx: uniqueIndex("push_subscriptions_endpoint_idx").on(table.endpoint),
+    userIdx: index("push_subscriptions_user_idx").on(table.userId),
+  }),
+).enableRLS();
+
+// Objetivos de ahorro («Vacaciones: 2.000 € para julio»). El progreso sale
+// del saldo de la cuenta asociada o, sin cuenta, de lo que el usuario apunta.
+export const savingsGoals = pgTable(
+  "savings_goals",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    targetAmount: doublePrecision("target_amount").notNull(),
+    // "YYYY-MM-DD", opcional: sin fecha no hay aportación mensual sugerida.
+    targetDate: date("target_date", { mode: "string" }),
+    accountId: integer("account_id").references(() => accounts.id, { onDelete: "set null" }),
+    savedAmount: doublePrecision("saved_amount").notNull().default(0),
+    color: text("color").notNull().default("#2a8558"),
+    archived: boolean("archived").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userIdx: index("savings_goals_user_idx").on(table.userId),
+    accountIdx: index("savings_goals_account_idx").on(table.accountId),
+  }),
+).enableRLS();
+
 export const userPreferences = pgTable(
   "user_preferences",
   {
@@ -394,4 +659,4 @@ export const userPreferences = pgTable(
   (table) => ({
     userKeyIdx: uniqueIndex("user_preferences_user_key_idx").on(table.userId, table.key),
   }),
-);
+).enableRLS();

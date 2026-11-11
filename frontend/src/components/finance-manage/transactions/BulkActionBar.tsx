@@ -1,5 +1,8 @@
 import { useState } from "react";
-import { CheckCircle2, Circle, Sparkles, Tag, Trash2, X } from "lucide-react";
+import { Ban, CheckCircle2, Circle, Flag, Sparkles, Tag, Trash2, X } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { FLAGS } from "@/lib/flags";
+import { cn } from "cn";
 import type { CategoryGroup } from "../../../lib/api";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -19,21 +22,37 @@ interface Props {
   onSuggest: () => void;
   onCategorize: (categoryId: number | null, rememberPayee: boolean) => void;
   onSetCleared: (cleared: boolean) => void;
+  /** Marca de color (null = quitarla). */
+  onSetFlag: (flag: string | null) => void;
   onDelete: () => void;
   onClear: () => void;
 }
 
 /** Barra flotante con las acciones sobre los movimientos seleccionados. */
-export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onCategorize, onSetCleared, onDelete, onClear }: Props) {
+export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onCategorize, onSetCleared, onSetFlag, onDelete, onClear }: Props) {
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [categoryId, setCategoryId] = useState<number | "">("");
   const [remember, setRemember] = useState(false);
+  // Quitar la categoría a N movimientos es destructivo: antes era la acción
+  // principal del diálogo en su estado inicial (selector vacío), a un clic.
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
-  const apply = () => {
-    onCategorize(categoryId === "" ? null : categoryId, remember && categoryId !== "");
+  const reset = () => {
     setCategoryOpen(false);
     setCategoryId("");
     setRemember(false);
+    setConfirmRemove(false);
+  };
+
+  const apply = () => {
+    if (categoryId === "") return;
+    onCategorize(categoryId, remember);
+    reset();
+  };
+
+  const removeCategory = () => {
+    onCategorize(null, false);
+    reset();
   };
 
   return (
@@ -45,7 +64,7 @@ export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onC
       >
         <span className="px-1 text-sm font-medium whitespace-nowrap text-foreground tabular-nums" aria-live="polite">
           {count}
-          <span className="sr-only sm:not-sr-only"> {count === 1 ? "seleccionada" : "seleccionadas"}</span>
+          <span className="sr-only sm:not-sr-only"> {count === 1 ? "seleccionado" : "seleccionados"}</span>
         </span>
         <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />
         <Button variant="ghost" size="sm" disabled={busy} onClick={onSuggest} className="gap-1.5" aria-label="Sugerir categorías" title="Categoriza con tus reglas y con lo que ya has hecho con cada beneficiario">
@@ -60,6 +79,22 @@ export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onC
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => onSetCleared(false)} className="gap-1.5" aria-label="Marcar como pendientes" title="Marcar como pendientes">
           <Circle className="size-4" /> <span className="hidden sm:inline">Pendiente</span>
         </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger render={<Button variant="ghost" size="sm" disabled={busy} className="gap-1.5" aria-label="Marca de color" title="Marca de color" />}>
+            <Flag className="size-4" /> <span className="hidden sm:inline">Marcar</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="center" side="top">
+            {FLAGS.map((f) => (
+              <DropdownMenuItem key={f.value} onClick={() => onSetFlag(f.value)} className="gap-2">
+                <span className={cn("size-2.5 rounded-full", f.dot)} /> {f.label}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onSetFlag(null)} className="gap-2">
+              <Ban className="size-3.5" /> Quitar la marca
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button variant="ghost" size="sm" disabled={busy} onClick={onDelete} className="gap-1.5 text-destructive hover:text-destructive" aria-label="Eliminar" title="Eliminar">
           <Trash2 className="size-4" /> <span className="hidden sm:inline">Eliminar</span>
         </Button>
@@ -69,7 +104,7 @@ export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onC
         </Button>
       </div>
 
-      <Dialog open={categoryOpen} onOpenChange={(o) => { if (!o) setCategoryOpen(false); }}>
+      <Dialog open={categoryOpen} onOpenChange={(o) => { if (!o) reset(); }}>
         <DialogContent className="gap-0 p-0 sm:max-w-md">
           <DialogHeader className="border-b border-border px-5 pt-5 pb-4">
             <DialogTitle>Categorizar {count} {count === 1 ? "movimiento" : "movimientos"}</DialogTitle>
@@ -79,7 +114,7 @@ export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onC
           </DialogHeader>
           <div className="space-y-1.5 px-5 py-5">
             <Label htmlFor="bulk-category">Categoría</Label>
-            <CategorySelect id="bulk-category" value={categoryId} onChange={setCategoryId} groups={groups} noneLabel="Elige una categoría o déjalo vacío para quitarla" />
+            <CategorySelect id="bulk-category" value={categoryId} onChange={(v) => { setCategoryId(v); setConfirmRemove(false); }} groups={groups} noneLabel="Elige una categoría" />
             {commonPayee && categoryId !== "" && (
               <div className="flex items-start gap-2.5 pt-3">
                 <Checkbox id="bulk-remember" checked={remember} onCheckedChange={(c) => setRemember(c === true)} className="mt-0.5" />
@@ -90,11 +125,27 @@ export function BulkActionBar({ count, groups, busy, commonPayee, onSuggest, onC
               </div>
             )}
           </div>
-          <DialogFooter className="mx-0 mb-0 border-t border-border px-5 py-3">
-            <Button type="button" variant="outline" onClick={() => setCategoryOpen(false)}>Cancelar</Button>
-            <Button type="button" onClick={apply} disabled={busy}>
-              {categoryId === "" ? "Quitar categoría" : "Aplicar categoría"}
-            </Button>
+          {confirmRemove && (
+            <p role="alert" className="mx-5 mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              Se quitará la categoría a {count} {count === 1 ? "movimiento" : "movimientos"}. Dejarán de contar en el presupuesto de su categoría.
+            </p>
+          )}
+          <DialogFooter className="mx-0 mb-0 border-t border-border px-5 py-3 sm:justify-between">
+            {confirmRemove ? (
+              <Button type="button" variant="destructive" onClick={removeCategory} disabled={busy}>
+                Sí, quitar la categoría
+              </Button>
+            ) : (
+              <Button type="button" variant="ghost" onClick={() => setConfirmRemove(true)} disabled={busy} className="text-muted-foreground">
+                Dejar sin categoría
+              </Button>
+            )}
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button type="button" variant="outline" onClick={reset}>Cancelar</Button>
+              <Button type="button" onClick={apply} disabled={busy || categoryId === ""}>
+                Aplicar categoría
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

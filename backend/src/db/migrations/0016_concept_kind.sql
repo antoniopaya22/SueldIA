@@ -1,0 +1,1 @@
+ALTER TABLE "payslip_concepts" ADD COLUMN "kind" text;

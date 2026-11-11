@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Bar, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -24,8 +24,10 @@ import {
 import { BalanceHistoryCard } from "./finance/BalanceHistoryCard";
 import { GettingStartedCard } from "./finance/GettingStartedCard";
 import { ForecastCard } from "./finance/ForecastCard";
+import { GoalsCard } from "./finance/GoalsCard";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "cn";
+import { useUrlEnumParam, useUrlOptionalIdParam } from "../lib/url-state";
 
 type Preset = Extract<RangePreset, "3m" | "6m" | "12m" | "all">;
 
@@ -36,7 +38,16 @@ const PRESET_OPTIONS: Array<{ value: Preset; label: string }> = [
   { value: "all", label: "Todo" },
 ];
 
-/** Variación del último mes frente al anterior (solo meses con actividad). */
+const currentMonthKey = (() => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+})();
+
+/**
+ * Variación del último mes completo frente al anterior. El mes en curso queda
+ * fuera: a día 5 su total no es comparable con un mes entero y salía, p. ej.,
+ * «−80 %» en verde.
+ */
 function lastMonthDelta(series: number[], invert = false): StatDelta | undefined {
   if (series.length < 2) return undefined;
   const [prev, last] = series.slice(-2);
@@ -45,7 +56,7 @@ function lastMonthDelta(series: number[], invert = false): StatDelta | undefined
   if (!Number.isFinite(change)) return undefined;
   const trend = Math.abs(change) < 0.05 ? "flat" : change > 0 ? "up" : "down";
   const tone = trend === "flat" ? "neutral" : (trend === "up") !== invert ? "positive" : "negative";
-  return { value: `${change > 0 ? "+" : ""}${formatPct(change)}`, trend, tone, label: "último mes" };
+  return { value: `${change > 0 ? "+" : ""}${formatPct(change)}`, trend, tone, label: "último mes completo" };
 }
 
 function FinanceSkeleton() {
@@ -68,8 +79,9 @@ function FinanceSkeleton() {
 }
 
 function FinanceDashboardView() {
-  const [preset, setPreset] = useState<Preset>("6m");
-  const [accountId, setAccountId] = useState<number | undefined>();
+  // En la URL (?periodo=12m&cuenta=2): compartible y no se pierde al volver.
+  const [preset, setPreset] = useUrlEnumParam<Preset>("periodo", ["3m", "6m", "12m", "all"], "6m");
+  const [accountId, setAccountId] = useUrlOptionalIdParam("cuenta");
 
   const filters = useMemo<FinanceAnalyticsFilters>(() => {
     const range = presetRange(preset);
@@ -80,6 +92,9 @@ function FinanceDashboardView() {
   const { data: analytics, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: ["finance-dashboard", filters],
     queryFn: () => getFinanceAnalytics(filters),
+    // Al cambiar de filtro se sigue viendo lo anterior (atenuado) en vez de
+    // sustituir la página entera, cabecera y filtros incluidos, por el esqueleto.
+    placeholderData: keepPreviousData,
   });
 
   const derived = useMemo(() => {
@@ -125,6 +140,9 @@ function FinanceDashboardView() {
       balanceSeries,
       incomeSeries: active.map((m) => m.income),
       expenseSeries: active.map((m) => m.expenses),
+      // Para comparar: solo meses ya terminados.
+      completeIncome: active.filter((m) => m.month < currentMonthKey).map((m) => m.income),
+      completeExpenses: active.filter((m) => m.month < currentMonthKey).map((m) => m.expenses),
       categorySlices,
       expenseTotal,
       payees,
@@ -203,7 +221,10 @@ function FinanceDashboardView() {
           label="Saldo actual"
           value={formatCurrency(summary.totalBalance)}
           icon={Wallet}
-          hint={selectedAccount ? selectedAccount.name : `${accounts.filter((a) => !a.archived).length} cuentas`}
+          hint={selectedAccount ? selectedAccount.name : (() => {
+            const n = accounts.filter((a) => !a.archived).length;
+            return `${n} ${n === 1 ? "cuenta" : "cuentas"}`;
+          })()}
           sparkline={lastBalances.length > 2 ? lastBalances : undefined}
           emphasis
         />
@@ -211,7 +232,7 @@ function FinanceDashboardView() {
           label="Ingresos del periodo"
           value={formatCurrency(summary.incomeTotal)}
           icon={ArrowUpRight}
-          delta={lastMonthDelta(derived.incomeSeries)}
+          delta={lastMonthDelta(derived.completeIncome)}
           hint={`Media ${formatCurrency(summary.monthlyAverageIncome)}/mes`}
           sparkline={derived.incomeSeries.length > 2 ? derived.incomeSeries : undefined}
           sparklineColor={flowColors.income}
@@ -220,7 +241,7 @@ function FinanceDashboardView() {
           label="Gastos del periodo"
           value={formatCurrency(summary.expenseTotal)}
           icon={ArrowDownRight}
-          delta={lastMonthDelta(derived.expenseSeries, true)}
+          delta={lastMonthDelta(derived.completeExpenses, true)}
           hint={summary.topExpenseMonth ? `Pico en ${formatMonthLabel(summary.topExpenseMonth.month)}` : `Media ${formatCurrency(summary.monthlyAverageExpenses)}/mes`}
           sparkline={derived.expenseSeries.length > 2 ? derived.expenseSeries : undefined}
           sparklineColor={flowColors.expense}
@@ -267,7 +288,7 @@ function FinanceDashboardView() {
               }
             >
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={derived.monthly} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={3}>
+                <ComposedChart accessibilityLayer data={derived.monthly} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={3}>
                   <CartesianGrid {...chartGrid} />
                   <XAxis dataKey="label" {...chartAxis} interval="preserveStartEnd" minTickGap={16} />
                   <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />
@@ -286,7 +307,7 @@ function FinanceDashboardView() {
                 <>
                   <div className="relative mx-auto h-40 w-40">
                     <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
+                      <PieChart accessibilityLayer>
                         <Pie data={derived.categorySlices} dataKey="value" nameKey="label" innerRadius={52} outerRadius={76} paddingAngle={2} strokeWidth={0}>
                           {derived.categorySlices.map((s) => <Cell key={s.key} fill={s.color} />)}
                         </Pie>
@@ -376,6 +397,7 @@ function FinanceDashboardView() {
         <BalanceHistoryCard accountId={accountId} />
         <ForecastCard />
       </div>
+      <GoalsCard />
     </div>
   );
 }

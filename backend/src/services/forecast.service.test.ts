@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDaysIso, buildForecast } from "./forecast.service.js";
+import { addDaysIso, buildForecast, budgetScenarioItems } from "./forecast.service.js";
 
 const item = (date: string, amount: number, payee = "x", source: "pending" | "recurring" = "pending") => ({ date, amount, payee, source });
 
@@ -63,3 +63,31 @@ describe("buildForecast", () => {
     expect(short.endOfMonth.date).toBe("2025-03-17");
   });
 });
+
+describe("budgetScenarioItems", () => {
+  const m = (month: string, assigned: Record<number, number>, spent: Record<number, number> = {}, scheduled: Record<number, number> = {}) => ({
+    month,
+    assigned: new Map(Object.entries(assigned).map(([k, v]) => [Number(k), v])),
+    spent: new Map(Object.entries(spent).map(([k, v]) => [Number(k), v])),
+    scheduled: new Map(Object.entries(scheduled).map(([k, v]) => [Number(k), v])),
+  });
+
+  it("reparte lo que queda del mes en los días que faltan, sin contar lo ya gastado ni lo programado", () => {
+    // Súper: 300 asignados, 100 gastados → 200. Alquiler: 750 asignados y programados → 0.
+    // Ocio: 50 asignados y 80 gastados → 0 (no negativo).
+    const { items, remainingByMonth } = budgetScenarioItems("2025-03-22", "2025-03-31", [
+      m("2025-03", { 1: 300, 2: 750, 3: 50 }, { 1: 100, 3: 80 }, { 2: 750 }),
+    ]);
+    expect(remainingByMonth).toEqual([{ month: "2025-03", amount: 200 }]);
+    expect(items).toHaveLength(10); // del 22 al 31
+    expect(items.reduce((s, i) => s + i.amount, 0)).toBeCloseTo(-200);
+  });
+
+  it("los meses siguientes empiezan el día 1 y el horizonte corta el reparto", () => {
+    const { items } = budgetScenarioItems("2025-03-31", "2025-04-10", [m("2025-03", {}), m("2025-04", { 1: 300 })]);
+    expect(items[0].date).toBe("2025-04-01");
+    expect(items).toHaveLength(10);
+    expect(items[0].amount).toBeCloseTo(-10); // 300 / 30 días
+  });
+});
+

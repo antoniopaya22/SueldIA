@@ -38,7 +38,7 @@ export function AccountOrderDialog({ open, onClose, accounts }: Props) {
       toast.success("Orden de las cuentas guardado");
       onClose();
     },
-    onError: () => toast.error("No se pudo guardar el orden. Vuelve a intentarlo."),
+    onError: (e: Error) => toast.error("No se pudo guardar el orden. Vuelve a intentarlo.", { description: e.message }),
   });
 
   const move = (from: number, to: number) => setItems((list) => moveItem(list, from, to));

@@ -11,7 +11,7 @@ import {
 import { toast } from "sonner";
 import { exportData, getAnalytics, getProfiles, type AnalyticsData } from "../lib/api";
 import { useSelectedProfile } from "../hooks/use-selected-profile";
-import { formatCompact, formatCurrency, formatMonthLabel, formatPct } from "../lib/format";
+import { formatCompact, formatCurrency, formatMonthLabel, formatPct, plural } from "../lib/format";
 import { Providers } from "./Providers";
 import {
   ChartCard, PageHeader, PageHeaderSkeleton, SectionCard, Segmented, StatCard, StatCardSkeleton, StatGrid,
@@ -30,8 +30,11 @@ import {
   DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "cn";
+import { useUrlEnumParam, useUrlParam } from "../lib/url-state";
+import { TaxSummaryCard } from "./payroll/TaxSummaryCard";
 
 type Range = "12" | "24" | "all";
+const RANGES: readonly Range[] = ["12", "24", "all"];
 type Severity = "info" | "warning" | "critical";
 
 const SEVERITY_META: Record<Severity, { icon: typeof Bell; label: string; className: string; dot: string }> = {
@@ -94,9 +97,11 @@ function AnalyticsSkeleton() {
 function AnalyticsView() {
   const { data: profiles = [], isLoading: profilesLoading } = useQuery({ queryKey: ["profiles"], queryFn: getProfiles });
   const [selectedProfile, setSelectedProfile] = useSelectedProfile(profiles.map((p) => p.id));
-  const [range, setRange] = useState<Range>("24");
-  const [yoyMetric, setYoyMetric] = useState<"net" | "gross">("net");
-  const [concept, setConcept] = useState<string>("");
+  // En la URL: compartible y no se pierde al volver desde otra página.
+  const [range, setRange] = useUrlEnumParam<Range>("rango", RANGES, "24");
+  const [yoyMetric, setYoyMetric] = useUrlEnumParam("metrica", ["net", "gross"] as const, "net");
+  const [concept, setConceptParam] = useUrlParam("concepto");
+  const setConcept = (c: string) => setConceptParam(c);
   const [exportYear, setExportYear] = useState<string>("all");
   const [exporting, setExporting] = useState(false);
 
@@ -160,7 +165,7 @@ function AnalyticsView() {
     [analytics, activeConcept],
   );
 
-  const handleExport = async (format: "csv" | "json") => {
+  const handleExport = async (format: "xlsx" | "csv" | "json") => {
     if (!selectedProfile) return;
     setExporting(true);
     try {
@@ -267,6 +272,7 @@ function AnalyticsView() {
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuGroup>
+                <DropdownMenuItem onClick={() => handleExport("xlsx")}>Descargar Excel</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleExport("csv")}>Descargar CSV</DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleExport("json")}>Descargar JSON</DropdownMenuItem>
               </DropdownMenuGroup>
@@ -290,7 +296,7 @@ function AnalyticsView() {
           label="Vs. año anterior"
           value={yoyAvg == null ? "—" : `${yoyAvg > 0 ? "+" : ""}${formatPct(yoyAvg)}`}
           icon={TrendingUp}
-          hint={yoyAvg == null ? "Hace falta un año de histórico" : `Neto medio, ${analytics.trends.yoyNet.length} meses comparados`}
+          hint={yoyAvg == null ? "Hace falta un año de histórico" : `Neto medio, ${plural(analytics.trends.yoyNet.length, "mes comparado", "meses comparados")}`}
         />
         <StatCard
           label="Proyección"
@@ -312,6 +318,7 @@ function AnalyticsView() {
         title="Evolución salarial"
         description="Bruto (discontinuo) y neto de las nóminas mensuales"
         height={300}
+        exportTable={() => ({ headers: ["Mes", "Bruto", "Neto"], rows: visibleEvolution.map((e) => [e.label, e.bruto ?? null, e.neto ?? null]) })}
         action={
           <Segmented<Range>
             aria-label="Rango"
@@ -332,7 +339,7 @@ function AnalyticsView() {
         }
       >
         <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={visibleEvolution} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <AreaChart accessibilityLayer data={visibleEvolution} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id="an-neto" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor={chartColors.primary} stopOpacity={0.22} />
@@ -354,6 +361,7 @@ function AnalyticsView() {
           title="Este año frente al anterior"
           description={yoy.length ? "Mismo mes, año actual y año anterior" : "Aparecerá cuando tengas un año de histórico"}
           height={260}
+          exportTable={() => ({ headers: ["Mes", "Año actual", "Año anterior"], rows: yoy.map((d) => [formatMonthLabel(d.month), d.current, d.previous]) })}
           action={
             <Segmented
               aria-label="Métrica"
@@ -376,7 +384,7 @@ function AnalyticsView() {
         >
           {yoy.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={yoy.map((d) => ({ label: formatMonthLabel(d.month).split(" ")[0], actual: d.current, anterior: d.previous }))} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={2}>
+              <BarChart accessibilityLayer data={yoy.map((d) => ({ label: formatMonthLabel(d.month).split(" ")[0], actual: d.current, anterior: d.previous }))} margin={{ top: 8, right: 4, left: 0, bottom: 0 }} barGap={2}>
                 <CartesianGrid {...chartGrid} />
                 <XAxis dataKey="label" {...chartAxis} />
                 <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />
@@ -394,7 +402,8 @@ function AnalyticsView() {
 
         <ChartCard
           title="Proyección"
-          description={analytics.predictions.length ? `Próximos ${analytics.predictions.length} meses por regresión lineal` : "Hace falta más histórico para estimar"}
+          exportTable={() => ({ headers: ["Mes", "Neto", "Neto estimado"], rows: projection.map((p) => [p.label, p.neto ?? null, p.neto == null ? p.netoEst ?? null : null]) })}
+          description={analytics.predictions.length ? `${analytics.predictions.length === 1 ? "Próximo mes" : `Próximos ${analytics.predictions.length} meses`} por regresión lineal` : "Hace falta más histórico para estimar"}
           height={260}
           legend={
             analytics.predictions.length > 0 && (
@@ -415,7 +424,7 @@ function AnalyticsView() {
         >
           {analytics.predictions.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={projection} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <ComposedChart accessibilityLayer data={projection} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid {...chartGrid} />
                 <XAxis dataKey="label" {...chartAxis} />
                 <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} domain={evolutionDomain} />
@@ -439,6 +448,7 @@ function AnalyticsView() {
           title="Evolución por concepto"
           description="Cómo ha cambiado cada línea de tu nómina"
           height={240}
+          exportTable={() => ({ headers: ["Mes", activeConcept], rows: conceptSeries.map((p) => [p.label, p.value]) })}
           action={
             <Select value={activeConcept} onValueChange={(v) => v && setConcept(v)}>
               <SelectTrigger size="sm" className="w-36 sm:w-52" aria-label="Concepto">
@@ -451,7 +461,7 @@ function AnalyticsView() {
           }
         >
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={conceptSeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart accessibilityLayer data={conceptSeries} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="an-concept" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={chartColors.secondary} stopOpacity={0.18} />
@@ -536,6 +546,12 @@ function AnalyticsView() {
           )}
         </SectionCard>
       </div>
+
+      {selectedProfile && years.length > 0 && (
+        <div className="mt-6">
+          <TaxSummaryCard profileId={selectedProfile} years={years} />
+        </div>
+      )}
     </div>
   );
 }

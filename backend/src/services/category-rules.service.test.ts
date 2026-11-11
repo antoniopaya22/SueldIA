@@ -51,3 +51,22 @@ describe("pickHistoryCategory", () => {
     expect(pickHistoryCategory("expense", "", history)).toBeNull();
   });
 });
+
+describe("reglas con condiciones", () => {
+  it("todas las condiciones deben cumplirse y gana la más específica", async () => {
+    const { findRuleFor, ruleMatches } = await import("./category-rules.service.js");
+    const rules = [
+      { match: "amazon", categoryId: 1 },
+      { match: "amazon", categoryId: 2, transactionType: "expense" as const, minAmount: 50 },
+      { match: "seguro", categoryId: 3, matchField: "memo" as const },
+      { match: "bizum", categoryId: 4, accountId: 7 },
+    ];
+    expect(findRuleFor({ payee: "AMAZON EU", type: "expense", amount: 20 }, rules)).toBe(1);
+    expect(findRuleFor({ payee: "AMAZON EU", type: "expense", amount: 80 }, rules)).toBe(2);
+    expect(findRuleFor({ payee: "Mapfre", memo: "Seguro del coche" }, rules)).toBe(3);
+    expect(findRuleFor({ payee: "Bizum Juan", accountId: 8 }, rules)).toBeNull();
+    expect(findRuleFor({ payee: "Bizum Juan", accountId: 7 }, rules)).toBe(4);
+    // Sin el dato, la condición no se cumple (no se aplica a ciegas).
+    expect(ruleMatches(rules[1], { payee: "Amazon" })).toBe(false);
+  });
+});

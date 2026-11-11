@@ -1,7 +1,6 @@
-import { Fragment, useMemo, useRef, type MouseEvent } from "react";
+import { Fragment, useMemo, useRef, type MouseEvent, useState, type KeyboardEvent } from "react";
 import {
-  CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock,
-} from "lucide-react";
+  CheckCircle2, Circle, ChevronDown, Coins, Copy, Merge, Split, ChevronUp, ChevronsUpDown, Pencil, Repeat, Trash2, CalendarClock, FileText, Lock, SkipForward } from "lucide-react";
 import type { Account, Transaction } from "../../../lib/api";
 import { Checkbox } from "@/components/ui/checkbox";
 import { formatCurrency } from "../../../lib/format";
@@ -9,6 +8,7 @@ import { RowActions, type RowAction } from "../RowActions";
 import { darkBoost } from "../../../lib/color";
 import { TYPE_META, formatDateShort, formatDayHeading } from "./shared";
 import { cn } from "cn";
+import { FlagDot } from "./FlagPicker";
 
 export type SortField = "date" | "payee" | "category" | "amount" | "type";
 export type SortDir = "asc" | "desc";
@@ -30,6 +30,8 @@ interface Props {
   /** Dividir un gasto en varias categorías, o volver a unir sus partes. */
   onSplit: (tx: Transaction) => void;
   onUnsplit: (tx: Transaction) => void;
+  /** «Esta vez no»: salta una ocurrencia pendiente de una recurrente. */
+  onSkip?: (tx: Transaction) => void;
   onDelete: (tx: Transaction) => void;
   /** Modo selección: casillas para actuar sobre varios movimientos a la vez. */
   selection?: {
@@ -113,6 +115,8 @@ function useRowActions(props: Props) {
     if (canSchedule) actions.push({ label: "Programar como recurrente", icon: Repeat, onSelect: () => props.onSchedule(tx) });
     if (!tx.recurringTransactionId) {
       actions.push({ label: "Eliminar", icon: Trash2, onSelect: () => props.onDelete(tx), destructive: true, separated: true });
+    } else if (!tx.cleared && props.onSkip) {
+      actions.push({ label: "Saltar esta vez", icon: SkipForward, onSelect: () => props.onSkip!(tx), destructive: true, separated: true });
     }
     return actions;
   };
@@ -136,9 +140,25 @@ function ClearedToggle({ tx, onToggle }: { tx: Transaction; onToggle: () => void
 
 function TxBadges({ tx, today }: { tx: Transaction; today: string }) {
   const isFutureRecurring = !!tx.recurringTransactionId && !!tx.scheduledFor && tx.scheduledFor > today && !tx.cleared;
-  if (!tx.recurringTransactionId && !isFutureRecurring && !tx.splitGroupId) return null;
+  if (!tx.recurringTransactionId && !isFutureRecurring && !tx.splitGroupId && !tx.payslipId && !tx.reconciled) return null;
   return (
     <span className="inline-flex flex-wrap items-center gap-1">
+      {tx.reconciled && (
+        <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground" title="Comprobado contra el extracto del banco: cambiarlo descuadra la conciliación">
+          <Lock className="size-2.5" aria-hidden="true" /> Conciliado
+        </span>
+      )}
+      {tx.payslipId && (
+        // El vínculo nómina ↔ ingreso solo se veía desde la nómina.
+        <a
+          href={`/app/payslips?nomina=${tx.payslipId}`}
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 rounded-md bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+          title="Ingreso vinculado a una nómina: ver la nómina"
+        >
+          <FileText className="size-2.5" aria-hidden="true" /> Nómina
+        </a>
+      )}
       {tx.splitGroupId && (
         <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground" title="Parte de un gasto dividido en varias categorías">
           <Split className="size-2.5" aria-hidden="true" /> Dividido
@@ -186,7 +206,34 @@ export function TransactionTable(props: Props) {
   const allSelected = !!selection && transactions.length > 0 && transactions.every((t) => selection.ids.has(t.id));
   const actionsFor = useRowActions(props);
   const rowActivate = useDoubleActivate(props.onEdit);
+  // Teclado (escritorio): una sola parada de Tab para toda la tabla y, desde
+  // una fila, ↑↓ o J/K para moverse, Intro o E para editar y C para liquidar.
+  const [activeRowId, setActiveRowId] = useState<number | null>(null);
+  const focusableRowId = transactions.some((t) => t.id === activeRowId) ? activeRowId : transactions[0]?.id;
+  const rowKeys = (tx: Transaction) => ({
+    tabIndex: tx.id === focusableRowId ? 0 : -1,
+    "data-row-id": tx.id,
+    onFocus: () => setActiveRowId(tx.id),
+    onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => {
+      if (e.target !== e.currentTarget || e.metaKey || e.ctrlKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "arrowdown" || key === "j" || key === "arrowup" || key === "k") {
+        e.preventDefault();
+        const rows = [...(e.currentTarget.closest("table")?.querySelectorAll<HTMLElement>("tr[data-row-id]") ?? [])];
+        const i = rows.indexOf(e.currentTarget);
+        rows[key === "arrowdown" || key === "j" ? Math.min(rows.length - 1, i + 1) : Math.max(0, i - 1)]?.focus();
+      } else if ((key === "enter" || key === "e") && canEditTx(tx)) {
+        e.preventDefault();
+        props.onEdit(tx);
+      } else if (key === "c") {
+        e.preventDefault();
+        props.onToggleCleared(tx);
+      }
+    },
+  });
   const grouped = sortBy === "date";
+  // Lectores de pantalla: qué columna ordena la tabla y en qué sentido.
+  const ariaSort = (field: SortField) => (sortBy === field ? (sortDir === "asc" ? "ascending" : "descending") : undefined);
 
   const groups = useMemo(() => {
     if (!grouped) return [{ key: "all", date: null as string | null, items: transactions }];
@@ -219,18 +266,18 @@ export function TransactionTable(props: Props) {
               )}
               <th className={cn("w-12 py-2.5", selection ? "pl-1" : "pl-4")}><span className="sr-only">Estado</span></th>
               {!grouped && (
-                <th className="py-2.5 pr-4 font-medium whitespace-nowrap">
+                <th aria-sort={ariaSort("date")} className="py-2.5 pr-4 font-medium whitespace-nowrap">
                   <SortHeader field="date" label="Fecha" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
                 </th>
               )}
-              <th className="py-2.5 pr-4 font-medium">
+              <th aria-sort={ariaSort("payee")} className="py-2.5 pr-4 font-medium">
                 <SortHeader field="payee" label="Movimiento" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               </th>
-              <th className="py-2.5 pr-4 font-medium">
+              <th aria-sort={ariaSort("category")} className="py-2.5 pr-4 font-medium">
                 <SortHeader field="category" label="Categoría" sortBy={sortBy} sortDir={sortDir} onSort={onSort} />
               </th>
               {showAccount && <th className="py-2.5 pr-4 font-medium">Cuenta</th>}
-              <th className="py-2.5 pr-2 text-right font-medium">
+              <th aria-sort={ariaSort("amount")} className="py-2.5 pr-2 text-right font-medium">
                 <SortHeader field="amount" label="Importe" sortBy={sortBy} sortDir={sortDir} onSort={onSort} align="right" />
               </th>
               <th className="w-12 py-2.5 pr-3"><span className="sr-only">Acciones</span></th>
@@ -258,8 +305,12 @@ export function TransactionTable(props: Props) {
                     <tr
                       key={tx.id}
                       {...rowActivate(tx)}
-                      title={canEditTx(tx) ? "Doble clic para editar" : undefined}
-                      className={cn("group/row border-b border-border last:border-0 transition-colors hover:bg-muted/40", selection?.ids.has(tx.id) && "bg-primary/5 hover:bg-primary/10")}
+                      {...rowKeys(tx)}
+                      title={canEditTx(tx) ? "Doble clic o Intro para editar" : undefined}
+                      className={cn(
+                        "group/row border-b border-border outline-none last:border-0 transition-colors hover:bg-muted/40 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+                        selection?.ids.has(tx.id) && "bg-primary/5 hover:bg-primary/10",
+                      )}
                     >
                       {selection && (
                         <td className="py-2 pl-4 align-middle">
@@ -282,8 +333,9 @@ export function TransactionTable(props: Props) {
                             <meta.icon className="size-4" aria-hidden="true" />
                           </div>
                           <div className="min-w-0">
-                            <p className="truncate font-medium text-foreground">
-                              {tx.payee || (tx.type === "transfer" ? "Transferencia" : "Sin beneficiario")}
+                            <p className="flex min-w-0 items-center gap-1.5 font-medium text-foreground">
+                              <FlagDot flag={tx.flag} />
+                              <span className="truncate">{tx.payee || (tx.type === "transfer" ? "Traspaso" : "Sin beneficiario")}</span>
                             </p>
                             {(tx.memo || tx.recurringTransactionId || tx.splitGroupId) && (
                               <div className="mt-0.5 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
@@ -364,8 +416,9 @@ export function TransactionTable(props: Props) {
                       <meta.icon className="size-4" aria-hidden="true" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-foreground">
-                        {tx.payee || (tx.type === "transfer" ? "Transferencia" : "Sin beneficiario")}
+                      <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-foreground">
+                        <FlagDot flag={tx.flag} />
+                        <span className="truncate">{tx.payee || (tx.type === "transfer" ? "Traspaso" : "Sin beneficiario")}</span>
                       </p>
                       <p className="truncate text-xs text-muted-foreground">
                         {!grouped && `${formatDateShort(tx.date)} · `}

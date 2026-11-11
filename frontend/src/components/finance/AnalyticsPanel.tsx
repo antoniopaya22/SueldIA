@@ -1,11 +1,10 @@
 import { Fragment, useRef, useState, type ReactNode, type RefObject } from "react";
-import { Download, FileSpreadsheet, ImageDown, Maximize2 } from "lucide-react";
-import { toast } from "sonner";
+import { ChartColumn, Maximize2, Table2 } from "lucide-react";
 import { SectionCard } from "../app";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { downloadBlob, downloadCsv, fileSlug, findChartSvg, svgToPng, type ExportTable } from "../../lib/export-utils";
+import type { ExportTable } from "../../lib/export-utils";
+import { ChartExportMenu } from "../app/ChartExportMenu";
 import { formatCompact, formatCurrency } from "../../lib/format";
 import { ChartEmpty, tint } from "./finance-ui";
 import { cn } from "cn";
@@ -24,63 +23,70 @@ export interface PanelConfig {
 const CONTROLS_CLASS =
   "flex flex-wrap items-center gap-2 [&_[role=radiogroup]]:max-w-full [&_[role=radiogroup]]:overflow-x-auto [&_[role=radio]]:shrink-0 [&_[role=radio]]:whitespace-nowrap";
 
-/**
- * Menú de descarga de un panel: imagen PNG (si tiene un gráfico de Recharts) y
- * datos CSV (si el panel los expone). `rootRef` apunta al contenido ya pintado.
- */
+/** Menú de descarga de un panel (PNG del gráfico y CSV de sus datos). */
 function PanelExportMenu({ panel, rootRef, note }: { panel: PanelConfig; rootRef: RefObject<HTMLDivElement | null>; note?: string }) {
-  const [canImage, setCanImage] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const hasCsv = Boolean(panel.exportTable);
+  return <ChartExportMenu title={panel.title} rootRef={rootRef} exportTable={panel.exportTable} note={note} />;
+}
 
-  const downloadImage = async () => {
-    const svg = findChartSvg(rootRef.current);
-    if (!svg) {
-      toast.error("Este panel no tiene un gráfico que descargar como imagen");
-      return;
-    }
-    setBusy(true);
-    try {
-      const blob = await svgToPng(svg, { title: panel.title, subtitle: note });
-      downloadBlob(blob, `${fileSlug(panel.title)}.png`);
-    } catch {
-      toast.error("No se pudo generar la imagen");
-    } finally {
-      setBusy(false);
-    }
-  };
+/** Cifra con miles agrupados; con dos decimales si la columna los tiene (importes), sin ellos si no (recuentos). */
+// es-ES no agrupa miles en cifras de 4 dígitos por defecto ("2150"): como en formatCurrency.
+const numberFmt = (digits: number) =>
+  new Intl.NumberFormat("es-ES", { minimumFractionDigits: digits, maximumFractionDigits: digits, useGrouping: "always" } as unknown as Intl.NumberFormatOptions);
+const DECIMAL_FMT = numberFmt(2);
+const INTEGER_FMT = numberFmt(0);
+const cellText = (v: string | number | null, decimals: boolean) =>
+  v === null || v === undefined ? "—" : typeof v === "number" ? (decimals ? DECIMAL_FMT : INTEGER_FMT).format(v) : v;
 
-  const downloadData = () => {
-    const table = panel.exportTable?.();
-    if (!table || table.rows.length === 0) {
-      toast.error("No hay datos que descargar con esta configuración");
-      return;
-    }
-    downloadCsv(table, `${fileSlug(panel.title)}.csv`);
-  };
-
+/**
+ * Los datos del panel como tabla: la alternativa al gráfico para lectores de
+ * pantalla, y para quien prefiere leer cifras exactas.
+ */
+function PanelDataTable({ panel }: { panel: PanelConfig }) {
+  const table = panel.exportTable?.();
+  if (!table || table.rows.length === 0) return <ChartEmpty message="No hay datos con esta configuración." height={160} />;
+  const decimals = table.headers.map((_, i) => table.rows.some((row) => typeof row[i] === "number" && !Number.isInteger(row[i])));
   return (
-    <DropdownMenu onOpenChange={(open) => { if (open) setCanImage(findChartSvg(rootRef.current) !== null); }}>
-      <DropdownMenuTrigger
-        render={<Button variant="ghost" size="icon-sm" disabled={busy} aria-label={`Descargar «${panel.title}»`} title="Descargar" />}
-      >
-        <Download className="size-4 text-muted-foreground" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52">
-        <DropdownMenuItem disabled={!canImage} onClick={downloadImage}>
-          <ImageDown aria-hidden="true" /> Imagen (PNG)
-        </DropdownMenuItem>
-        <DropdownMenuItem disabled={!hasCsv} onClick={downloadData}>
-          <FileSpreadsheet aria-hidden="true" /> Datos (CSV)
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <div className="max-h-[480px] overflow-auto rounded-lg border border-border">
+      <table className="w-full text-sm">
+        <caption className="sr-only">{panel.title}</caption>
+        <thead className="sticky top-0 bg-muted/80 backdrop-blur">
+          <tr>
+            {table.headers.map((h, i) => (
+              <th key={h} scope="col" className={cn("px-3 py-2 text-xs font-medium text-muted-foreground", i === 0 ? "text-left" : "text-right")}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {table.rows.map((row, r) => (
+            <tr key={r}>
+              {row.map((v, i) =>
+                i === 0
+                  ? <th key={i} scope="row" className="px-3 py-1.5 text-left font-normal text-foreground">{cellText(v, decimals[i])}</th>
+                  : <td key={i} className="px-3 py-1.5 text-right tabular-nums">{cellText(v, decimals[i])}</td>,
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Alterna entre el gráfico y sus datos en tabla (solo si el panel expone sus datos). */
+function TableToggle({ panel, asTable, onToggle }: { panel: PanelConfig; asTable: boolean; onToggle: () => void }) {
+  if (!panel.exportTable) return null;
+  const label = asTable ? `Ver «${panel.title}» como gráfico` : `Ver «${panel.title}» como tabla`;
+  return (
+    <Button variant="ghost" size="icon-sm" onClick={onToggle} aria-pressed={asTable} aria-label={label} title={asTable ? "Ver como gráfico" : "Ver como tabla"}>
+      {asTable ? <ChartColumn className="size-4 text-muted-foreground" /> : <Table2 className="size-4 text-muted-foreground" />}
+    </Button>
   );
 }
 
 /** Card de la analítica: cabecera, fila de controles, descarga y botón para ampliar. */
 export function AnalyticsPanel({ panel, onExpand, className, exportNote }: { panel: PanelConfig; onExpand: () => void; className?: string; exportNote?: string }) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [asTable, setAsTable] = useState(false);
   return (
     <SectionCard
       className={className}
@@ -88,6 +94,7 @@ export function AnalyticsPanel({ panel, onExpand, className, exportNote }: { pan
       description={panel.description}
       action={
         <div className="flex items-center">
+          <TableToggle panel={panel} asTable={asTable} onToggle={() => setAsTable((v) => !v)} />
           <PanelExportMenu panel={panel} rootRef={bodyRef} note={exportNote} />
           <Button variant="ghost" size="icon-sm" onClick={onExpand} aria-label={`Ampliar «${panel.title}»`} title="Ampliar">
             <Maximize2 className="size-4 text-muted-foreground" />
@@ -96,7 +103,7 @@ export function AnalyticsPanel({ panel, onExpand, className, exportNote }: { pan
       }
     >
       {panel.controls && <div className={cn("mb-5", CONTROLS_CLASS)}>{panel.controls}</div>}
-      <div ref={bodyRef}>{panel.render(false)}</div>
+      <div ref={bodyRef}>{asTable ? <PanelDataTable panel={panel} /> : panel.render(false)}</div>
     </SectionCard>
   );
 }
@@ -104,6 +111,7 @@ export function AnalyticsPanel({ panel, onExpand, className, exportNote }: { pan
 /** Vista ampliada de un panel, con los mismos controles. */
 export function ExpandedPanelDialog({ panel, onClose, exportNote }: { panel: PanelConfig | null; onClose: () => void; exportNote?: string }) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [asTable, setAsTable] = useState(false);
   return (
     <Dialog open={panel !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-6xl">
@@ -114,10 +122,13 @@ export function ExpandedPanelDialog({ panel, onClose, exportNote }: { panel: Pan
               <DialogDescription className="mt-1">{panel.description}</DialogDescription>
               <div className={cn("mt-4", CONTROLS_CLASS)}>
                 {panel.controls}
-                <span className="ml-auto"><PanelExportMenu panel={panel} rootRef={bodyRef} note={exportNote} /></span>
+                <span className="ml-auto flex items-center">
+                  <TableToggle panel={panel} asTable={asTable} onToggle={() => setAsTable((v) => !v)} />
+                  <PanelExportMenu panel={panel} rootRef={bodyRef} note={exportNote} />
+                </span>
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-auto px-6 py-5"><div ref={bodyRef}>{panel.render(true)}</div></div>
+            <div className="min-h-0 flex-1 overflow-auto px-6 py-5"><div ref={bodyRef}>{asTable ? <PanelDataTable panel={panel} /> : panel.render(true)}</div></div>
           </>
         )}
       </DialogContent>

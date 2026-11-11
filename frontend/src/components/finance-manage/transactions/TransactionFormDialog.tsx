@@ -31,7 +31,7 @@ function rememberAccount(id: number) {
 export function emptyTxForm(today: string, accountId: number | null, type: TxType = "expense"): TxForm {
   return {
     type, accountId: accountId ?? "", targetAccountId: "", categoryId: "", amount: "", date: today,
-    payee: "", memo: "", cleared: true,
+    payee: "", memo: "", cleared: true, flag: "",
   };
 }
 
@@ -46,6 +46,7 @@ function formFromTransaction(tx: Transaction): TxForm {
     payee: tx.payee ?? "",
     memo: tx.memo ?? "",
     cleared: tx.cleared,
+    flag: tx.flag?.toLowerCase() ?? "",
   };
 }
 
@@ -115,11 +116,11 @@ export function TransactionFormDialog({ open, onClose, editing, initial, default
       if (addAnotherRef.current) {
         // Conserva tipo, cuenta y fecha (lo habitual al apuntar varios tickets seguidos).
         setForm((f) => ({ ...f, amount: "", payee: "", memo: "", categoryId: "" }));
-        toast.success("Transacción creada. Añade la siguiente.");
+        toast.success("Movimiento guardado. Añade el siguiente.");
         setTimeout(() => document.getElementById("tx-amount")?.focus(), 0);
       } else {
         onClose();
-        toast.success("Transacción creada");
+        toast.success("Movimiento guardado");
       }
     },
     onError: (e: Error) => toast.error(e.message),
@@ -130,7 +131,7 @@ export function TransactionFormDialog({ open, onClose, editing, initial, default
     onSuccess: () => {
       invalidateFinance(queryClient);
       onClose();
-      toast.success("Transacción actualizada");
+      toast.success("Movimiento actualizado");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -162,6 +163,7 @@ export function TransactionFormDialog({ open, onClose, editing, initial, default
       payee: form.payee || null,
       memo: form.memo || null,
       cleared: form.cleared,
+      flag: form.flag || null,
       categoryId: form.type === "transfer" ? null : form.categoryId ? Number(form.categoryId) : null,
       targetAccountId: form.type === "transfer" && form.targetAccountId ? Number(form.targetAccountId) : undefined,
     };

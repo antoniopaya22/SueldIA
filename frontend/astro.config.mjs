@@ -9,6 +9,14 @@ export default defineConfig({
   // sitemap.
   site: "https://sueldia.vercel.app",
   integrations: [react()],
+  // Cada página de /app es una carga completa: precargar el HTML al pasar el
+  // ratón por un enlace (o al tocarlo en móvil) adelanta la navegación sin
+  // cambiar la arquitectura de islas.
+  prefetch: { prefetchAll: true, defaultStrategy: "hover" },
+  // Astro 7 compacta el HTML «estilo JSX» por defecto y se come los espacios
+  // entre elementos en línea («<strong>a</strong> <em>b</em>» → «ab»). Así se
+  // conserva el comportamiento de antes.
+  compressHTML: true,
   server: { port: 4321 },
   vite: {
     plugins: [tailwindcss()],

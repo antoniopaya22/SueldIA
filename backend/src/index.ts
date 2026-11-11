@@ -1,3 +1,4 @@
+import "./zod-es.js";
 import express from "express";
 import helmet from "helmet";
 import pinoHttp from "pino-http";
@@ -27,6 +28,13 @@ import { importRouter } from "./routes/import.js";
 import { financeRouter } from "./routes/finance.js";
 import { budgetsRouter } from "./routes/budgets.js";
 import { cronRouter } from "./routes/cron.js";
+import { clientErrorsRouter } from "./routes/client-errors.js";
+import { pushRouter } from "./routes/push.js";
+import { savingsGoalsRouter } from "./routes/savings-goals.js";
+import { demoRouter } from "./routes/demo.js";
+import { activityRouter } from "./routes/activity.js";
+import { sharingRouter } from "./routes/sharing.js";
+import { activityMiddleware } from "./services/activity.service.js";
 import { db, client } from "./db/index.js";
 
 const app = express();
@@ -67,12 +75,18 @@ const globalLimiter = rateLimit({
 });
 app.use("/api", globalLimiter);
 
-const authLimiter = rateLimit({
+// El login lo hace Supabase, no esta API: /api/auth solo tiene GET/PUT/DELETE
+// /me. El límite estricto se aplica a las escrituras (cambiar nombre, borrar
+// la cuenta); GET /me se pide en cada carga de página y con el límite de 20
+// cada 15 min un uso normal acababa en 429 (sin nombre en la interfaz y el
+// login atascado tras volver de Google).
+const authWriteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: "Demasiados intentos de login, intenta más tarde" },
+  skip: (req) => req.method === "GET",
+  message: { error: "Demasiadas peticiones, intenta más tarde" },
 });
 
 // ─── Public routes ──────────────────────────────────────────────
@@ -85,7 +99,10 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-app.use("/api/auth", authLimiter, authRouter);
+// Registro de actividad: apunta lo que cambia cuando la petición termina bien.
+app.use("/api", activityMiddleware);
+
+app.use("/api/auth", authWriteLimiter, authRouter);
 // Sin authMiddleware: la invoca Vercel Cron (sin JWT de usuario), protegida
 // por su propio CRON_SECRET — ver routes/cron.ts.
 app.use("/api/cron", cronRouter);
@@ -108,12 +125,18 @@ app.use("/api/export", authMiddleware, exportRouter);
 app.use("/api/alerts", authMiddleware, alertsRouter);
 app.use("/api/notes", authMiddleware, notesRouter);
 app.use("/api/tags", authMiddleware, tagsRouter);
+app.use("/api/push", authMiddleware, pushRouter);
+app.use("/api/savings-goals", authMiddleware, savingsGoalsRouter);
+app.use("/api/demo", authMiddleware, demoRouter);
+app.use("/api/activity", authMiddleware, activityRouter);
+app.use("/api/sharing", authMiddleware, sharingRouter);
+app.use("/api/client-errors", authMiddleware, clientErrorsRouter);
 
 // ─── Error handler (must be last) ──────────────────────────────
 app.use(errorHandler);
 
-// En Vercel la app se importa como función (ver api/index.ts) — solo escucha
-// un puerto en desarrollo local.
+// En Vercel el servicio "backend" importa `app` directamente (vercel.json) —
+// solo se abre un puerto en desarrollo local.
 if (!process.env.VERCEL) {
   app.listen(env.PORT, () => {
     logger.info(`🚀 Backend running on http://localhost:${env.PORT}`);
@@ -128,8 +151,13 @@ if (!process.env.VERCEL) {
   process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
+// Tras una excepción no capturada el proceso queda en un estado indefinido:
+// se registra y se termina (Vercel levanta otra instancia; en local, tsx watch
+// o quien lo arranque). Antes se ignoraba y la instancia seguía atendiendo.
 process.on("uncaughtException", (err) => {
-  logger.error({ err }, "Uncaught exception (non-fatal)");
+  logger.fatal({ err }, "Uncaught exception — cerrando el proceso");
+  process.exitCode = 1;
+  setTimeout(() => process.exit(1), 100).unref();
 });
 
 process.on("unhandledRejection", (reason) => {

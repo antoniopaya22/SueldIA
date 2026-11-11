@@ -24,7 +24,7 @@ export function WaterfallChart({ income, groups, limit, expanded }: Props) {
   return (
     <div className={expanded ? "h-96" : "h-72"}>
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={steps} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+        <BarChart accessibilityLayer data={steps} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
           <CartesianGrid {...chartGrid} />
           <XAxis dataKey="name" {...chartAxis} interval={0} tickFormatter={(v: string) => shortenLabel(v, expanded ? 16 : 9)} />
           <YAxis {...chartAxis} tickFormatter={formatCompact} width={52} />

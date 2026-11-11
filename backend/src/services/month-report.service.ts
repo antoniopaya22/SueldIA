@@ -6,6 +6,7 @@ import { normalizeText } from "../utils/text.js";
 import { shiftMonthKey } from "./budgets.service.js";
 import { getTodayIsoDate } from "./recurring-transactions.service.js";
 import { effectiveTransaction } from "./transaction-filters.js";
+import { lastDayOfMonth } from "../utils/dates.js";
 
 /* ───────── Informe del mes ──────────────────────────────────────
  * Compara un mes con la media de los 6 anteriores y señala lo que se sale de
@@ -231,7 +232,7 @@ export function buildMonthReport(rows: ReportRow[], month: string, today: string
 /** Carga los movimientos liquidados del mes y los 6 anteriores y construye el informe. */
 export async function getMonthReport(userId: number, month: string): Promise<MonthReport> {
   const from = `${shiftMonthKey(month, -6)}-01`;
-  const to = `${month}-31`;
+  const to = lastDayOfMonth(month);
   const rows = await db
     .select({
       id: transactions.id,

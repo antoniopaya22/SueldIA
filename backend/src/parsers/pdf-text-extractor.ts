@@ -1,16 +1,14 @@
 import { readFileSync } from "fs";
-import { createRequire } from "module";
+import * as pdfjs from "pdfjs-dist/legacy/build/pdf.mjs";
+// @ts-expect-error — el worker no trae tipos; solo se registra.
+import * as pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.mjs";
 
-// pdfjs-dist v3 legacy build is CJS
-const require = createRequire(import.meta.url);
-const pdfjs = require("pdfjs-dist/legacy/build/pdf.js") as typeof import("pdfjs-dist");
-
-// pdfjs-dist carga su "fake worker" en Node con un require oculto tras
-// eval() (para esquivar bundlers) — el analizador de dependencias de Vercel
-// no lo detecta y `pdf.worker.js` se queda fuera del paquete desplegado
-// ("Cannot find module './pdf.worker.js'" en producción). Fijar workerSrc
-// con un require.resolve() normal hace que sí se detecte y se incluya.
-pdfjs.GlobalWorkerOptions.workerSrc = require.resolve("pdfjs-dist/legacy/build/pdf.worker.js");
+// En Node, pdfjs usa un «worker falso» en el mismo hilo. Si no lo encuentra en
+// globalThis.pdfjsWorker, lo carga con un import() dinámico de una ruta que el
+// analizador de dependencias de Vercel no ve, y en producción falla
+// («Cannot find module pdf.worker.mjs»). Importarlo aquí de forma estática
+// garantiza que se incluye en el despliegue.
+(globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = pdfjsWorker;
 
 const BOX_DRAWING_CHARS = /[│├┤┌┐└┘┬┴┼─═║╔╗╚╝╠╣╦╩╬]/g;
 const ROW_Y_TOLERANCE = 2; // pt
@@ -86,21 +84,27 @@ export async function extractTextFromPdfBuffer(data: Uint8Array): Promise<string
   // técnicamente un Uint8Array ("Please provide binary data as Uint8Array,
   // rather than Buffer") — Buffer.isBuffer detecta ese caso concreto.
   const safeData = Buffer.isBuffer(data) ? new Uint8Array(data) : data;
-  const doc = await pdfjs.getDocument({ data: safeData, useSystemFonts: true } as never).promise;
-  const allLines: string[] = [];
-  const pageCount = Math.min(doc.numPages, MAX_PAGES);
+  // (isEvalSupported, la mitigación de CVE-2024-4367 en pdfjs ≤ 4.1, ya no
+  // existe en la v6: el fallo está corregido en la propia librería.)
+  const loadingTask = pdfjs.getDocument({ data: safeData, useSystemFonts: true });
+  try {
+    const doc = await loadingTask.promise;
+    const allLines: string[] = [];
+    const pageCount = Math.min(doc.numPages, MAX_PAGES);
 
-  for (let i = 1; i <= pageCount; i++) {
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    const items: PositionedItem[] = content.items.map((item) => {
-      const textItem = item as { str: string; transform: number[] };
-      return { str: textItem.str, x: textItem.transform[4], y: Math.round(textItem.transform[5]) };
-    });
-    allLines.push(...reconstructPageText(items));
-    page.cleanup();
+    for (let i = 1; i <= pageCount; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      const items: PositionedItem[] = content.items.map((item) => {
+        const textItem = item as { str: string; transform: number[] };
+        return { str: textItem.str, x: textItem.transform[4], y: Math.round(textItem.transform[5]) };
+      });
+      allLines.push(...reconstructPageText(items));
+      page.cleanup();
+    }
+    return allLines.join("\n");
+  } finally {
+    // En pdfjs 6 se libera desde la tarea de carga (también si la lectura falla).
+    await loadingTask.destroy();
   }
-
-  await doc.destroy();
-  return allLines.join("\n");
 }

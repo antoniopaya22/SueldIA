@@ -1,12 +1,14 @@
 import { Router } from "express";
+import { flagSchema, normalizeFlag } from "../utils/flags.js";
 import { db } from "../db/index.js";
 import {
   transactions,
   accounts,
   categories,
   categoryGroups,
+  recurringTransactions,
 } from "../db/schema.js";
-import { eq, and, sql, desc, asc, gte, lte, ilike, inArray, isNull } from "drizzle-orm";
+import { eq, and, sql, desc, asc, isNull, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { validateIdParam } from "../middleware/params.js";
 import { defaultCleared } from "../services/transaction-filters.js";
@@ -18,6 +20,8 @@ import {
   amountRangeValid, amountRangeIssue, buildBaseConditions, buildConditions, transactionFilterFields,
 } from "../services/transaction-query.js";
 import { getTodayIsoDate } from "../services/recurring-transactions.service.js";
+import { isoDateSchema } from "../utils/dates.js";
+import { positiveMoneySchema } from "../utils/validation.js";
 
 export const transactionsRouter = Router();
 transactionsRouter.param("id", validateIdParam);
@@ -26,12 +30,12 @@ const transactionSchema = z.object({
   accountId: z.number().int().positive("Cuenta requerida"),
   categoryId: z.number().int().positive().nullish(),
   type: z.enum(["expense", "income", "transfer"]),
-  amount: z.number().positive("Importe debe ser positivo"),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato YYYY-MM-DD"),
+  amount: positiveMoneySchema("Importe debe ser positivo"),
+  date: isoDateSchema,
   payee: z.string().max(200).nullish(),
   memo: z.string().max(500).nullish(),
   cleared: z.boolean().optional(),
-  flag: z.string().max(100).nullish(),
+  flag: flagSchema,
   // For transfers: destination account
   targetAccountId: z.number().int().positive().optional(),
 });
@@ -42,7 +46,8 @@ const filtersSchema = z
     sortBy: z.enum(["date", "payee", "category", "amount", "type"]).default("date"),
     sortDir: z.enum(["asc", "desc"]).default("desc"),
     page: z.coerce.number().int().positive().default(1),
-    limit: z.coerce.number().int().min(1).max(10000).default(50),
+    // El frontend pide 50 por página; cada fila lleva subconsultas.
+    limit: z.coerce.number().int().min(1).max(200).default(50),
   })
   .refine(amountRangeValid, amountRangeIssue);
 
@@ -231,7 +236,7 @@ const splitSchema = z.object({
     .array(
       z.object({
         categoryId: z.number().int().positive().nullable(),
-        amount: z.number().positive("Cada parte debe ser mayor que cero"),
+        amount: positiveMoneySchema("Cada parte debe ser mayor que cero"),
         memo: z.string().max(500).nullish(),
       }),
     )
@@ -275,6 +280,63 @@ const payeeSuggestionsSchema = z.object({
 
 // Beneficiarios ya usados, con categoría/cuenta/importe de su último movimiento
 // (autocompletado del formulario). Antes de /:id: si no, "payees" se leería como id.
+// Beneficiarios del usuario con cuántos movimientos y cuánto suman (para
+// renombrar o fusionar variantes: "MERCADONA 1234" y "Mercadona").
+transactionsRouter.get("/payees/summary", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const rows = await db
+      .select({
+        payee: transactions.payee,
+        count: sql<number>`count(*)::int`,
+        expense: sql<number>`coalesce(sum(${transactions.amount}) filter (where ${transactions.type} = 'expense'), 0)`,
+        income: sql<number>`coalesce(sum(${transactions.amount}) filter (where ${transactions.type} = 'income'), 0)`,
+        lastDate: sql<string>`max(${transactions.date})`,
+      })
+      .from(transactions)
+      .where(and(eq(transactions.userId, userId), sql`${transactions.type} != 'transfer'`, sql`${transactions.payee} is not null and ${transactions.payee} <> ''`))
+      .groupBy(transactions.payee)
+      .orderBy(sql`count(*) desc`)
+      .limit(1000);
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const renamePayeesSchema = z.object({
+  from: z.array(z.string().min(1).max(200)).min(1).max(100),
+  to: z.string().trim().min(1, "Escribe el nombre").max(200),
+});
+
+// Renombrar uno o varios beneficiarios a uno solo (fusionar variantes), en
+// movimientos y en programaciones recurrentes.
+transactionsRouter.post("/payees/rename", async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    const parsed = renamePayeesSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Datos inválidos", details: parsed.error.flatten().fieldErrors });
+    }
+    const { from, to } = parsed.data;
+    const updated = await db.transaction(async (tx) => {
+      const rows = await tx
+        .update(transactions)
+        .set({ payee: to })
+        .where(and(eq(transactions.userId, userId), inArray(transactions.payee, from)))
+        .returning({ id: transactions.id });
+      await tx
+        .update(recurringTransactions)
+        .set({ payee: to })
+        .where(and(eq(recurringTransactions.userId, userId), inArray(recurringTransactions.payee, from)));
+      return rows.length;
+    });
+    res.json({ ok: true, updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
 transactionsRouter.get("/payees", async (req, res, next) => {
   try {
     const { userId } = req.user!;
@@ -328,7 +390,7 @@ transactionsRouter.post("/", async (req, res, next) => {
 
     // Sin categoría, una regla automática del usuario puede ponerla según el beneficiario.
     if (txData.type !== "transfer" && txData.categoryId == null) {
-      const ruleCategoryId = await ruleCategoryFor(userId, txData.payee);
+      const ruleCategoryId = await ruleCategoryFor(userId, { payee: txData.payee, memo: txData.memo, type: txData.type, amount: txData.amount, accountId: txData.accountId });
       if (ruleCategoryId !== null) txData.categoryId = ruleCategoryId;
     }
 
@@ -364,7 +426,7 @@ transactionsRouter.post("/", async (req, res, next) => {
             categoryId: null,
             payee: normalizeOptionalText(txData.payee),
             memo: normalizeOptionalText(txData.memo),
-            flag: normalizeOptionalText(txData.flag),
+            flag: normalizeFlag(txData.flag),
             cleared,
           })
           .returning();
@@ -380,7 +442,7 @@ transactionsRouter.post("/", async (req, res, next) => {
             payee: `Transfer : ${account.name}`,
             memo: normalizeOptionalText(txData.memo),
             cleared,
-            flag: normalizeOptionalText(txData.flag),
+            flag: normalizeFlag(txData.flag),
             userId,
             transferId: outflow.id,
           })
@@ -399,7 +461,7 @@ transactionsRouter.post("/", async (req, res, next) => {
         categoryId: null,
         payee: normalizeOptionalText(txData.payee),
         memo: normalizeOptionalText(txData.memo),
-        flag: normalizeOptionalText(txData.flag),
+        flag: normalizeFlag(txData.flag),
         transferId: inflow.id,
         targetAccountId,
         targetAccountName: target.name,
@@ -414,7 +476,7 @@ transactionsRouter.post("/", async (req, res, next) => {
           categoryId: txData.categoryId ?? null,
           payee: normalizeOptionalText(txData.payee),
           memo: normalizeOptionalText(txData.memo),
-          flag: normalizeOptionalText(txData.flag),
+          flag: normalizeFlag(txData.flag),
           cleared,
         })
         .returning();
@@ -504,7 +566,7 @@ transactionsRouter.put("/:id", async (req, res, next) => {
           : sourceTx.memo,
         cleared: parsed.data.cleared ?? sourceTx.cleared,
         flag: Object.prototype.hasOwnProperty.call(parsed.data, "flag")
-          ? normalizeOptionalText(parsed.data.flag)
+          ? normalizeFlag(parsed.data.flag)
           : sourceTx.flag,
       };
 
@@ -624,7 +686,7 @@ transactionsRouter.put("/:id", async (req, res, next) => {
             : existing.memo,
           cleared: parsed.data.cleared ?? existing.cleared,
           flag: Object.prototype.hasOwnProperty.call(parsed.data, "flag")
-            ? normalizeOptionalText(parsed.data.flag)
+            ? normalizeFlag(parsed.data.flag)
             : existing.flag,
           transferId: null,
         })
@@ -721,110 +783,21 @@ transactionsRouter.patch("/:id/clear", async (req, res, next) => {
       .where(and(eq(transactions.id, id), eq(transactions.userId, userId)));
     if (!existing) return res.status(404).json({ error: "Transacción no encontrada" });
 
-    // Todas las partes de un gasto dividido se liquidan a la vez.
+    // `{ cleared }` explícito hace la petición idempotente (un reintento de
+    // red no deshace el cambio); sin cuerpo, se alterna como antes.
+    const body = z.object({ cleared: z.boolean().optional() }).safeParse(req.body ?? {});
+    const cleared = body.success && body.data.cleared !== undefined ? body.data.cleared : !existing.cleared;
+
+    // Misma lógica que la acción en lote: arrastra la otra pata de un traspaso
+    // y todas las partes de un gasto dividido. Antes solo cambiaba la fila
+    // pedida y un traspaso quedaba liquidado en una cuenta y pendiente en la
+    // otra — el dinero salía de una sin entrar en la otra.
+    await applyBatch(userId, { action: "set-cleared", ids: [id], cleared });
     const [updated] = await db
-      .update(transactions)
-      .set({ cleared: !existing.cleared })
-      .where(
-        existing.splitGroupId
-          ? and(eq(transactions.userId, userId), eq(transactions.splitGroupId, existing.splitGroupId))
-          : eq(transactions.id, id),
-      )
-      .returning();
-    res.json(existing.splitGroupId ? (await db.select().from(transactions).where(eq(transactions.id, id)))[0] : updated);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Bulk create (for import)
-transactionsRouter.post("/bulk", async (req, res, next) => {
-  try {
-    const { userId } = req.user!;
-    const bulkSchema = z.array(
-      z.object({
-        accountId: z.number().int().positive(),
-        categoryId: z.number().int().positive().nullish(),
-        type: z.enum(["expense", "income", "transfer"]),
-        amount: z.number().nonnegative(),
-        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        payee: z.string().max(200).nullish(),
-        memo: z.string().max(500).nullish(),
-        cleared: z.boolean().optional(),
-        flag: z.string().max(100).nullish(),
-        transferId: z.number().int().nullish(),
-        importedFrom: z.string().max(50).nullish(),
-      }),
-    );
-
-    const parsed = bulkSchema.safeParse(req.body);
-    if (!parsed.success) {
-      return res.status(400).json({
-        error: "Datos de importación inválidos",
-        details: parsed.error.flatten().fieldErrors,
-      });
-    }
-
-    // Pre-load valid account and category IDs for ownership validation
-    const userAccounts = await db
-      .select({ id: accounts.id })
-      .from(accounts)
-      .where(eq(accounts.userId, userId));
-    const validAccountIds = new Set(userAccounts.map((a) => a.id));
-
-    const userCategories = await db
-      .select({ id: categories.id })
-      .from(categories)
-      .innerJoin(categoryGroups, eq(categories.groupId, categoryGroups.id))
-      .where(eq(categoryGroups.userId, userId));
-    const validCategoryIds = new Set(userCategories.map((c) => c.id));
-
-    const referencedTransferIds = [...new Set(parsed.data.map((tx) => tx.transferId).filter((id): id is number => id != null))];
-    const validTransferIds =
-      referencedTransferIds.length === 0
-        ? new Set<number>()
-        : new Set(
-            (
-              await db
-                .select({ id: transactions.id })
-                .from(transactions)
-                .where(and(eq(transactions.userId, userId), inArray(transactions.id, referencedTransferIds)))
-            ).map((t) => t.id),
-          );
-
-    for (const tx of parsed.data) {
-      if (!validAccountIds.has(tx.accountId)) {
-        return res.status(400).json({ error: `Cuenta ${tx.accountId} no pertenece al usuario` });
-      }
-      if (tx.categoryId && !validCategoryIds.has(tx.categoryId)) {
-        return res.status(400).json({ error: `Categoría ${tx.categoryId} no pertenece al usuario` });
-      }
-      if (tx.transferId != null && !validTransferIds.has(tx.transferId)) {
-        return res.status(400).json({ error: `Transacción de transferencia ${tx.transferId} no pertenece al usuario` });
-      }
-    }
-
-    const rows = parsed.data.map((tx) => ({
-      ...tx,
-      userId,
-      categoryId: tx.categoryId ?? null,
-      payee: tx.payee ?? null,
-      memo: tx.memo ?? null,
-      flag: tx.flag ?? null,
-      transferId: tx.transferId ?? null,
-      importedFrom: tx.importedFrom ?? null,
-      cleared: tx.cleared ?? false,
-    }));
-
-    let inserted = 0;
-    // Insert in batches of 100
-    for (let i = 0; i < rows.length; i += 100) {
-      const batch = rows.slice(i, i + 100);
-      await db.insert(transactions).values(batch);
-      inserted += batch.length;
-    }
-
-    res.status(201).json({ ok: true, inserted });
+      .select()
+      .from(transactions)
+      .where(and(eq(transactions.id, id), eq(transactions.userId, userId)));
+    res.json(updated);
   } catch (err) {
     next(err);
   }

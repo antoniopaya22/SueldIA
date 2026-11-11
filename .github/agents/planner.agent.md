@@ -88,9 +88,14 @@ Después del plan, ofrecer al usuario transicionar al agente especializado aprop
 
 ## Contexto del Proyecto
 
-SueldIA es una aplicación web de gestión de nóminas con:
-- Backend: Express + Drizzle + SQLite en `backend/src/`
-- Frontend: Astro + React + Tailwind en `frontend/src/`
-- OCR: Tesseract.js para extracción de datos de PDFs
-- Auth: JWT + bcrypt
+SueldIA es una aplicación web de nóminas y finanzas personales con:
+- Backend: Express + Drizzle ORM + Postgres (Supabase, `drizzle-orm/postgres-js`) en `backend/src/`
+- Frontend: Astro (estático) + React islands + Tailwind 4 + shadcn/ui en `frontend/src/`
+- Parsing: PDFs procesados en memoria con `pdfjs-dist` + reglas regex (`backend/src/parsers/`); sin OCR y sin guardar el archivo
+- Auth: Supabase Auth con Google; el backend verifica el JWT contra el JWKS de Supabase
+- Despliegue: Vercel (dos servicios en `vercel.json` + cron diario); migraciones con drizzle-kit
 - Monorepo con npm workspaces
+
+Antes de planificar, leer `AGENTS.md`, `backend/AGENTS.md` y `frontend/AGENTS.md` (fuente de verdad).
+
+Todo plan que añada rutas o tablas debe incluir: filtro por `userId` en cada query, `.enableRLS()` en la tabla nueva, migración con `npm run db:generate`, uso de los helpers compartidos (`isoDateSchema`, `moneySchema`, `assertUnderLimit`, `toCsv`) y los casos nuevos en `backend/src/routes/authorization.test.ts`.

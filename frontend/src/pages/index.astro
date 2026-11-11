@@ -1,4 +1,6 @@
 ---
+// Fuera de la plantilla: el compilador de Astro 7 no ve `Astro` dentro de las expresiones de un slot.
+const siteUrl = Astro.site?.toString();
 import MarketingLayout from "../layouts/MarketingLayout.astro";
 import ProductMockup from "../components/marketing/ProductMockup.astro";
 import ExtractionVisual from "../components/marketing/ExtractionVisual.astro";
@@ -16,7 +18,7 @@ const trust = ["Gratis, sin tarjeta", "Acceso con Google", "No guardamos tus PDF
 const supports = [
   "Nóminas de empresa privada",
   "Nóminas de organismos públicos",
-  "PDF digital, sin OCR",
+  "PDF digital o escaneado",
   "Pagas extra incluidas",
   "Varios perfiles por cuenta",
 ];
@@ -28,7 +30,7 @@ const showcase = [
     accent: "por ti.",
     text: "Arrastra el PDF y SueldIA reconoce el periodo, la empresa, el bruto, el neto y cada devengo y deducción por separado — en nóminas de empresa privada y de organismos públicos.",
     bullets: [
-      "Directo del PDF digital, sin OCR",
+      "Directo del PDF digital; los escaneados, con OCR en tu navegador",
       "Devengos y deducciones, concepto a concepto",
       "Reprocesa cuando mejore el motor, sin volver a subir nada",
     ],
@@ -61,7 +63,7 @@ const showcase = [
 ];
 
 const steps = [
-  { icon: Upload, title: "Sube el PDF", text: "Arrastra una o varias nóminas en PDF digital. Nada de fotos ni escaneos." },
+  { icon: Upload, title: "Sube el PDF", text: "Arrastra una o varias nóminas en PDF. Si alguna es un escaneo, la leemos con OCR en tu propio navegador." },
   { icon: Sparkles, title: "Se procesa sola", text: "SueldIA detecta el formato y extrae cada concepto en segundos." },
   { icon: LineChart, title: "Analiza y decide", text: "Consulta tu evolución, tus retenciones y tus finanzas en un solo lugar." },
 ];
@@ -95,7 +97,7 @@ const faqs = [
   },
   {
     q: "¿Funciona con fotos o nóminas escaneadas?",
-    a: "No. SueldIA lee el texto directamente del PDF, sin OCR, así que necesita el documento digital original. Una foto o un escaneo no se puede procesar.",
+    a: "Sí, si están en PDF. El PDF digital se lee directamente; uno escaneado se lee con OCR en tu propio navegador, sin que el documento salga de tu dispositivo. Con un escaneo conviene repasar los conceptos: puede haber algún error de lectura.",
   },
   {
     q: "¿Guardáis mis PDFs?",
@@ -126,7 +128,7 @@ const faqs = [
     applicationCategory: "FinanceApplication",
     operatingSystem: "Web",
     description: "Sube tus nóminas en PDF y SueldIA extrae cada concepto, analiza tu evolución salarial e IRPF y gestiona tus finanzas personales.",
-    url: Astro.site?.toString(),
+    url: siteUrl,
     offers: { "@type": "Offer", price: "0", priceCurrency: "EUR" },
     inLanguage: "es-ES",
   })} />
@@ -140,6 +142,24 @@ const faqs = [
     })),
   })} />
 
+  <!-- Aviso tras eliminar la cuenta (Ajustes → Eliminar cuenta redirige aquí). -->
+  <div id="account-deleted" role="status" hidden class="fixed inset-x-4 top-20 z-50 mx-auto max-w-lg rounded-xl border border-black/10 bg-white px-4 py-3 text-sm text-neutral-800 shadow-lg dark:border-white/10 dark:bg-neutral-900 dark:text-neutral-100">
+    <p data-msg="eliminada" hidden>Tu cuenta y todos tus datos se han eliminado.</p>
+    <p data-msg="datos-borrados" hidden>Tus datos se han eliminado. Tu acceso con Google sigue existiendo: si vuelves a entrar, empezarás con una cuenta vacía.</p>
+  </div>
+  <script is:inline>
+    (function () {
+      var state = new URLSearchParams(location.search).get("cuenta");
+      var box = document.getElementById("account-deleted");
+      var msg = box && box.querySelector('[data-msg="' + state + '"]');
+      if (!msg) return;
+      msg.hidden = false;
+      box.hidden = false;
+      history.replaceState(null, "", location.pathname);
+      setTimeout(function () { box.hidden = true; }, 10000);
+    })();
+  </script>
+
   <!-- ─── Hero ─────────────────────────────────────────────── -->
   <section class="relative isolate">
     <div class="absolute inset-x-0 top-0 h-[780px] mk-dots -z-10" aria-hidden="true"></div>
@@ -150,7 +170,7 @@ const faqs = [
         href="#como-funciona"
         class="reveal group inline-flex items-center gap-2 rounded-full bg-card/80 dark:bg-white/[0.04] ring-1 ring-border pl-1.5 pr-3 py-1 text-[12.5px] text-muted-foreground hover:text-foreground transition-colors backdrop-blur"
       >
-        <span class="rounded-full bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300 px-2 py-0.5 text-[11px] font-medium">Sin OCR</span>
+        <span class="rounded-full bg-primary-50 dark:bg-primary-500/15 text-primary-700 dark:text-primary-300 px-2 py-0.5 text-[11px] font-medium">Privado</span>
         Del PDF a tu dashboard en segundos
         <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
       </a>

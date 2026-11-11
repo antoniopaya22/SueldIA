@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Wand2, Zap } from "lucide-react";
+import { Pencil, Plus, Trash2, Wand2, Zap } from "lucide-react";
 import { toast } from "sonner";
 import {
-  applyCategorySuggestions, createCategoryRule, deleteCategoryRule, getCategoryRules, type CategoryGroup,
+  applyCategorySuggestions, createCategoryRule, deleteCategoryRule, getCategoryRules, type CategoryGroup, type CategoryRule,
 } from "../../lib/api";
 import { invalidateFinance } from "../../lib/finance-cache";
+import { formatCurrency } from "../../lib/format";
+import { RuleDialog } from "./RuleDialog";
 import { SectionCard } from "../app";
 import { CategorySelect } from "../finance-manage/transactions/shared";
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,7 @@ export function CategoryRulesCard({ groups }: { groups: CategoryGroup[] }) {
   const { data: rules = [], isLoading } = useQuery({ queryKey: ["category-rules"], queryFn: getCategoryRules });
   const [match, setMatch] = useState("");
   const [categoryId, setCategoryId] = useState<number | "">("");
+  const [dialog, setDialog] = useState<{ rule: CategoryRule | null } | null>(null);
 
   const createMut = useMutation({
     mutationFn: () => createCategoryRule({ match: match.trim(), categoryId: Number(categoryId) }),
@@ -92,6 +95,9 @@ export function CategoryRulesCard({ groups }: { groups: CategoryGroup[] }) {
         <Button type="submit" disabled={!canAdd || createMut.isPending} className="gap-1.5">
           <Plus className="size-4" aria-hidden="true" /> Añadir
         </Button>
+        <Button type="button" variant="ghost" onClick={() => setDialog({ rule: null })} className="text-muted-foreground">
+          Con condiciones…
+        </Button>
       </form>
 
       <div className="mt-4">
@@ -106,11 +112,21 @@ export function CategoryRulesCard({ groups }: { groups: CategoryGroup[] }) {
             {rules.map((rule) => (
               <li key={rule.id} className="flex items-center gap-3 px-3 py-2.5 text-sm">
                 <span className="min-w-0 flex-1 truncate">
-                  <span className="text-muted-foreground">Contiene </span>
+                  <span className="text-muted-foreground">{rule.matchField === "memo" ? "Nota contiene " : rule.matchField === "any" ? "Beneficiario o nota contiene " : "Contiene "}</span>
                   <span className="font-medium text-foreground">«{rule.match}»</span>
+                  {describeConditions(rule) && <span className="text-muted-foreground"> · {describeConditions(rule)}</span>}
                   <span className="text-muted-foreground"> → </span>
                   <span className="text-foreground">{rule.groupName} · {rule.categoryName}</span>
                 </span>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setDialog({ rule })}
+                  aria-label={`Editar la regla «${rule.match}»`}
+                  className="text-muted-foreground"
+                >
+                  <Pencil className="size-4" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon-sm"
@@ -126,6 +142,17 @@ export function CategoryRulesCard({ groups }: { groups: CategoryGroup[] }) {
           </ul>
         )}
       </div>
+      <RuleDialog open={!!dialog} rule={dialog?.rule ?? null} groups={groups} onClose={() => setDialog(null)} />
     </SectionCard>
   );
+}
+
+function describeConditions(rule: CategoryRule): string {
+  const parts: string[] = [];
+  if (rule.transactionType) parts.push(rule.transactionType === "expense" ? "solo gastos" : "solo ingresos");
+  if (rule.minAmount != null && rule.maxAmount != null) parts.push(`de ${formatCurrency(rule.minAmount)} a ${formatCurrency(rule.maxAmount)}`);
+  else if (rule.minAmount != null) parts.push(`desde ${formatCurrency(rule.minAmount)}`);
+  else if (rule.maxAmount != null) parts.push(`hasta ${formatCurrency(rule.maxAmount)}`);
+  if (rule.accountId != null) parts.push("una cuenta");
+  return parts.join(", ");
 }

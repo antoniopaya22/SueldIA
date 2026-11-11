@@ -1,7 +1,6 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, CircleDollarSign, PiggyBank, RefreshCcw,
+  AlertTriangle, ArrowDownRight, ArrowUpRight, CircleDollarSign, PiggyBank, RefreshCcw,
   Scale, Sparkles, Store, TrendingDown, TrendingUp,
 } from "lucide-react";
 import { getMonthReport, type MonthReport, type ReportCategory } from "../lib/api";
@@ -10,38 +9,19 @@ import { monthRange, transactionsHref } from "../lib/transaction-filters";
 import { Providers } from "./Providers";
 import { EmptyState } from "./ui/EmptyState";
 import {
-  PageHeader, StatCard, StatGrid, SectionCard, PageHeaderSkeleton, StatCardSkeleton, ListCardSkeleton, type StatDelta,
+  PageHeader, StatCard, StatGrid, SectionCard, PageHeaderSkeleton, StatCardSkeleton, ListCardSkeleton, Segmented, type StatDelta,
+  MonthSwitcher,
 } from "./app";
 import { Button } from "@/components/ui/button";
 import { cn } from "cn";
+import { currentMonthKey, isMonthKey } from "../lib/dates";
+import { useUrlEnumParam, useUrlIntParam, useUrlParam } from "../lib/url-state";
+import { YearReportView } from "./finance/YearReport";
 
-const MONTHS_FULL = [
-  "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
-  "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
-];
 
-function currentMonth(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-}
 
-function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
-function monthLabel(month: string): string {
-  const [y, m] = month.split("-");
-  return `${MONTHS_FULL[Number(m) - 1]} ${y}`;
-}
 
-/** El mes sale de ?mes=YYYY-MM (compartible) y se escribe de vuelta al cambiarlo. */
-function initialMonth(): string {
-  if (typeof window === "undefined") return currentMonth();
-  const value = new URLSearchParams(window.location.search).get("mes");
-  return value && /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : currentMonth();
-}
 
 /** Variación frente al mes anterior; `invert` para gastos (subir es malo). */
 function deltaVsPrevious(current: number, previous: number, invert = false): StatDelta | undefined {
@@ -280,37 +260,47 @@ function ReportBody({ report, month }: { report: MonthReport; month: string }) {
 }
 
 function ReportView() {
-  const [month, setMonth] = useState(initialMonth);
+  const [view, setView] = useUrlEnumParam("vista", ["mensual", "anual"] as const, "mensual");
+  const thisYear = Number(currentMonthKey().slice(0, 4));
+  const [yearParam, setYearParam] = useUrlIntParam("anio", thisYear);
+  const viewToggle = (
+    <Segmented
+      aria-label="Periodo del informe"
+      value={view}
+      onChange={(v) => setView(v)}
+      options={[{ value: "mensual", label: "Mes" }, { value: "anual", label: "Año" }]}
+    />
+  );
+  if (view === "anual") {
+    return (
+      <div>
+        <PageHeader title="Informe" accent="del año." description="Cómo ha ido el año: ingresos, gastos, ahorro y en qué se fue el dinero, frente al año anterior.">
+          <div className="print:hidden">{viewToggle}</div>
+        </PageHeader>
+        <YearReportView year={Math.min(yearParam, thisYear)} onYearChange={(y) => setYearParam(y)} thisYear={thisYear} />
+      </div>
+    );
+  }
+  return <MonthReportView viewToggle={viewToggle} />;
+}
 
-  const changeMonth = (next: string) => {
-    setMonth(next);
-    const url = new URL(window.location.href);
-    url.searchParams.set("mes", next);
-    window.history.replaceState(null, "", url);
-  };
+function MonthReportView({ viewToggle }: { viewToggle: React.ReactNode }) {
+  // ?mes=YYYY-MM en la URL (compartible); por defecto, el mes en curso.
+  const thisMonth = currentMonthKey();
+  const [monthParam, setMonthParam] = useUrlParam("mes", thisMonth);
+  const month = isMonthKey(monthParam) && monthParam <= thisMonth ? monthParam : thisMonth;
+  const changeMonth = (next: string) => setMonthParam(next);
 
-  const { data, isLoading, error, refetch } = useQuery({
+
+  const { data, isLoading, isPlaceholderData, error, refetch } = useQuery({
     queryKey: ["finance-report", month],
     queryFn: () => getMonthReport(month),
+    // Al cambiar de filtro se sigue viendo lo anterior (atenuado) en vez de
+    // sustituir la página entera, cabecera y filtros incluidos, por el esqueleto.
+    placeholderData: keepPreviousData,
   });
 
-  const switcher = (
-    <div className="flex items-center gap-1">
-      <Button variant="outline" size="icon-sm" onClick={() => changeMonth(shiftMonth(month, -1))} aria-label="Mes anterior">
-        <ChevronLeft className="size-4" />
-      </Button>
-      <span className="min-w-32 px-1 text-center text-sm font-medium text-foreground tabular-nums">{monthLabel(month)}</span>
-      <Button
-        variant="outline"
-        size="icon-sm"
-        onClick={() => changeMonth(shiftMonth(month, 1))}
-        disabled={month >= currentMonth()}
-        aria-label="Mes siguiente"
-      >
-        <ChevronRight className="size-4" />
-      </Button>
-    </div>
-  );
+  const switcher = <MonthSwitcher month={month} onChange={changeMonth} max={thisMonth} />;
 
   const header = (
     <PageHeader
@@ -318,7 +308,7 @@ function ReportView() {
       accent="del mes."
       description="Cómo ha ido el mes frente a tu media: qué ha subido, qué ha bajado y qué se sale de lo habitual."
     >
-      {switcher}
+      <div className="flex flex-wrap items-center gap-2">{viewToggle}{switcher}</div>
     </PageHeader>
   );
 
@@ -349,7 +339,9 @@ function ReportView() {
           actionHref="/app/transactions"
         />
       ) : (
-        <ReportBody report={data} month={month} />
+        <div className={cn("transition-opacity", isPlaceholderData && "opacity-60")} aria-busy={isPlaceholderData}>
+          <ReportBody report={data} month={data.month} />
+        </div>
       )}
     </div>
   );

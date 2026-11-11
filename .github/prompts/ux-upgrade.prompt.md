@@ -20,7 +20,7 @@ Analiza los componentes React del frontend de SueldIA y propone (e implementa si
 ## Áreas de Análisis
 
 ### 1. Loading States
-- ¿Se muestra skeleton/spinner mientras cargan los datos?
+- ¿Se muestra skeleton mientras cargan los datos (`PageHeaderSkeleton`, `StatCardSkeleton`, `ChartCardSkeleton`, `ListCardSkeleton` de `components/app/`)?
 - ¿Los skeletons reflejan la estructura real del contenido?
 - ¿Hay indicación de progreso en operaciones largas (upload, parsing)?
 - ¿Se deshabilitan botones durante operaciones en curso?
@@ -32,13 +32,13 @@ Analiza los componentes React del frontend de SueldIA y propone (e implementa si
 - ¿Hay un estado de error general para la página?
 
 ### 3. Empty States
-- ¿Se muestra un mensaje amigable cuando no hay datos?
+- ¿Se muestra un mensaje amigable cuando no hay datos (`ui/EmptyState`)?
 - ¿Se ofrece una CTA (call to action) para empezar? ("Sube tu primera nómina")
 - ¿El empty state tiene ilustración o icono?
 
 ### 4. Feedback y Confirmación
-- ¿Las acciones exitosas muestran toast de confirmación?
-- ¿Las acciones destructivas (eliminar) piden confirmación?
+- ¿Las acciones exitosas muestran toast de confirmación (`sonner`)?
+- ¿Las acciones destructivas (eliminar) piden confirmación (`AlertDialog`)?
 - ¿Hay feedback inmediato al hacer click (estados presionado/hover)?
 
 ### 5. Accesibilidad (a11y)
@@ -51,7 +51,8 @@ Analiza los componentes React del frontend de SueldIA y propone (e implementa si
 ### 6. Responsive Design
 - ¿La UI funciona correctamente en móvil (< 640px)?
 - ¿Las tablas se adaptan o se transforman en cards en mobile?
-- ¿Los modales son usables en pantallas pequeñas?
+- ¿Los modales son usables en pantallas pequeñas (`DialogContent` sale como hoja desde abajo en móvil)?
+- ¿Lo fijo abajo suma `var(--mobile-nav-h)` para no quedar tapado por la barra de pestañas?
 - ¿El texto es legible sin hacer zoom?
 
 ### 7. Micro-interacciones
@@ -79,4 +80,4 @@ Analiza los componentes React del frontend de SueldIA y propone (e implementa si
 ## Después del Análisis
 
 Preguntar al usuario qué mejoras quiere implementar y aplicarlas.
-Referenciar las convenciones de [componentes React](.github/instructions/react-components.instructions.md) y [Tailwind tokens](frontend/AGENTS.md).
+Referenciar las convenciones de [componentes React](../instructions/react-components.instructions.md) y el sistema de diseño y tokens de [`frontend/AGENTS.md`](../../frontend/AGENTS.md). Nada de manejadores en línea en HTML/Astro (CSP).

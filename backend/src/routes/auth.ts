@@ -3,7 +3,7 @@ import { db } from "../db/index.js";
 import { users } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { authMiddleware } from "../middleware/auth.js";
+import { authMiddleware, forgetCachedUser } from "../middleware/auth.js";
 import { env } from "../config.js";
 import { logger } from "../logger.js";
 
@@ -71,24 +71,29 @@ authRouter.delete("/me", authMiddleware, async (req, res, next) => {
       .where(eq(users.id, userId));
     if (!row) return res.status(404).json({ error: "Usuario no encontrado" });
 
-    // Se borra primero la identidad en Supabase Auth (si hay service role
-    // key) para que no pueda volver a entrar con el mismo login de Google
-    // justo después de borrar sus datos.
+    // 1. Primero los datos: es lo que la persona pide borrar y lo único que
+    //    controlamos de forma transaccional. Antes se borraba primero la
+    //    identidad de Supabase y, si después fallaba este paso, los datos
+    //    quedaban huérfanos e inaccesibles.
+    await db.delete(users).where(eq(users.id, userId));
+    // Sin esto, durante unos minutos un token aún vigente seguía pasando el
+    // middleware con un userId que ya no existe (o recreaba la cuenta).
+    forgetCachedUser(row.supabaseUserId);
+
+    // 2. Después la identidad en Supabase Auth, para que no pueda volver a
+    //    entrar con el mismo login de Google y empezar una cuenta vacía.
+    let identityDeleted = false;
     if (env.SUPABASE_SERVICE_ROLE_KEY) {
       try {
-        const resp = await fetch(
-          `${env.SUPABASE_URL}/auth/v1/admin/users/${row.supabaseUserId}`,
-          {
-            method: "DELETE",
-            headers: {
-              apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-              Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-            },
+        const resp = await fetch(`${env.SUPABASE_URL}/auth/v1/admin/users/${row.supabaseUserId}`, {
+          method: "DELETE",
+          headers: {
+            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+            Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
           },
-        );
-        if (!resp.ok) {
-          logger.error({ userId, status: resp.status }, "No se pudo borrar la identidad en Supabase Auth");
-        }
+        });
+        identityDeleted = resp.ok;
+        if (!resp.ok) logger.error({ userId, status: resp.status }, "No se pudo borrar la identidad en Supabase Auth");
       } catch (err) {
         logger.error({ userId, err }, "Error llamando a la Admin API de Supabase Auth");
       }
@@ -99,8 +104,9 @@ authRouter.delete("/me", authMiddleware, async (req, res, next) => {
       );
     }
 
-    await db.delete(users).where(eq(users.id, userId));
-    res.json({ ok: true });
+    // Los datos ya no existen en ningún caso; `identityDeleted` dice si
+    // además se cerró el acceso, para que la interfaz lo cuente sin mentir.
+    res.json({ ok: true, identityDeleted });
   } catch (err) {
     next(err);
   }

@@ -1,7 +1,6 @@
 import {
   Home, Wallet, ChartColumn, Landmark, Tags, Receipt, ArrowDownToLine,
-  FileText, Upload, Users, Settings, PieChart, Plus, Bell, PiggyBank, FileChartColumn, type LucideIcon,
-} from "lucide-react";
+  FileText, Upload, Users, Settings, PieChart, Plus, Bell, PiggyBank, FileChartColumn, Goal, type LucideIcon, Store } from "lucide-react";
 
 // Única fuente de verdad de la navegación de /app/*: sidebar, breadcrumbs,
 // acción contextual de la cabecera y paleta de comandos se derivan de aquí.
@@ -61,11 +60,13 @@ export const WORKSPACES: WorkspaceMeta[] = [
       { href: "/app/finance", label: "Resumen", icon: Wallet, exact: true, keywords: "finanzas resumen dashboard" },
       { href: "/app/transactions", label: "Transacciones", shortLabel: "Movimientos", icon: Receipt, keywords: "movimientos gastos ingresos apuntar" },
       { href: "/app/budget", label: "Presupuesto", icon: PiggyBank, keywords: "presupuesto categorías asignar objetivos" },
+      { href: "/app/goals", label: "Objetivos", icon: Goal, keywords: "objetivos ahorro meta vacaciones hucha" },
       { href: "/app/finance/report", label: "Informe del mes", icon: FileChartColumn, keywords: "informe resumen mes comparar media inusual" },
       { href: "/app/finance/analytics", label: "Analítica", icon: PieChart, keywords: "finanzas gráficos gastos" },
       { href: "/app/accounts", label: "Cuentas", icon: Landmark, keywords: "banco tarjeta saldo patrimonio" },
       { href: "/app/categories", label: "Categorías", icon: Tags, section: "Configurar", keywords: "grupos reglas automáticas" },
-      { href: "/app/import", label: "Importar", icon: ArrowDownToLine, section: "Configurar", keywords: "ynab csv" },
+      { href: "/app/payees", label: "Beneficiarios", icon: Store, section: "Configurar", keywords: "comercios renombrar fusionar beneficiario" },
+      { href: "/app/import", label: "Importar", icon: ArrowDownToLine, section: "Configurar", keywords: "ynab csv banco extracto" },
     ],
   },
   {
