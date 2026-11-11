@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { toCsv } from "../utils/csv.js";
 import { amountRangeValid, amountRangeIssue, buildConditions, transactionFilterFields } from "../services/transaction-query.js";
 import { db } from "../db/index.js";
 import {
@@ -17,6 +18,9 @@ import {
   alertRules,
   alertHistory,
   budgets,
+  categoryTargets,
+  categoryRules,
+  userPreferences,
   users,
 } from "../db/schema.js";
 import { eq, and, sql, gte, lte, like, desc, asc, inArray } from "drizzle-orm";
@@ -45,7 +49,7 @@ exportRouter.get("/all", async (req, res, next) => {
       : [];
     const payslipIds = userPayslips.map((p) => p.id);
 
-    const [concepts, notes, payslipTagLinks, userTags, userAccounts, groups, cats, txs, recurring, rules, history, userBudgets] =
+    const [concepts, notes, payslipTagLinks, userTags, userAccounts, groups, cats, txs, recurring, rules, history, userBudgets, targets, catRules, prefs] =
       await Promise.all([
         payslipIds.length
           ? db.select().from(payslipConcepts).where(inArray(payslipConcepts.payslipId, payslipIds))
@@ -70,6 +74,9 @@ exportRouter.get("/all", async (req, res, next) => {
         db.select().from(alertRules).where(eq(alertRules.userId, userId)),
         db.select().from(alertHistory).where(eq(alertHistory.userId, userId)),
         db.select().from(budgets).where(eq(budgets.userId, userId)),
+        db.select().from(categoryTargets).where(eq(categoryTargets.userId, userId)),
+        db.select().from(categoryRules).where(eq(categoryRules.userId, userId)),
+        db.select().from(userPreferences).where(eq(userPreferences.userId, userId)),
       ]);
 
     res.setHeader("Content-Disposition", `attachment; filename="sueldia-datos-${userId}.json"`);
@@ -90,11 +97,29 @@ exportRouter.get("/all", async (req, res, next) => {
       alertRules: rules.map((r) => ({ ...r, config: JSON.parse(r.config) })),
       alertHistory: history,
       budgets: userBudgets,
+      categoryTargets: targets,
+      categoryRules: catRules,
+      userPreferences: prefs.map((p) => ({ ...p, value: safeJson(p.value) })),
     });
   } catch (err) {
     next(err);
   }
 });
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
+const PAYSLIP_CSV_HEADERS = [
+  "Perfil", "Tipo", "Periodo", "Empresa", "Salario Bruto", "Salario Neto", "Devengos", "Deducciones", "Archivo", "Fecha Subida",
+] as const;
+const TRANSACTION_CSV_HEADERS = [
+  "Fecha", "Tipo", "Importe", "Beneficiario", "Cuenta", "Grupo", "Categoría", "Nota", "Estado",
+] as const;
 
 const exportQuerySchema = z.object({
   profileId: z.coerce.number().int().positive().optional(),
@@ -118,21 +143,25 @@ exportRouter.get("/", async (req, res, next) => {
     // Only user's profiles
     const userProfiles = await db.select().from(profiles).where(eq(profiles.userId, userId));
     const userProfileIds = userProfiles.map((p) => p.id);
+    const { profileId, year, type, format } = parsed.data;
 
-    if (userProfileIds.length === 0) {
+    // Sin nada que exportar: un fichero vacío del formato pedido (antes, el
+    // texto "Sin datos" como CSV aunque se hubiera pedido JSON).
+    const sendEmpty = () => {
+      if (format === "json") {
+        res.setHeader("Content-Disposition", 'attachment; filename="nominas.json"');
+        return res.json([]);
+      }
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="nominas.csv"');
-      return res.send("Sin datos");
-    }
+      return res.send(toCsv(PAYSLIP_CSV_HEADERS, []));
+    };
 
-    const { profileId, year, type, format } = parsed.data;
+    if (userProfileIds.length === 0) return sendEmpty();
 
     const conditions = [eq(payslips.parsingStatus, "parsed")];
     if (profileId) {
-      if (!userProfileIds.includes(profileId)) {
-        res.setHeader("Content-Type", "text/csv; charset=utf-8");
-        return res.send("Sin datos");
-      }
+      if (!userProfileIds.includes(profileId)) return sendEmpty();
       conditions.push(eq(payslips.profileId, profileId));
     } else {
       conditions.push(
@@ -199,32 +228,10 @@ exportRouter.get("/", async (req, res, next) => {
     });
 
     if (format === "csv") {
-      if (rows.length === 0) {
-        res.setHeader("Content-Type", "text/csv; charset=utf-8");
-        res.setHeader("Content-Disposition", 'attachment; filename="nominas.csv"');
-        return res.send("Sin datos");
-      }
-
-      const headers = Object.keys(rows[0]);
-      const csvLines = [
-        headers.join(","),
-        ...rows.map((row) =>
-          headers
-            .map((h) => {
-              const val = String(row[h as keyof typeof row] ?? "");
-              // Escape CSV values
-              if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-                return `"${val.replace(/"/g, '""')}"`;
-              }
-              return val;
-            })
-            .join(",")
-        ),
-      ];
-
+      // Sin filas: CSV con solo la cabecera (antes, el texto "Sin datos").
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", 'attachment; filename="nominas.csv"');
-      res.send("\uFEFF" + csvLines.join("\n")); // BOM for Excel UTF-8
+      res.send(toCsv(PAYSLIP_CSV_HEADERS, rows));
     } else if (format === "json") {
       res.setHeader("Content-Disposition", 'attachment; filename="nominas.json"');
       res.json(rows);
@@ -295,31 +302,9 @@ exportRouter.get("/transactions", async (req, res, next) => {
       return res.json(exportRows);
     }
 
-    if (exportRows.length === 0) {
-      res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader("Content-Disposition", 'attachment; filename="transacciones.csv"');
-      return res.send("Sin datos");
-    }
-
-    const headers = Object.keys(exportRows[0]);
-    const csvLines = [
-      headers.join(","),
-      ...exportRows.map((row) =>
-        headers
-          .map((h) => {
-            const val = String(row[h as keyof typeof row] ?? "");
-            if (val.includes(",") || val.includes('"') || val.includes("\n")) {
-              return `"${val.replace(/"/g, '""')}"`;
-            }
-            return val;
-          })
-          .join(","),
-      ),
-    ];
-
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", 'attachment; filename="transacciones.csv"');
-    res.send("\uFEFF" + csvLines.join("\n"));
+    res.send(toCsv(TRANSACTION_CSV_HEADERS, exportRows));
   } catch (err) {
     next(err);
   }
