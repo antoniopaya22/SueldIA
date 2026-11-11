@@ -86,3 +86,16 @@ export const uploadCsv = multer({
   fileFilter: csvFilter,
   limits: { fileSize: MAX_UPLOAD_SIZE },
 });
+
+// ─── Copia de seguridad (restaurar «Exportar todos mis datos») ──
+// La app la manda comprimida con gzip (cabe de sobra en los 4 MB de Vercel);
+// también se acepta el .json tal cual si es pequeño.
+export const uploadBackup = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (_req, file, cb) => {
+    const name = file.originalname.toLowerCase();
+    if (name.endsWith(".json") || name.endsWith(".gz")) cb(null, true);
+    else cb(new AppError(400, "Sube el fichero .json de «Exportar todos mis datos»"));
+  },
+  limits: { fileSize: MAX_UPLOAD_SIZE },
+});

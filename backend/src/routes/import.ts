@@ -7,7 +7,8 @@ import { db } from "../db/index.js";
 import { accounts, categoryGroups, categories, transactions } from "../db/schema.js";
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { uploadCsv } from "../middleware/upload.js";
+import { uploadBackup, uploadCsv } from "../middleware/upload.js";
+import { countBackup, countCurrent, readBackupFile, restoreBackup } from "../services/backup-restore.service.js";
 import {
   parseYnabCsv,
   isTransfer,
@@ -493,3 +494,25 @@ function inferAccountType(name: string): "bank" | "credit_card" | "cash" | "inve
   }
   return "bank";
 }
+
+// Restaurar una copia de «Exportar todos mis datos». Con ?dryRun=true solo
+// lee y valida el fichero y cuenta lo que trae y lo que hay ahora; sin él,
+// sustituye todos los datos de la cuenta (en una transacción: o todo o nada).
+// Exige ?replace=true para que nadie lo dispare por accidente.
+importRouter.post("/backup", uploadBackup.single("file"), async (req, res, next) => {
+  try {
+    const { userId } = req.user!;
+    if (!req.file) return res.status(400).json({ error: "No se ha subido ningún archivo" });
+    const backup = readBackupFile(req.file.buffer);
+    if (req.query.dryRun === "true") {
+      return res.json({ exportedAt: backup.exportedAt ?? null, backup: countBackup(backup), current: await countCurrent(userId) });
+    }
+    if (req.query.replace !== "true") {
+      return res.status(400).json({ error: "Falta confirmar que quieres sustituir tus datos" });
+    }
+    const restored = await restoreBackup(userId, backup);
+    res.json({ restored });
+  } catch (err) {
+    next(err);
+  }
+});

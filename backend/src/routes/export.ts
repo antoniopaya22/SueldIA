@@ -3,6 +3,7 @@ import { z } from "zod";
 import { toCsv } from "../utils/csv.js";
 import { amountRangeValid, amountRangeIssue, buildConditions, transactionFilterFields } from "../services/transaction-query.js";
 import { db } from "../db/index.js";
+import { BACKUP_FORMAT, BACKUP_VERSION } from "../services/backup-restore.service.js";
 import {
   payslips,
   payslipConcepts,
@@ -81,6 +82,9 @@ exportRouter.get("/all", async (req, res, next) => {
 
     res.setHeader("Content-Disposition", `attachment; filename="sueldia-datos-${userId}.json"`);
     res.json({
+      // Para poder restaurarla (Ajustes → Restaurar una copia).
+      format: BACKUP_FORMAT,
+      version: BACKUP_VERSION,
       exportedAt: new Date().toISOString(),
       user,
       profiles: userProfiles,
